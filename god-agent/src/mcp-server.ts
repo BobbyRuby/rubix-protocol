@@ -6986,20 +6986,27 @@ class GodAgentMCPServer {
 ## Multi-Channel Escalation Setup
 
 CODEX uses a fallback chain to reach you when it needs input:
-Phone → SMS → Slack → Discord → Email
+Telegram → Phone → SMS → Slack → Discord → Email
 
 Each channel has a 5-minute timeout before trying the next.
 
 ### Configure Channels
 
-**1. Phone (via CallMe)**
+**1. Telegram (Recommended - Free & Bidirectional)**
+god_comms_setup mode="set" channel="telegram" config={
+  "enabled": true,
+  "botToken": "YOUR_BOT_TOKEN",
+  "chatId": "YOUR_CHAT_ID"
+}
+
+**2. Phone (via CallMe)**
 god_comms_setup mode="set" channel="phone" config={
   "enabled": true,
   "provider": "callme",
   "phoneNumber": "+15551234567"
 }
 
-**2. SMS (via Twilio)**
+**3. SMS (via Twilio)**
 god_comms_setup mode="set" channel="sms" config={
   "enabled": true,
   "provider": "twilio",
@@ -7009,19 +7016,19 @@ god_comms_setup mode="set" channel="sms" config={
   "fromNumber": "+15559876543"
 }
 
-**3. Slack**
+**4. Slack**
 god_comms_setup mode="set" channel="slack" config={
   "enabled": true,
   "webhookUrl": "https://hooks.slack.com/services/..."
 }
 
-**4. Discord**
+**5. Discord**
 god_comms_setup mode="set" channel="discord" config={
   "enabled": true,
   "webhookUrl": "https://discord.com/api/webhooks/..."
 }
 
-**5. Email**
+**6. Email**
 god_comms_setup mode="set" channel="email" config={
   "enabled": true,
   "smtp": { "host": "smtp.gmail.com", "port": 587 },

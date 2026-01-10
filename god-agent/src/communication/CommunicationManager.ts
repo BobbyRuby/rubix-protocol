@@ -19,6 +19,7 @@ import { SMSChannel } from './channels/SMSChannel.js';
 import { SlackChannel } from './channels/SlackChannel.js';
 import { DiscordChannel } from './channels/DiscordChannel.js';
 import { EmailChannel } from './channels/EmailChannel.js';
+import { TelegramChannel } from './channels/TelegramChannel.js';
 
 // Import Escalation type from codex if available
 interface Escalation {
@@ -41,7 +42,7 @@ export class CommunicationManager {
   constructor(config: Partial<CommunicationConfig> = {}) {
     this.config = {
       enabled: config.enabled ?? false,
-      fallbackOrder: config.fallbackOrder ?? ['phone', 'sms', 'slack', 'discord', 'email'],
+      fallbackOrder: config.fallbackOrder ?? ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
       timeoutMs: config.timeoutMs ?? 300000,
       retryAttempts: config.retryAttempts ?? 1,
       webhookServer: config.webhookServer ?? { port: 3456 },
@@ -49,7 +50,8 @@ export class CommunicationManager {
       sms: config.sms,
       slack: config.slack,
       discord: config.discord,
-      email: config.email
+      email: config.email,
+      telegram: config.telegram
     };
   }
 
@@ -83,6 +85,14 @@ export class CommunicationManager {
     if (this.config.email?.enabled) {
       this.channels.set('email', new EmailChannel(this.config.email));
       console.log('[CommunicationManager] Email channel initialized');
+    }
+
+    if (this.config.telegram?.enabled) {
+      const telegramChannel = new TelegramChannel(this.config.telegram);
+      this.channels.set('telegram', telegramChannel);
+      // Start polling for responses
+      telegramChannel.startPolling();
+      console.log('[CommunicationManager] Telegram channel initialized');
     }
 
     this.isInitialized = true;
@@ -292,10 +302,33 @@ export class CommunicationManager {
   }
 
   /**
-   * Update configuration
+   * Update configuration with deep merge for channel configs
    */
   updateConfig(config: Partial<CommunicationConfig>): void {
-    this.config = { ...this.config, ...config };
+    // Deep merge to preserve channel configs
+    this.config = {
+      ...this.config,
+      ...config,
+      // Preserve existing channel configs, merge new ones
+      phone: config.phone !== undefined
+        ? { ...this.config.phone, ...config.phone }
+        : this.config.phone,
+      sms: config.sms !== undefined
+        ? { ...this.config.sms, ...config.sms }
+        : this.config.sms,
+      slack: config.slack !== undefined
+        ? { ...this.config.slack, ...config.slack }
+        : this.config.slack,
+      discord: config.discord !== undefined
+        ? { ...this.config.discord, ...config.discord }
+        : this.config.discord,
+      email: config.email !== undefined
+        ? { ...this.config.email, ...config.email }
+        : this.config.email,
+      telegram: config.telegram !== undefined
+        ? { ...this.config.telegram, ...config.telegram }
+        : this.config.telegram,
+    };
     this.isInitialized = false;
     this.channels.clear();
     console.log('[CommunicationManager] Configuration updated, re-initialization required');
@@ -331,6 +364,10 @@ export class CommunicationManager {
       email: this.config.email ? {
         enabled: this.config.email.enabled,
         toAddress: this.config.email.toAddress
+      } : undefined,
+      telegram: this.config.telegram ? {
+        enabled: this.config.telegram.enabled,
+        chatId: this.config.telegram.chatId ? '****' + this.config.telegram.chatId.slice(-4) : undefined
       } : undefined
     } as Partial<CommunicationConfig>;
   }

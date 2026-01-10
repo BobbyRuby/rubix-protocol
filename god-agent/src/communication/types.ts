@@ -7,7 +7,7 @@
 import { randomUUID } from 'crypto';
 
 // Channel types
-export type ChannelType = 'phone' | 'sms' | 'slack' | 'discord' | 'email';
+export type ChannelType = 'phone' | 'sms' | 'slack' | 'discord' | 'email' | 'telegram';
 export type ChannelStatus = 'idle' | 'sending' | 'waiting' | 'timeout' | 'responded' | 'error';
 
 // Phone channel config
@@ -73,6 +73,14 @@ export interface EmailChannelConfig {
   replySubjectPattern?: string;
 }
 
+// Telegram channel config
+export interface TelegramChannelConfig {
+  enabled: boolean;
+  botToken: string;
+  chatId: string;
+  pollingIntervalMs?: number;  // Default 2000
+}
+
 // Webhook server config
 export interface WebhookServerConfig {
   port: number;
@@ -91,6 +99,7 @@ export interface CommunicationConfig {
   slack?: SlackChannelConfig;
   discord?: DiscordChannelConfig;
   email?: EmailChannelConfig;
+  telegram?: TelegramChannelConfig;
 
   webhookServer: WebhookServerConfig;
 }
@@ -136,7 +145,7 @@ export interface IChannel {
 // Default config
 export const DEFAULT_COMMUNICATION_CONFIG: CommunicationConfig = {
   enabled: false,
-  fallbackOrder: ['phone', 'sms', 'slack', 'discord', 'email'],
+  fallbackOrder: ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
   timeoutMs: 300000,  // 5 minutes
   retryAttempts: 1,
   webhookServer: {

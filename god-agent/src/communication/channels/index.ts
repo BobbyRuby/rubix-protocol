@@ -10,3 +10,4 @@ export { SMSChannel } from './SMSChannel.js';
 export { SlackChannel } from './SlackChannel.js';
 export { DiscordChannel } from './DiscordChannel.js';
 export { EmailChannel } from './EmailChannel.js';
+export { TelegramChannel } from './TelegramChannel.js';
