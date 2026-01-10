@@ -1,0 +1,121 @@
+# CODEX Configuration
+# Copy this file to codex.yaml and customize for your project
+# Version: 1.0.0
+
+version: "1.0.0"
+
+# Escalation Settings
+# Controls when CODEX asks for human help
+escalation:
+  # Number of failed attempts before escalating to user
+  maxAttemptsBeforeEscalate: 3
+
+  # Decision types that CODEX can make autonomously
+  # These don't require user approval
+  autonomousDecisions:
+    - dependency_minor_versions
+    - code_formatting
+    - variable_naming
+    - test_structure
+    - import_organization
+    - comment_style
+
+  # Decision types that ALWAYS require user approval
+  # CODEX will pause and ask before proceeding
+  requireApproval:
+    - database_schema_changes
+    - api_breaking_changes
+    - new_dependencies
+    - architecture_changes
+    - security_sensitive_changes
+    - production_deployment
+
+# Work Mode Settings
+# Controls notification behavior and interruptions
+workMode:
+  # Notify on task progress updates (can be noisy)
+  notifyOnProgress: false
+
+  # Notify when task completes successfully
+  notifyOnComplete: true
+
+  # Notify when task is blocked and needs attention
+  notifyOnBlocked: true
+
+  # Batch multiple decisions together instead of asking one at a time
+  batchDecisions: true
+
+  # Default to deep work mode (minimal interruptions)
+  deepWorkDefault: true
+
+# Playwright Browser Settings
+# Controls browser automation for verification
+playwright:
+  # Default browser mode: headless (faster) or visible (for debugging)
+  defaultMode: headless
+
+  # Automatically take screenshot when verification fails
+  screenshotOnFailure: true
+
+  # Capture browser console output
+  captureConsole: true
+
+  # Default timeout for browser operations (milliseconds)
+  timeout: 30000
+
+# Code Review Settings
+# Controls automatic code review behavior
+review:
+  # Automatically review changes before committing
+  autoReview: true
+
+  # Run security vulnerability scans
+  securityScan: true
+
+  # File patterns that ALWAYS require human review
+  # Supports glob patterns
+  requireHumanReview:
+    - "*.env*"
+    - "*credentials*"
+    - "*secret*"
+    - "*password*"
+    - "config/production*"
+
+  # Conditions under which changes can be auto-approved
+  autoApproveIf:
+    - only_formatting_changes
+    - only_comment_changes
+    - test_file_only
+
+# Notification Settings
+# Where to send notifications
+notifications:
+  # Enable console notifications (always available)
+  console: true
+
+  # Slack integration (optional)
+  # Uncomment and configure to enable
+  # slack:
+  #   webhookUrl: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  #   channel: "#codex-notifications"
+  #   username: "CODEX"
+  #   iconEmoji: ":robot_face:"
+
+  # Discord integration (optional)
+  # Uncomment and configure to enable
+  # discord:
+  #   webhookUrl: "https://discord.com/api/webhooks/YOUR/WEBHOOK/URL"
+  #   username: "CODEX"
+
+# Memory Settings
+# Controls what is stored and retention
+memory:
+  # Store failed attempts in memory for learning
+  storeFailures: true
+
+  # Store successful attempts in memory for pattern recognition
+  storeSuccesses: true
+
+  # Number of days to keep memory entries before pruning
+  # Longer retention = better learning, but more storage
+  pruneAfterDays: 90

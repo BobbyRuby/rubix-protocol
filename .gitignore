@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+
+# Database files (contain local data)
+*.db
+*.db-shm
+*.db-wal
+*.hnsw
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local config (keep examples)
+god-agent/data/
+
+# Temp
+nul

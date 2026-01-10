@@ -1,0 +1,999 @@
+/**
+ * Memory Engine
+ *
+ * Unified API facade for the God Agent memory system.
+ * Coordinates vector search, provenance tracking, causal memory, and pattern matching.
+ */
+
+import { existsSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+
+import { SQLiteStorage } from '../storage/SQLiteStorage.js';
+import { VectorDB } from '../vector/VectorDB.js';
+import { EmbeddingService } from '../vector/EmbeddingService.js';
+import { ProvenanceStore } from '../provenance/ProvenanceStore.js';
+import { CausalMemory } from '../causal/CausalMemory.js';
+import { PatternMatcher } from '../pattern/PatternMatcher.js';
+import { ShadowSearch } from '../adversarial/ShadowSearch.js';
+import { SonaEngine } from '../learning/SonaEngine.js';
+import { EnhancementLayer } from '../gnn/EnhancementLayer.js';
+import { TinyDancer } from '../routing/TinyDancer.js';
+import { getDefaultConfig, validateConfig, mergeConfig } from './config.js';
+import { ProvenanceThresholdError } from './errors.js';
+
+import { MemorySource } from './types.js';
+import type {
+  MemoryEngineConfig,
+  MemoryEntry,
+  StoreOptions,
+  QueryOptions,
+  QueryResult,
+  CausalRelation,
+  CausalRelationType,
+  MemoryStats
+} from './types.js';
+import type { ProvenanceChain, LineageTraceResult } from '../provenance/types.js';
+import type { CausalPath, CausalQuery, CausalTraversalResult } from '../causal/types.js';
+import type { PatternMatch, PatternSlot } from '../pattern/types.js';
+import type { ShadowSearchOptions, ShadowSearchResult } from '../adversarial/types.js';
+import type { FeedbackResult, LearningStats, Trajectory } from '../learning/types.js';
+import type { EnhancementResult, GNNStats } from '../gnn/types.js';
+import type {
+  RoutingDecision,
+  QueryContext,
+  RoutingStats,
+  ReasoningRoute
+} from '../routing/types.js';
+
+export class MemoryEngine {
+  private config: MemoryEngineConfig;
+  private storage: SQLiteStorage;
+  private vectorDb: VectorDB;
+  private embeddings: EmbeddingService;
+  private provenance: ProvenanceStore;
+  private causal: CausalMemory;
+  private patterns: PatternMatcher;
+  private shadowSearch: ShadowSearch;
+  private sona: SonaEngine;
+  private gnn: EnhancementLayer;
+  private router: TinyDancer;
+  private initialized: boolean = false;
+
+  constructor(configOverrides?: Partial<MemoryEngineConfig>) {
+    const defaultConfig = getDefaultConfig();
+    this.config = configOverrides
+      ? mergeConfig(defaultConfig, configOverrides)
+      : defaultConfig;
+
+    // Validate configuration
+    const errors = validateConfig(this.config);
+    if (errors.length > 0) {
+      throw new Error(`Invalid configuration: ${errors.join(', ')}`);
+    }
+
+    // Ensure data directory exists
+    if (!existsSync(this.config.dataDir)) {
+      mkdirSync(this.config.dataDir, { recursive: true });
+    }
+
+    // Ensure parent directory for SQLite exists
+    const sqliteDir = dirname(this.config.storageConfig.sqlitePath);
+    if (!existsSync(sqliteDir)) {
+      mkdirSync(sqliteDir, { recursive: true });
+    }
+
+    // Initialize components
+    this.storage = new SQLiteStorage(this.config.storageConfig);
+
+    this.vectorDb = new VectorDB({
+      dimensions: this.config.vectorDimensions,
+      maxElements: this.config.hnswConfig.maxElements,
+      efConstruction: this.config.hnswConfig.efConstruction,
+      efSearch: this.config.hnswConfig.efSearch,
+      M: this.config.hnswConfig.M,
+      spaceName: this.config.hnswConfig.spaceName,
+      indexPath: this.config.storageConfig.indexPath
+    });
+
+    this.embeddings = new EmbeddingService({
+      provider: this.config.embeddingConfig.provider,
+      model: this.config.embeddingConfig.model,
+      dimensions: this.config.embeddingConfig.dimensions,
+      apiKey: this.config.embeddingConfig.apiKey,
+      batchSize: this.config.embeddingConfig.batchSize ?? 100
+    });
+
+    this.provenance = new ProvenanceStore(this.storage, {
+      lScoreConfig: this.config.lScoreConfig
+    });
+
+    this.causal = new CausalMemory(this.storage);
+
+    this.patterns = new PatternMatcher(this.storage, {
+      caseSensitive: false,
+      minConfidence: 0.3,
+      maxMatches: 10
+    });
+
+    this.shadowSearch = new ShadowSearch({
+      defaultThreshold: 0.5,
+      defaultTopK: 10,
+      lScoreWeight: 1.0
+    });
+
+    this.sona = new SonaEngine(this.storage, {
+      learningRate: 0.01,
+      lambda: 0.5,
+      driftThreshold: 0.3,
+      criticalDriftThreshold: 0.5
+    });
+
+    this.gnn = new EnhancementLayer(this.storage, this.causal, {
+      inputDim: 768,
+      outputDim: 1024,
+      hiddenDim: 512,
+      activation: 'relu',
+      dropout: 0.1,
+      residual: true
+    });
+
+    this.router = new TinyDancer({
+      minConfidence: 0.6,
+      useRuleBased: true,
+      trackStats: true
+    });
+  }
+
+  /**
+   * Initialize the memory engine
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    await this.vectorDb.initialize();
+    await this.causal.initialize();
+    this.sona.initialize();
+
+    this.initialized = true;
+  }
+
+  // ==========================================
+  // STORE OPERATIONS
+  // ==========================================
+
+  /**
+   * Store content in memory with embedding and provenance
+   *
+   * @throws {ProvenanceThresholdError} If L-Score is below threshold and enforcement is enabled
+   */
+  async store(content: string, options: StoreOptions = {}): Promise<MemoryEntry> {
+    await this.ensureInitialized();
+
+    const id = uuidv4();
+    const now = new Date();
+
+    // Generate embedding
+    const { embedding } = await this.embeddings.embed(content);
+
+    // Calculate lineage depth and collect parent info for L-Score
+    const parentIds = options.parentIds ?? [];
+    let lineageDepth = 0;
+    const parentLScores: number[] = [];
+
+    if (parentIds.length > 0) {
+      for (const pid of parentIds) {
+        const parent = this.storage.getEntry(pid);
+        if (parent) {
+          lineageDepth = Math.max(lineageDepth, parent.provenance.lineageDepth);
+          parentLScores.push(parent.provenance.lScore ?? 1.0);
+        }
+      }
+      lineageDepth += 1;
+    }
+
+    // Calculate L-Score BEFORE storing (to enforce threshold)
+    const confidence = options.confidence ?? 1.0;
+    const relevance = options.relevance ?? 1.0;
+    let lScore: number;
+
+    if (parentIds.length === 0) {
+      // Root entry - L-Score is 1.0
+      lScore = 1.0;
+    } else {
+      // Derived entry - calculate from parent L-Scores
+      const lScoreCalc = this.provenance.getLScoreCalculator();
+      const aggregatedParentLScore = lScoreCalc.aggregateFromParents(parentLScores);
+      lScore = lScoreCalc.calculateIncremental(aggregatedParentLScore, confidence, relevance);
+    }
+
+    // Enforce L-Score threshold if enabled
+    if (this.config.lScoreConfig.enforceThreshold) {
+      const threshold = this.config.lScoreConfig.threshold;
+      if (lScore < threshold) {
+        throw new ProvenanceThresholdError(lScore, threshold);
+      }
+    }
+
+    // Create memory entry
+    const entry: MemoryEntry = {
+      id,
+      content,
+      embedding,
+      metadata: {
+        source: options.source ?? MemorySource.USER_INPUT,
+        tags: options.tags ?? [],
+        importance: options.importance ?? 0.5,
+        context: options.context,
+        sessionId: options.sessionId,
+        agentId: options.agentId
+      },
+      provenance: {
+        parentIds,
+        lineageDepth,
+        confidence,
+        relevance,
+        lScore
+      },
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Store in SQLite
+    this.storage.storeEntry(entry);
+
+    // Store vector mapping and add to index
+    const label = this.storage.storeVectorMapping(id);
+    this.vectorDb.add(label, embedding);
+
+    // Update stored L-Score (for consistency with provenance store)
+    this.storage.updateLScore(id, lScore);
+
+    // Save vector index
+    await this.vectorDb.save();
+
+    return entry;
+  }
+
+  /**
+   * Get an entry by ID
+   */
+  getEntry(id: string): MemoryEntry | null {
+    return this.storage.getEntry(id);
+  }
+
+  /**
+   * Delete an entry
+   */
+  deleteEntry(id: string): boolean {
+    return this.storage.deleteEntry(id);
+  }
+
+  /**
+   * Update an existing memory entry
+   * If content changes, the embedding will be regenerated
+   */
+  async updateEntry(id: string, updates: {
+    content?: string;
+    tags?: string[];
+    importance?: number;
+    source?: MemorySource;
+  }): Promise<MemoryEntry | null> {
+    await this.ensureInitialized();
+
+    const entry = this.storage.getEntry(id);
+    if (!entry) return null;
+
+    // If content changed, need to re-embed
+    if (updates.content !== undefined && updates.content !== entry.content) {
+      const { embedding } = await this.embeddings.embed(updates.content);
+
+      // Update vector in index
+      const label = this.storage.getVectorLabel(id);
+      if (label !== null) {
+        this.vectorDb.update(label, embedding);
+      }
+    }
+
+    // Update in SQLite
+    const success = this.storage.updateEntry(id, updates);
+    if (!success) return null;
+
+    // Save vector index if we modified it
+    if (updates.content !== undefined && updates.content !== entry.content) {
+      await this.vectorDb.save();
+    }
+
+    return this.storage.getEntry(id);
+  }
+
+  // ==========================================
+  // QUERY OPERATIONS
+  // ==========================================
+
+  /**
+   * Query memory by semantic similarity
+   */
+  async query(text: string, options: QueryOptions = {}): Promise<QueryResult[]> {
+    await this.ensureInitialized();
+
+    const topK = options.topK ?? 10;
+    const minScore = options.minScore ?? 0.0;
+
+    // Pre-filter by tags if specified (get candidate entry IDs)
+    let tagCandidates: Set<string> | null = null;
+    if (options.filters?.tags && options.filters.tags.length > 0) {
+      const taggedIds = this.storage.getEntryIdsByTags(options.filters.tags);
+      if (taggedIds.length === 0) {
+        return []; // No entries have the requested tags
+      }
+      tagCandidates = new Set(taggedIds);
+    }
+
+    // Generate query embedding
+    const { embedding } = await this.embeddings.embed(text);
+
+    // Search vector index - fetch more if we have tag filters to compensate for filtering
+    // Tagged entries may be scattered throughout the similarity rankings, so search deeper
+    const searchLimit = tagCandidates ? 5000 : topK * 2;
+    const vectorResults = this.vectorDb.search(embedding, searchLimit);
+
+    const results: QueryResult[] = [];
+
+    for (const vr of vectorResults) {
+      if (vr.score < minScore) continue;
+
+      // Get entry ID from label
+      const entryId = this.storage.getEntryIdByLabel(vr.label);
+      if (!entryId) continue;
+
+      // Pre-filter by tags (skip if not in tag candidates)
+      if (tagCandidates && !tagCandidates.has(entryId)) continue;
+
+      const entry = this.storage.getEntry(entryId);
+      if (!entry) continue;
+
+      // Apply remaining filters (excluding tags - already handled above)
+      if (options.filters) {
+        if (!this.matchesFiltersExcludingTags(entry, options.filters)) continue;
+      }
+
+      // Get L-Score if requested
+      let lScore: number | undefined;
+      if (options.includeProvenance) {
+        lScore = entry.provenance.lScore ?? this.provenance.calculateAndStoreLScore(entryId);
+      }
+
+      results.push({
+        entry,
+        score: vr.score,
+        matchType: 'vector',
+        lScore
+      });
+
+      if (results.length >= topK) break;
+    }
+
+    return results;
+  }
+
+  /**
+   * Check if entry matches query filters (excluding tags - tags are pre-filtered via SQLite)
+   */
+  private matchesFiltersExcludingTags(entry: MemoryEntry, filters: QueryOptions['filters']): boolean {
+    if (!filters) return true;
+
+    if (filters.sources && !filters.sources.includes(entry.metadata.source)) {
+      return false;
+    }
+
+    // Skip tag check - tags are pre-filtered in query()
+
+    if (filters.dateRange) {
+      const created = entry.createdAt;
+      if (created < filters.dateRange.start || created > filters.dateRange.end) {
+        return false;
+      }
+    }
+
+    if (filters.minImportance !== undefined && entry.metadata.importance < filters.minImportance) {
+      return false;
+    }
+
+    if (filters.sessionId && entry.metadata.sessionId !== filters.sessionId) {
+      return false;
+    }
+
+    if (filters.agentId && entry.metadata.agentId !== filters.agentId) {
+      return false;
+    }
+
+    return true;
+  }
+
+  // ==========================================
+  // SHADOW SEARCH OPERATIONS
+  // ==========================================
+
+  /**
+   * Search for contradictory evidence using shadow vectors
+   *
+   * This inverts the query embedding (v × -1) to find entries that
+   * semantically oppose the query. Useful for:
+   * - Risk assessment (find reasons a trade might fail)
+   * - Bias detection (ensure not only seeing confirming evidence)
+   * - Devil's advocate (generate counter-arguments)
+   */
+  async shadowQuery(
+    text: string,
+    options: ShadowSearchOptions = {}
+  ): Promise<ShadowSearchResult> {
+    await this.ensureInitialized();
+
+    return this.shadowSearch.search(
+      text,
+      this.vectorDb,
+      this.embeddings,
+      this.storage,
+      this.provenance,
+      options
+    );
+  }
+
+  /**
+   * Quick check if a claim has significant contradictions
+   * Returns true if credibility is below threshold (default 0.5)
+   */
+  async isContested(
+    text: string,
+    credibilityThreshold: number = 0.5
+  ): Promise<boolean> {
+    await this.ensureInitialized();
+
+    return this.shadowSearch.isContested(
+      text,
+      this.vectorDb,
+      this.embeddings,
+      this.storage,
+      this.provenance,
+      credibilityThreshold
+    );
+  }
+
+  // ==========================================
+  // LEARNING OPERATIONS (SONA)
+  // ==========================================
+
+  /**
+   * Query with learning support
+   *
+   * Same as query() but returns a trajectoryId for later feedback.
+   * Call provideFeedback() with the trajectoryId to improve future results.
+   */
+  async queryWithLearning(
+    text: string,
+    options: QueryOptions = {}
+  ): Promise<{ results: QueryResult[]; trajectoryId: string }> {
+    await this.ensureInitialized();
+
+    // Perform standard query
+    const results = await this.query(text, options);
+
+    // Create trajectory to track this query
+    const matchedIds = results.map(r => r.entry.id);
+    const matchScores = results.map(r => r.score);
+
+    const trajectoryId = this.sona.createTrajectory(
+      text,
+      matchedIds,
+      matchScores,
+      undefined, // Could add embedding here
+      'semantic_search'
+    );
+
+    return { results, trajectoryId };
+  }
+
+  /**
+   * Provide feedback for a query trajectory
+   *
+   * Call this after evaluating how useful query results were.
+   * Quality should be 0-1 (0 = useless, 1 = perfect results).
+   */
+  async provideFeedback(
+    trajectoryId: string,
+    quality: number,
+    route?: string
+  ): Promise<FeedbackResult> {
+    await this.ensureInitialized();
+    return this.sona.provideFeedback(trajectoryId, quality, route);
+  }
+
+  /**
+   * Get learning statistics
+   */
+  getLearningStats(): LearningStats {
+    return this.sona.getStats();
+  }
+
+  /**
+   * Get pending feedback trajectories
+   */
+  getPendingFeedback(limit: number = 10): Trajectory[] {
+    return this.sona.getPendingFeedback(limit);
+  }
+
+  /**
+   * Get a specific trajectory
+   */
+  getTrajectory(id: string): Trajectory | null {
+    return this.sona.getTrajectory(id);
+  }
+
+  /**
+   * Check drift in learning weights
+   */
+  checkLearningDrift(): { drift: number; status: string } {
+    const metrics = this.sona.checkDrift();
+    return { drift: metrics.drift, status: metrics.status };
+  }
+
+  /**
+   * Create a learning checkpoint
+   */
+  createLearningCheckpoint(): string {
+    return this.sona.createCheckpoint();
+  }
+
+  /**
+   * Rollback learning to latest checkpoint
+   */
+  rollbackLearning(): boolean {
+    return this.sona.rollbackToLatest();
+  }
+
+  /**
+   * Run auto-maintenance on learning weights
+   * - Prunes consistently failing patterns
+   * - Boosts consistently successful patterns
+   */
+  maintainLearning(): { pruned: number; boosted: number } {
+    const pruneResult = this.sona.autoPrune();
+    const boostResult = this.sona.autoBoost();
+    return {
+      pruned: pruneResult.pruned,
+      boosted: boostResult.boosted
+    };
+  }
+
+  // ==========================================
+  // PROVENANCE OPERATIONS
+  // ==========================================
+
+  /**
+   * Trace provenance lineage for an entry
+   */
+  trace(id: string, maxDepth: number = 10): ProvenanceChain {
+    return this.provenance.traceLineage(id, maxDepth);
+  }
+
+  /**
+   * Get flattened lineage trace
+   */
+  getLineageTrace(id: string, maxDepth: number = 10): LineageTraceResult {
+    return this.provenance.getLineageTrace(id, maxDepth);
+  }
+
+  /**
+   * Check if an entry has reliable provenance
+   */
+  isReliable(id: string, threshold: number = 0.5): boolean {
+    return this.provenance.isReliable(id, threshold);
+  }
+
+  /**
+   * Get reliability category for an entry
+   */
+  getReliabilityCategory(id: string): 'high' | 'medium' | 'low' | 'unreliable' {
+    return this.provenance.getReliabilityCategory(id);
+  }
+
+  // ==========================================
+  // CAUSAL OPERATIONS
+  // ==========================================
+
+  /**
+   * Add a causal relationship
+   */
+  addCausalRelation(
+    sourceIds: string[],
+    targetIds: string[],
+    type: CausalRelationType,
+    strength: number = 0.8,
+    options?: {
+      metadata?: Record<string, unknown>;
+      /** Time-to-live in milliseconds. Relation expires after this duration. */
+      ttl?: number;
+    }
+  ): CausalRelation {
+    return this.causal.addRelation(sourceIds, targetIds, type, strength, options);
+  }
+
+  /**
+   * Get causal relation by ID
+   */
+  getCausalRelation(id: string): CausalRelation | null {
+    return this.causal.getRelation(id);
+  }
+
+  /**
+   * Find causal relationships for an entry
+   */
+  getCausalRelationsForEntry(
+    entryId: string,
+    direction: 'forward' | 'backward' | 'both' = 'both'
+  ): CausalRelation[] {
+    return this.causal.getRelationsForEntry(entryId, direction);
+  }
+
+  /**
+   * Traverse causal graph
+   */
+  traverseCausal(query: CausalQuery): CausalTraversalResult {
+    return this.causal.traverse(query);
+  }
+
+  /**
+   * Find causal paths between entries
+   */
+  findCausalPaths(sourceId: string, targetId: string, maxDepth: number = 10): CausalPath[] {
+    return this.causal.findPaths(sourceId, targetId, maxDepth);
+  }
+
+  /**
+   * Find effects of an entry
+   */
+  findEffects(entryId: string, maxDepth: number = 5): string[] {
+    return this.causal.findEffects(entryId, maxDepth);
+  }
+
+  /**
+   * Find causes of an entry
+   */
+  findCauses(entryId: string, maxDepth: number = 5): string[] {
+    return this.causal.findCauses(entryId, maxDepth);
+  }
+
+  /**
+   * Export causal graph as Mermaid diagram
+   */
+  causalToMermaid(): string {
+    return this.causal.toMermaid();
+  }
+
+  /**
+   * Get count of expired causal relations
+   */
+  getExpiredRelationCount(): number {
+    return this.causal.getExpiredCount();
+  }
+
+  /**
+   * Get expired causal relations (for inspection before cleanup)
+   */
+  getExpiredRelations(): CausalRelation[] {
+    return this.causal.getExpiredRelations();
+  }
+
+  /**
+   * Clean up expired causal relations
+   *
+   * Removes relations from both storage and in-memory graph.
+   * Useful for maintaining fresh market correlations that naturally expire.
+   *
+   * @returns Object with count of cleaned relations and their IDs
+   */
+  cleanupExpiredRelations(): { cleaned: number; relationIds: string[] } {
+    return this.causal.cleanupExpired();
+  }
+
+  // ==========================================
+  // PATTERN OPERATIONS
+  // ==========================================
+
+  /**
+   * Register a pattern template
+   */
+  registerPattern(
+    name: string,
+    pattern: string,
+    slots: PatternSlot[],
+    priority: number = 0
+  ): void {
+    this.patterns.registerTemplate(name, pattern, slots, priority);
+  }
+
+  /**
+   * Match text against patterns
+   */
+  matchPatterns(text: string): PatternMatch[] {
+    return this.patterns.match(text);
+  }
+
+  /**
+   * Extract structured data using patterns
+   */
+  extractPatterns(text: string): Record<string, Record<string, string>> {
+    return this.patterns.extract(text);
+  }
+
+  /**
+   * Get the pattern matcher for direct access to pattern operations
+   * Used for advanced pattern management like success tracking and pruning
+   */
+  getPatternMatcher(): PatternMatcher {
+    return this.patterns;
+  }
+
+  /**
+   * Get the storage layer for direct database access
+   * Used by scheduler and other components that need direct SQLite access
+   */
+  getStorage(): SQLiteStorage {
+    return this.storage;
+  }
+
+  // ==========================================
+  // GNN ENHANCEMENT OPERATIONS
+  // ==========================================
+
+  /**
+   * Enhance an entry's embedding using GNN (graph context)
+   *
+   * Uses the causal and provenance graph to enrich the embedding
+   * with structural context from connected entries.
+   *
+   * @param entryId - The entry to enhance
+   * @returns Enhanced embedding result (768-dim → 1024-dim)
+   */
+  async enhanceEntry(entryId: string): Promise<EnhancementResult | null> {
+    await this.ensureInitialized();
+
+    const entry = this.storage.getEntry(entryId);
+    if (!entry) return null;
+
+    // Get the embedding for this entry
+    const label = this.storage.getVectorLabel(entryId);
+    if (label === null) return null;
+
+    // We need to get the embedding - generate it from content
+    const { embedding } = await this.embeddings.embed(entry.content);
+
+    // Create embedding lookup function for neighbors
+    const embeddingLookup = (id: string): Float32Array | null => {
+      const neighborEntry = this.storage.getEntry(id);
+      if (!neighborEntry) return null;
+      // For neighbors, we'd ideally cache embeddings, but for now regenerate
+      // This could be optimized with a vector store lookup
+      return null; // Let GNN handle missing embeddings gracefully
+    };
+
+    return this.gnn.enhance(entryId, embedding, embeddingLookup);
+  }
+
+  /**
+   * Get GNN-enhanced statistics
+   */
+  getGNNStats(): GNNStats {
+    return this.gnn.getStats();
+  }
+
+  /**
+   * Clear GNN enhancement cache
+   */
+  clearGNNCache(): void {
+    this.gnn.clearCache();
+  }
+
+  /**
+   * Get the enhancement layer for direct access
+   */
+  getEnhancementLayer(): EnhancementLayer {
+    return this.gnn;
+  }
+
+  // ==========================================
+  // ROUTING OPERATIONS (Tiny Dancer)
+  // ==========================================
+
+  /**
+   * Route a query to the optimal reasoning strategy
+   *
+   * Uses Tiny Dancer to analyze the query and determine the best
+   * reasoning approach (pattern match, causal, hybrid, etc.)
+   *
+   * @param query - The query text to route
+   * @param options - Optional routing context
+   * @returns Routing decision with selected route and confidence
+   */
+  routeQuery(
+    query: string,
+    options?: {
+      preferredRoute?: ReasoningRoute;
+      previousRoute?: ReasoningRoute;
+      metadata?: Record<string, unknown>;
+    }
+  ): RoutingDecision {
+    const context: QueryContext = {
+      query,
+      preferredRoute: options?.preferredRoute as ReasoningRoute | undefined,
+      previousRoute: options?.previousRoute as ReasoningRoute | undefined,
+      metadata: options?.metadata
+    };
+
+    return this.router.route(context);
+  }
+
+  /**
+   * Record the result of executing a routed query
+   *
+   * Used to update circuit breaker state and improve routing over time.
+   *
+   * @param route - The route that was used
+   * @param success - Whether execution was successful
+   */
+  recordRoutingResult(route: ReasoningRoute, success: boolean): void {
+    this.router.recordResult(route, success);
+  }
+
+  /**
+   * Get routing statistics
+   */
+  getRoutingStats(): RoutingStats {
+    return this.router.getStats();
+  }
+
+  /**
+   * Get circuit breaker status for all routes
+   */
+  getCircuitStatus(): ReturnType<TinyDancer['getCircuitStatus']> {
+    return this.router.getCircuitStatus();
+  }
+
+  /**
+   * Reset a circuit breaker for a specific route
+   */
+  resetCircuit(route: ReasoningRoute): void {
+    this.router.getCircuitBreaker().reset(route);
+  }
+
+  /**
+   * Reset all circuit breakers
+   */
+  resetAllCircuits(): void {
+    this.router.getCircuitBreaker().resetAll();
+  }
+
+  /**
+   * Check if a route can accept requests (circuit not open)
+   */
+  canUseRoute(route: ReasoningRoute): boolean {
+    return this.router.getCircuitBreaker().canAttempt(route);
+  }
+
+  /**
+   * Get the TinyDancer router for direct access
+   */
+  getRouter(): TinyDancer {
+    return this.router;
+  }
+
+  // ==========================================
+  // STATISTICS
+  // ==========================================
+
+  /**
+   * Get memory system statistics
+   */
+  getStats(): MemoryStats {
+    const storageStats = this.storage.getStats();
+
+    return {
+      totalEntries: storageStats.totalEntries,
+      vectorCount: storageStats.vectorCount,
+      causalRelations: storageStats.causalRelations,
+      patternTemplates: storageStats.patternTemplates,
+      avgLScore: storageStats.avgLScore,
+      avgSearchLatency: 0, // Would need actual measurement
+      dataSize: 0, // Would need file size calculation
+      compressionTiers: storageStats.compressionTiers
+    };
+  }
+
+  /**
+   * Get compression statistics
+   */
+  getCompressionStats(): {
+    vectorCount: number;
+    tierDistribution: Record<string, number>;
+    estimatedMemorySaved: number;
+    maxAccessCount: number;
+  } {
+    const tierCounts = this.storage.getCompressionTierCounts();
+    const vectorCount = this.storage.getStats().vectorCount;
+    const maxAccessCount = this.storage.getMaxVectorAccessCount();
+
+    // Calculate estimated memory saved
+    // Base: 768 dims × 4 bytes = 3072 bytes per vector
+    // Hot: 100%, Warm: 50%, Cool: 12.5%, Cold: 6.25%, Frozen: 3.125%
+    const FULL_SIZE = 768 * 4;
+    const TIER_RATIOS: Record<string, number> = {
+      hot: 1.0,
+      warm: 0.5,
+      cool: 0.125,
+      cold: 0.0625,
+      frozen: 0.03125
+    };
+
+    let compressedSize = 0;
+    let uncompressedSize = 0;
+
+    for (const [tier, count] of Object.entries(tierCounts)) {
+      uncompressedSize += count * FULL_SIZE;
+      compressedSize += count * FULL_SIZE * (TIER_RATIOS[tier] ?? 1.0);
+    }
+
+    return {
+      vectorCount,
+      tierDistribution: tierCounts,
+      estimatedMemorySaved: uncompressedSize - compressedSize,
+      maxAccessCount
+    };
+  }
+
+  /**
+   * Record an access to a vector (for compression tier management)
+   */
+  recordVectorAccess(entryId: string): void {
+    const label = this.storage.getVectorLabel(entryId);
+    if (label !== null) {
+      this.storage.recordVectorAccess(label);
+    }
+  }
+
+  // ==========================================
+  // LIFECYCLE
+  // ==========================================
+
+  /**
+   * Ensure engine is initialized
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+  }
+
+  /**
+   * Close the memory engine
+   */
+  async close(): Promise<void> {
+    await this.vectorDb.save();
+    this.storage.close();
+    this.initialized = false;
+  }
+
+  /**
+   * Get configuration
+   */
+  getConfig(): MemoryEngineConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Check if initialized
+   */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+}
