@@ -13,6 +13,9 @@
 // Main executor
 export { TaskExecutor, type TaskSubmission, type ExecutionOptions } from './TaskExecutor.js';
 
+// Code generation
+export { CodeGenerator, type CodeGenRequest, type CodeGenResult, type CodeGeneratorConfig } from './CodeGenerator.js';
+
 // Task decomposition
 export { TaskDecomposer } from './TaskDecomposer.js';
 

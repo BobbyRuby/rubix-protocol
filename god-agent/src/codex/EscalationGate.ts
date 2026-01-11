@@ -15,6 +15,7 @@ import {
   type Assumption,
   type DecisionOption,
   type CodexConfig,
+  type ChallengeContext,
   DEFAULT_CODEX_CONFIG
 } from './types.js';
 
@@ -27,7 +28,11 @@ export type SituationType =
   | 'blocked'
   | 'irreversible_action'
   | 'minor_ambiguity'
-  | 'error';
+  | 'error'
+  // Collaborative partner types
+  | 'knowledge_gap'      // Agent needs information before proceeding
+  | 'challenge_soft'     // Agent disagrees but can proceed with user acknowledgment
+  | 'challenge_hard';    // Agent refuses to proceed without explicit override
 
 /**
  * Situation context for escalation decision
@@ -41,6 +46,8 @@ export interface Situation {
   errors?: string[];
   businessImpact?: 'high' | 'medium' | 'low';
   options?: DecisionOption[];
+  /** Challenge context for collaborative partner challenges */
+  challengeContext?: ChallengeContext;
 }
 
 /**
@@ -129,6 +136,18 @@ export class EscalationGate {
       }
     }
 
+    // === COLLABORATIVE PARTNER TYPES ===
+
+    // Hard challenge - agent strongly disagrees, requires explicit override
+    if (situation.type === 'challenge_hard') {
+      return true;
+    }
+
+    // Critical knowledge gap - agent needs information to proceed safely
+    if (situation.type === 'knowledge_gap' && situation.businessImpact === 'high') {
+      return true;
+    }
+
     return false;
   }
 
@@ -156,6 +175,25 @@ export class EscalationGate {
       if (isAutonomous) {
         return true;
       }
+    }
+
+    // === COLLABORATIVE PARTNER TYPES ===
+
+    // Soft challenge - agent has concerns but can proceed
+    // (will log concerns and continue, but doesn't block)
+    if (situation.type === 'challenge_soft') {
+      // Log the challenge but allow self-resolution
+      console.log(`[EscalationGate] Soft challenge logged: ${situation.description}`);
+      if (situation.challengeContext) {
+        console.log(`[EscalationGate] Credibility: ${situation.challengeContext.credibility.toFixed(2)}, L-Score: ${situation.challengeContext.lScore.toFixed(2)}`);
+        console.log(`[EscalationGate] Recommendation: ${situation.challengeContext.recommendation}`);
+      }
+      return true;
+    }
+
+    // Non-critical knowledge gaps - can proceed with assumptions
+    if (situation.type === 'knowledge_gap' && situation.businessImpact !== 'high') {
+      return true;
     }
 
     return false;

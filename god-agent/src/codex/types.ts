@@ -316,6 +316,10 @@ export interface DecomposeResult {
   estimatedComplexity: 'low' | 'medium' | 'high';
   ambiguities: Ambiguity[];
   dependencies: DependencyGraph;
+  /** True if Claude needs clarification before decomposing */
+  needsClarification?: boolean;
+  /** Claude's clarification questions/text */
+  clarificationText?: string;
 }
 
 /**
@@ -372,4 +376,58 @@ export interface ExecuteSubtaskResult {
   consoleErrors?: string[];
   screenshot?: string;
   duration: number;
+}
+
+// ==========================================
+// COLLABORATIVE PARTNER TYPES
+// ==========================================
+
+/**
+ * Challenge context for escalation
+ */
+export interface ChallengeContext {
+  /** Credibility score from shadow search (0-1) */
+  credibility: number;
+  /** L-Score of the approach (0-1) */
+  lScore: number;
+  /** Contradictions found */
+  contradictions: Array<{
+    content: string;
+    refutationStrength: number;
+    source: string;
+  }>;
+  /** Partner's recommendation */
+  recommendation: string;
+  /** Reasoning for the challenge */
+  reasoning: string;
+}
+
+/**
+ * Knowledge gap for proactive curiosity
+ */
+export interface KnowledgeGapInfo {
+  /** The question to ask */
+  question: string;
+  /** Whether this blocks execution */
+  critical: boolean;
+  /** Domain of the gap */
+  domain: 'task_novelty' | 'specification' | 'terminology' | 'scope' | 'technology';
+  /** Additional context */
+  context?: string;
+}
+
+/**
+ * Partner assessment result
+ */
+export interface PartnerAssessmentResult {
+  /** Whether the partner has concerns */
+  shouldChallenge: boolean;
+  /** Whether this is a hard gate (requires override) */
+  isHardGate: boolean;
+  /** Credibility score (0-1) */
+  credibility: number;
+  /** L-Score (0-1) */
+  lScore: number;
+  /** Challenge context if challenging */
+  challengeContext?: ChallengeContext;
 }

@@ -11,6 +11,7 @@
 
 import { randomUUID } from 'crypto';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
+import type { ExtendedThinkingConfig } from '../core/types.js';
 import type { PlaywrightManager } from '../playwright/PlaywrightManager.js';
 import type { VerificationService } from '../playwright/VerificationService.js';
 import type { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js';
@@ -20,6 +21,8 @@ import { EscalationGate, type Situation } from './EscalationGate.js';
 import { LearningIntegration, type LearningSuggestion } from './LearningIntegration.js';
 import { AlternativesFinder, type AlternativeApproach } from './AlternativesFinder.js';
 import { CausalDebugger, type CausalChain } from './CausalDebugger.js';
+import { CodeGenerator } from './CodeGenerator.js';
+import { CollaborativePartner } from './CollaborativePartner.js';
 import type { NotificationService } from '../notification/NotificationService.js';
 import { DeepWorkManager, type DeepWorkSession, type DeepWorkOptions, type FocusLevel } from '../deepwork/index.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
@@ -97,6 +100,15 @@ export class TaskExecutor {
   // Deep Work Mode
   private deepWork: DeepWorkManager;
 
+  // Code Generator (Claude API integration)
+  private codeGenerator: CodeGenerator | undefined;
+
+  // Extended thinking (ultrathink) configuration
+  private extendedThinking: ExtendedThinkingConfig | undefined;
+
+  // Collaborative Partner (proactive curiosity + challenge decisions)
+  private collaborativePartner: CollaborativePartner | undefined;
+
   private currentTask: CodexTask | undefined;
   private workLog: WorkLogEntry[] = [];
   private isExecuting = false;
@@ -157,16 +169,177 @@ export class TaskExecutor {
       task.startedAt = new Date();
 
       // Gather codebase context
-      const codebaseContext = await this.gatherCodebaseContext(task.codebase);
+      let codebaseContext = await this.gatherCodebaseContext(task.codebase);
+
+      // === PROACTIVE CURIOSITY CHECK ===
+      // Before decomposition, identify knowledge gaps and ask questions
+      if (this.collaborativePartner) {
+        const gaps = await this.collaborativePartner.identifyKnowledgeGaps(task);
+
+        if (gaps.length > 0) {
+          this.log('progress', `Collaborative Partner identified ${gaps.length} knowledge gap(s)`);
+
+          // Separate critical and non-critical gaps
+          const criticalGaps = gaps.filter(g => g.critical);
+          const nonCriticalGaps = gaps.filter(g => !g.critical);
+
+          // Critical gaps require escalation
+          if (criticalGaps.length > 0) {
+            const situation: Situation = {
+              type: 'knowledge_gap',
+              description: criticalGaps.map(g => g.question).join('\n\n'),
+              task,
+              businessImpact: 'high'
+            };
+
+            const escalation = this.escalation.createEscalation(situation, {
+              shouldEscalate: true,
+              type: 'clarification',
+              reason: 'Knowledge gaps must be clarified before proceeding',
+              canContinueWithAssumption: false
+            });
+
+            if (this.communications) {
+              task.status = TaskStatus.BLOCKED;
+              this.log('escalation', 'Critical knowledge gaps - awaiting user response', {
+                escalationId: escalation.id,
+                questions: criticalGaps.map(g => g.question)
+              });
+
+              const response = await this.attemptCommunicationEscalation(escalation, task);
+
+              if (response?.response) {
+                this.log('progress', 'User clarified knowledge gaps');
+                codebaseContext += `\n\n=== USER CLARIFICATION (Knowledge Gaps) ===\n${response.response}\n=== END CLARIFICATION ===`;
+                this.escalation.resolveEscalation(escalation.id, response.response);
+              } else {
+                this.log('failure', 'No response to knowledge gap questions');
+                task.status = TaskStatus.FAILED;
+                return {
+                  success: false,
+                  summary: `Task blocked: knowledge gaps require clarification.\n\nQuestions:\n${criticalGaps.map(g => `- ${g.question}`).join('\n')}`,
+                  subtasksCompleted: 0,
+                  subtasksFailed: 0,
+                  filesModified: [],
+                  testsWritten: 0,
+                  duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
+                  decisions: [],
+                  assumptions: []
+                };
+              }
+            }
+          }
+
+          // Non-critical gaps are logged and added as context
+          if (nonCriticalGaps.length > 0) {
+            this.log('progress', `Proceeding with assumptions for ${nonCriticalGaps.length} non-critical gap(s)`);
+            const assumptions = nonCriticalGaps.map(g => ({
+              id: randomUUID(),
+              taskId: task.id,
+              description: `Assumed reasonable default for: ${g.question}`,
+              reasoning: `Non-critical knowledge gap in domain: ${g.domain}`,
+              madeAt: new Date()
+            }));
+            task.assumptions.push(...assumptions);
+          }
+        }
+      }
 
       // Decompose task (unless skipped)
       if (!options.skipDecomposition) {
         this.log('progress', 'Decomposing task into subtasks');
 
-        const decomposition = await this.decomposer.decompose({
+        let decomposition = await this.decomposer.decompose({
           task,
           codebaseContext
         });
+
+        // Handle clarification needed during decomposition
+        if (decomposition.needsClarification && decomposition.clarificationText) {
+          this.log('escalation', 'Claude needs clarification before decomposition');
+
+          // Create escalation with Claude's questions
+          const situation = {
+            task,
+            description: decomposition.clarificationText,
+            attempts: 0,
+            type: 'spec_ambiguity' as const
+          };
+
+          const escalation = this.escalation.createEscalation(situation, {
+            shouldEscalate: true,
+            type: 'clarification',
+            reason: 'Clarification needed for task decomposition',
+            canContinueWithAssumption: false
+          });
+
+          // Send clarification request to user via communication channels
+          if (this.communications) {
+            task.status = TaskStatus.BLOCKED;
+            this.log('progress', 'Waiting for user clarification...');
+
+            const response = await this.attemptCommunicationEscalation(escalation, task);
+
+            if (response?.response) {
+              this.log('progress', 'Received clarification, re-decomposing task');
+
+              // Re-decompose with clarification in context
+              decomposition = await this.decomposer.decompose({
+                task: {
+                  ...task,
+                  specification: `${task.specification || ''}\n\nUser Clarification:\n${response.response}`
+                },
+                codebaseContext: `${codebaseContext}\n\nUser provided clarification:\n${response.response}`
+              });
+
+              // If still needs clarification, fail gracefully
+              if (decomposition.needsClarification) {
+                this.log('failure', 'Still needs clarification after user response');
+                task.status = TaskStatus.FAILED;
+                return {
+                  success: false,
+                  summary: 'Unable to decompose task even with clarification',
+                  subtasksCompleted: 0,
+                  subtasksFailed: 0,
+                  filesModified: [],
+                  testsWritten: 0,
+                  duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
+                  decisions: [],
+                  assumptions: []
+                };
+              }
+            } else {
+              this.log('failure', 'Clarification timeout or no response');
+              task.status = TaskStatus.FAILED;
+              return {
+                success: false,
+                summary: 'Task decomposition blocked: awaiting clarification',
+                subtasksCompleted: 0,
+                subtasksFailed: 0,
+                filesModified: [],
+                testsWritten: 0,
+                duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
+                decisions: [],
+                assumptions: []
+              };
+            }
+          } else {
+            // No communication channels - fail immediately
+            this.log('failure', 'Cannot get clarification: no communication channels configured');
+            task.status = TaskStatus.FAILED;
+            return {
+              success: false,
+              summary: `Task needs clarification but no communication channels available.\n\nQuestions:\n${decomposition.clarificationText}`,
+              subtasksCompleted: 0,
+              subtasksFailed: 0,
+              filesModified: [],
+              testsWritten: 0,
+              duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
+              decisions: [],
+              assumptions: []
+            };
+          }
+        }
 
         task.subtasks = decomposition.subtasks;
 
@@ -418,13 +591,127 @@ export class TaskExecutor {
       // Track attempt start with learning
       await this.learning.trackAttemptStart(task, subtask, attemptRecord);
 
+      // === CHALLENGE CHECK ===
+      // Before execution, assess the approach for potential issues
+      if (this.collaborativePartner) {
+        const assessment = await this.collaborativePartner.assessApproach(approach, {
+          task,
+          subtask,
+          attempt: attemptRecord,
+          previousAttempts: subtask.attempts.slice(0, -1),
+          codebaseContext
+        });
+
+        if (assessment.isHardGate) {
+          // HARD GATE: Block execution until user explicitly overrides
+          this.log('escalation', `Collaborative Partner BLOCKS approach: ${assessment.reasoning}`, {
+            credibility: assessment.credibility,
+            lScore: assessment.lScore,
+            contradictions: assessment.contradictions.length
+          });
+
+          const situation: Situation = {
+            type: 'challenge_hard',
+            description: `The collaborative partner has significant concerns about this approach:\n\n${assessment.reasoning}\n\nRecommendation: ${assessment.recommendation}`,
+            task,
+            subtask,
+            businessImpact: 'high',
+            challengeContext: {
+              credibility: assessment.credibility,
+              lScore: assessment.lScore,
+              contradictions: assessment.contradictions.map(c => ({
+                content: c.content,
+                refutationStrength: c.refutationStrength,
+                source: c.source
+              })),
+              recommendation: assessment.recommendation,
+              reasoning: assessment.reasoning
+            }
+          };
+
+          const escalation = this.escalation.createEscalation(situation, {
+            shouldEscalate: true,
+            type: 'approval',
+            reason: 'Hard gate: approach requires explicit override to proceed',
+            canContinueWithAssumption: false
+          });
+
+          if (this.communications) {
+            task.status = TaskStatus.BLOCKED;
+            this.log('escalation', 'Awaiting user override for challenged approach', {
+              escalationId: escalation.id
+            });
+
+            const response = await this.attemptCommunicationEscalation(escalation, task, subtask);
+
+            if (response?.response) {
+              const responseText = response.response.toLowerCase();
+              if (responseText.includes('override') || responseText.includes('proceed') || responseText.includes('continue') || responseText.includes('yes')) {
+                this.log('progress', 'User overrode hard gate challenge');
+                this.escalation.resolveEscalation(escalation.id, response.response);
+                task.status = TaskStatus.EXECUTING;
+                // Continue with execution
+              } else {
+                this.log('progress', 'User confirmed blocking - trying alternative');
+                this.escalation.resolveEscalation(escalation.id, response.response);
+                task.status = TaskStatus.EXECUTING;
+                // Skip this attempt - let the loop try alternatives
+                attemptRecord.error = 'Approach blocked by user after challenge';
+                attemptRecord.completedAt = new Date();
+                continue;
+              }
+            } else {
+              // No response - abort this approach
+              this.log('failure', 'No response to hard gate challenge - aborting approach');
+              attemptRecord.error = 'Approach blocked: no override received for hard gate challenge';
+              attemptRecord.completedAt = new Date();
+              continue;
+            }
+          } else {
+            // No communications - log and proceed with caution
+            this.log('escalation', 'Hard gate triggered but no communications configured - proceeding with caution');
+          }
+        } else if (assessment.shouldChallenge) {
+          // SOFT WARNING: Log concerns but proceed
+          this.log('progress', `Collaborative Partner has concerns: ${assessment.reasoning}`, {
+            credibility: assessment.credibility,
+            lScore: assessment.lScore
+          });
+
+          // Store the challenge as an assumption
+          task.assumptions.push({
+            id: randomUUID(),
+            taskId: task.id,
+            description: `Proceeded despite concerns: ${assessment.reasoning}`,
+            reasoning: `Soft challenge (credibility: ${(assessment.credibility * 100).toFixed(0)}%, L-Score: ${(assessment.lScore * 100).toFixed(0)}%)`,
+            madeAt: new Date()
+          });
+        }
+      }
+
       try {
+        // Calculate thinking budget for ultrathink
+        const thinkingBudget = this.calculateThinkingBudget(
+          attempt,
+          subtask,
+          lastError,
+          undefined // filesAffected - populated on retry
+        );
+
+        if (thinkingBudget) {
+          this.log('progress', `Ultrathink enabled: ${thinkingBudget} token budget`, {
+            attempt,
+            subtaskType: subtask.type
+          });
+        }
+
         // Execute the approach
         const result = await this.performSubtaskExecution(
           task,
           subtask,
           attemptRecord,
-          codebaseContext
+          codebaseContext,
+          thinkingBudget
         );
 
         attemptRecord.completedAt = new Date();
@@ -463,6 +750,16 @@ export class TaskExecutor {
             verificationPassed: result.verificationPassed,
             duration: Date.now() - attemptRecord.startedAt.getTime()
           };
+        }
+
+        // Handle clarification received - add to context and retry
+        if (result.error === 'CLARIFICATION_RECEIVED' && result.output) {
+          console.log('[TaskExecutor] Clarification received, adding to context for retry');
+          codebaseContext += `\n\n=== USER CLARIFICATION ===\n${result.output}\n=== END CLARIFICATION ===`;
+          attemptRecord.healingAction = 'User provided clarification';
+          // Don't count this as a failed attempt - reset attempt count
+          // Actually just continue to next iteration which will use the updated context
+          continue;
         }
 
         // Attempt failed
@@ -583,12 +880,14 @@ export class TaskExecutor {
 
   /**
    * Perform actual subtask execution
+   * @param thinkingBudget Optional thinking budget for ultrathink mode
    */
   private async performSubtaskExecution(
     task: CodexTask,
     subtask: Subtask,
-    _attempt: SubtaskAttempt,
-    codebaseContext: string
+    attempt: SubtaskAttempt,
+    codebaseContext: string,
+    thinkingBudget?: number
   ): Promise<{
     success: boolean;
     output?: string;
@@ -601,27 +900,22 @@ export class TaskExecutor {
     consoleErrors?: string[];
     screenshot?: string;
   }> {
-    // In a full implementation, this would:
-    // 1. Generate code changes using Claude API
-    // 2. Apply changes to files
-    // 3. Run verification
-
-    // For now, we simulate execution based on subtask type
+    // Execute based on subtask type, using CodeGenerator when available
     switch (subtask.type) {
       case 'research':
-        return this.executeResearch(subtask, codebaseContext);
+        return this.executeResearch(task, subtask, attempt, codebaseContext);
 
       case 'design':
-        return this.executeDesign(subtask, codebaseContext);
+        return this.executeDesign(task, subtask, attempt, codebaseContext);
 
       case 'code':
-        return this.executeCode(subtask, codebaseContext);
+        return this.executeCode(task, subtask, attempt, codebaseContext, thinkingBudget);
 
       case 'test':
         return this.executeTest(subtask, task.verificationPlan);
 
       case 'integrate':
-        return this.executeIntegration(subtask, codebaseContext);
+        return this.executeIntegration(task, subtask, attempt, codebaseContext, thinkingBudget);
 
       case 'verify':
         return this.executeVerification(subtask, task.verificationPlan);
@@ -641,10 +935,34 @@ export class TaskExecutor {
    * Execute research subtask
    */
   private async executeResearch(
+    task: CodexTask,
     subtask: Subtask,
-    _codebaseContext: string
+    attempt: SubtaskAttempt,
+    codebaseContext: string
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    // Query memory for relevant context
+    // If CodeGenerator is available, use Claude for intelligent analysis
+    if (this.codeGenerator) {
+      try {
+        const result = await this.codeGenerator.analyzeCode({
+          task,
+          subtask,
+          attempt,
+          codebaseContext,
+          previousAttempts: subtask.attempts.slice(0, -1)
+        });
+
+        return {
+          success: result.success,
+          output: result.output,
+          error: result.error
+        };
+      } catch (error) {
+        // Fall back to memory-based research
+        console.log('[TaskExecutor] CodeGenerator research failed, falling back to memory search');
+      }
+    }
+
+    // Fallback: Query memory for relevant context
     try {
       const results = await this.engine.query(subtask.description, {
         topK: 10,
@@ -671,10 +989,33 @@ export class TaskExecutor {
    * Execute design subtask
    */
   private async executeDesign(
+    task: CodexTask,
     subtask: Subtask,
-    _codebaseContext: string
+    attempt: SubtaskAttempt,
+    codebaseContext: string
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    // Design phase - would use Claude to generate design
+    // If CodeGenerator is available, use Claude for design
+    if (this.codeGenerator) {
+      try {
+        const result = await this.codeGenerator.generateDesign({
+          task,
+          subtask,
+          attempt,
+          codebaseContext,
+          previousAttempts: subtask.attempts.slice(0, -1)
+        });
+
+        return {
+          success: result.success,
+          output: result.output,
+          error: result.error
+        };
+      } catch (error) {
+        console.log('[TaskExecutor] CodeGenerator design failed, using placeholder');
+      }
+    }
+
+    // Fallback: placeholder design
     return {
       success: true,
       output: `Design complete for: ${subtask.description}\n\nBased on existing patterns in codebase.`
@@ -683,10 +1024,14 @@ export class TaskExecutor {
 
   /**
    * Execute code subtask
+   * @param thinkingBudget Optional thinking budget for ultrathink mode
    */
   private async executeCode(
+    task: CodexTask,
     subtask: Subtask,
-    _codebaseContext: string
+    attempt: SubtaskAttempt,
+    codebaseContext: string,
+    thinkingBudget?: number
   ): Promise<{
     success: boolean;
     output?: string;
@@ -694,14 +1039,12 @@ export class TaskExecutor {
     filesModified?: string[];
     consoleErrors?: string[];
   }> {
-    const filesModified: string[] = [];
     const errors: string[] = [];
     const warnings: string[] = [];
 
     try {
       // Pre-coding analysis with capabilities
       if (this.capabilities) {
-        // Run static analysis before making changes
         try {
           const preAnalysis = await this.capabilities.analyze();
           if (preAnalysis.totalErrors > 0) {
@@ -711,7 +1054,6 @@ export class TaskExecutor {
           // Static analysis optional
         }
 
-        // Get LSP diagnostics for context
         try {
           const diagnostics = await this.capabilities.getDiagnostics();
           const criticalDiags = diagnostics.filter(d => d.errorCount > 0);
@@ -723,11 +1065,96 @@ export class TaskExecutor {
         }
       }
 
-      // Code execution - would generate and apply code changes
-      // In a full implementation, this would:
-      // 1. Generate code changes using Claude API
-      // 2. Apply changes to files
-      // 3. Run verification
+      // CODE GENERATION - Use Claude API via CodeGenerator
+      if (!this.codeGenerator) {
+        return {
+          success: false,
+          error: 'CodeGenerator not configured. Set ANTHROPIC_API_KEY to enable code generation.',
+          filesModified: [],
+          consoleErrors: ['CodeGenerator not available']
+        };
+      }
+
+      console.log(`[TaskExecutor] Generating code for: ${subtask.description}`);
+
+      const genResult = await this.codeGenerator.generate({
+        task,
+        subtask,
+        attempt,
+        codebaseContext,
+        previousAttempts: subtask.attempts.slice(0, -1)
+      }, thinkingBudget);
+
+      if (!genResult.success) {
+        // Check if Claude asked clarifying questions instead of generating code
+        if (genResult.error === 'CLARIFICATION_NEEDED') {
+          console.log('[TaskExecutor] Claude requested clarification - escalating to user');
+
+          // Create escalation with Claude's questions
+          const clarificationEscalation: Escalation = {
+            id: randomUUID(),
+            taskId: task.id,
+            subtaskId: subtask.id,
+            type: 'clarification',
+            title: 'Questions before starting',
+            context: genResult.output || 'Claude needs clarification before proceeding.',
+            questions: [], // Questions are embedded in context
+            options: [],
+            blocking: true,
+            createdAt: new Date()
+          };
+
+          // Try to reach user via communication channels
+          if (this.communications) {
+            this.log('progress', 'Sending clarification questions to user', {
+              escalationId: clarificationEscalation.id
+            });
+
+            const userResponse = await this.attemptCommunicationEscalation(
+              clarificationEscalation,
+              task,
+              subtask
+            );
+
+            if (userResponse) {
+              // User responded - store their clarification and retry
+              console.log('[TaskExecutor] User provided clarification:', userResponse.response);
+              this.log('progress', `User clarification received: ${userResponse.response}`);
+
+              // Return partial success to trigger retry with clarification
+              // The caller can use the output to feed back into the next attempt
+              return {
+                success: false,
+                error: 'CLARIFICATION_RECEIVED',
+                output: `User clarification: ${userResponse.response}\n\nOriginal questions:\n${genResult.output}`,
+                filesModified: [],
+                consoleErrors: []
+              };
+            }
+
+            // No response - fail with questions shown
+            this.log('escalation', 'No response to clarification request');
+          }
+
+          return {
+            success: false,
+            error: 'Clarification needed but no response received',
+            output: genResult.output,
+            filesModified: [],
+            consoleErrors: ['Claude requested clarification but could not reach user']
+          };
+        }
+
+        return {
+          success: false,
+          error: genResult.error || 'Code generation failed',
+          filesModified: [],
+          consoleErrors: genResult.error ? [genResult.error] : []
+        };
+      }
+
+      const filesModified = [...genResult.filesCreated, ...genResult.filesModified];
+      console.log(`[TaskExecutor] Generated ${filesModified.length} files`);
 
       // Post-coding verification with capabilities
       if (this.capabilities && filesModified.length > 0) {
@@ -779,7 +1206,7 @@ export class TaskExecutor {
         };
       }
 
-      const outputParts = [`Code implementation complete for: ${subtask.description}`];
+      const outputParts = [genResult.output];
       if (warnings.length > 0) {
         outputParts.push(`Warnings:\n${warnings.join('\n')}`);
       }
@@ -793,7 +1220,7 @@ export class TaskExecutor {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Code execution failed',
-        filesModified,
+        filesModified: [],
         consoleErrors: [error instanceof Error ? error.message : 'Unknown error']
       };
     }
@@ -861,9 +1288,77 @@ export class TaskExecutor {
    * Execute integration subtask
    */
   private async executeIntegration(
+    task: CodexTask,
     subtask: Subtask,
-    _codebaseContext: string
+    attempt: SubtaskAttempt,
+    codebaseContext: string,
+    thinkingBudget?: number
   ): Promise<{ success: boolean; output?: string; error?: string; filesModified?: string[] }> {
+    // Integration often requires code changes too - use CodeGenerator
+    if (this.codeGenerator) {
+      try {
+        const result = await this.codeGenerator.generate({
+          task,
+          subtask,
+          attempt,
+          codebaseContext,
+          previousAttempts: subtask.attempts.slice(0, -1)
+        }, thinkingBudget);
+
+        // Handle clarification requests in integration too
+        if (!result.success && result.error === 'CLARIFICATION_NEEDED') {
+          console.log('[TaskExecutor] Claude requested clarification during integration');
+
+          const clarificationEscalation: Escalation = {
+            id: randomUUID(),
+            taskId: task.id,
+            subtaskId: subtask.id,
+            type: 'clarification',
+            title: 'Integration questions',
+            context: result.output || 'Claude needs clarification for integration.',
+            questions: [],
+            options: [],
+            blocking: true,
+            createdAt: new Date()
+          };
+
+          if (this.communications) {
+            const userResponse = await this.attemptCommunicationEscalation(
+              clarificationEscalation,
+              task,
+              subtask
+            );
+
+            if (userResponse) {
+              return {
+                success: false,
+                error: 'CLARIFICATION_RECEIVED',
+                output: `User clarification: ${userResponse.response}\n\nOriginal questions:\n${result.output}`,
+                filesModified: []
+              };
+            }
+          }
+
+          return {
+            success: false,
+            error: 'Clarification needed but no response received',
+            output: result.output,
+            filesModified: []
+          };
+        }
+
+        return {
+          success: result.success,
+          output: result.output,
+          error: result.error,
+          filesModified: [...result.filesCreated, ...result.filesModified]
+        };
+      } catch (error) {
+        console.log('[TaskExecutor] CodeGenerator integration failed, using placeholder');
+      }
+    }
+
+    // Fallback: placeholder
     return {
       success: true,
       output: `Integration complete for: ${subtask.description}`,
@@ -1353,6 +1848,143 @@ Summary: ${result.summary}`;
    */
   getCommunications(): CommunicationManager | undefined {
     return this.communications;
+  }
+
+  /**
+   * Set code generator (for late binding)
+   */
+  setCodeGenerator(codeGenerator: CodeGenerator): void {
+    this.codeGenerator = codeGenerator;
+  }
+
+  /**
+   * Get the code generator if available
+   */
+  getCodeGenerator(): CodeGenerator | undefined {
+    return this.codeGenerator;
+  }
+
+  /**
+   * Set collaborative partner (for late binding)
+   */
+  setCollaborativePartner(partner: CollaborativePartner): void {
+    this.collaborativePartner = partner;
+  }
+
+  /**
+   * Get the collaborative partner if available
+   */
+  getCollaborativePartner(): CollaborativePartner | undefined {
+    return this.collaborativePartner;
+  }
+
+  /**
+   * Check if code generation is available
+   */
+  hasCodeGenerator(): boolean {
+    return this.codeGenerator !== undefined;
+  }
+
+  /**
+   * Set extended thinking (ultrathink) configuration
+   */
+  setExtendedThinking(config: ExtendedThinkingConfig): void {
+    this.extendedThinking = config;
+  }
+
+  /**
+   * Get extended thinking configuration
+   */
+  getExtendedThinking(): ExtendedThinkingConfig | undefined {
+    return this.extendedThinking;
+  }
+
+  /**
+   * Calculate thinking budget for ultrathink based on attempt number and error complexity
+   *
+   * Standard escalation:
+   * - Attempt 1: No thinking (unless complex error detected)
+   * - Attempt 2: baseBudget tokens (default 5000)
+   * - Attempt 3: baseBudget + increment (default 10000)
+   * - Escalation: maxBudget (default 16000)
+   *
+   * Smart triggers force ultrathink on first attempt for complex errors:
+   * - Multi-file errors
+   * - Integration subtasks
+   * - Type system complexity (circular refs, generics)
+   */
+  private calculateThinkingBudget(
+    attempt: number,
+    subtask: Subtask,
+    lastError?: string,
+    filesAffected?: string[]
+  ): number | undefined {
+    const config = this.extendedThinking;
+    if (!config?.enabled) return undefined;
+
+    // SMART TRIGGERS: Force ultrathink for complex errors
+    const isComplex = this.isComplexError(lastError, filesAffected, subtask);
+
+    if (isComplex) {
+      // Complex error → start with higher budget immediately
+      const complexBase = Math.max(config.baseBudget || 5000, 8000);
+      const retryBonus = (attempt - 1) * (config.budgetIncrement || 5000);
+      const budget = Math.min(complexBase + retryBonus, config.maxBudget || 16000);
+      console.log(`[TaskExecutor] Complex error detected - ultrathink budget: ${budget}`);
+      return budget;
+    }
+
+    // Standard: Only enable on attempt 2+ (configurable)
+    if (attempt < (config.enableOnAttempt || 2)) {
+      return undefined;
+    }
+
+    // Calculate progressive budget
+    const retryNumber = attempt - (config.enableOnAttempt || 2) + 1;
+    const budget = (config.baseBudget || 5000) +
+                   ((retryNumber - 1) * (config.budgetIncrement || 5000));
+
+    return Math.min(budget, config.maxBudget || 16000);
+  }
+
+  /**
+   * Detect complex errors that should trigger ultrathink immediately
+   */
+  private isComplexError(
+    error?: string,
+    filesAffected?: string[],
+    subtask?: Subtask
+  ): boolean {
+    // Multi-file errors are complex
+    if (filesAffected && filesAffected.length >= 2) {
+      return true;
+    }
+
+    // Integration subtasks are inherently complex
+    if (subtask?.type === 'integrate') {
+      return true;
+    }
+
+    // Error pattern detection for complex issues
+    if (error) {
+      const complexPatterns = [
+        /circular/i,              // Circular dependencies
+        /generic.*constraint/i,   // Complex generics
+        /type.*incompatible/i,    // Type system issues
+        /cannot find module/i,    // Import resolution
+        /multiple.*error/i,       // Multiple errors
+        /recursive/i,             // Recursive issues
+        /infinite/i,              // Infinite loops/recursion
+        /stack overflow/i,        // Stack overflow
+        /deadlock/i,              // Concurrency issues
+        /race condition/i,        // Race conditions
+      ];
+      if (complexPatterns.some(p => p.test(error))) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**

@@ -25,7 +25,11 @@ import type { ScheduleTrigger, TaskNotification } from './scheduler/index.js';
 import { PlaywrightManager, VerificationService, ConsoleCapture } from './playwright/index.js';
 import type { ActionType, AssertionType } from './playwright/index.js';
 import { TaskExecutor } from './codex/TaskExecutor.js';
+import { CodeGenerator } from './codex/CodeGenerator.js';
+import { CollaborativePartner } from './codex/CollaborativePartner.js';
+import { ContainmentManager } from './codex/ContainmentManager.js';
 import type { StatusReport, WorkLogEntry } from './codex/types.js';
+import { TaskStatus as CodexTaskStatus } from './codex/types.js';
 import { CapabilitiesManager } from './capabilities/index.js';
 import type { RefactorOperation } from './capabilities/index.js';
 import { CodeReviewer } from './review/index.js';
@@ -36,6 +40,7 @@ import { ConfigurationManager } from './config/index.js';
 import type { CodexConfiguration, PartialCodexConfiguration } from './config/index.js';
 import { CommunicationManager } from './communication/index.js';
 import type { ChannelType, CommunicationConfig, EscalationResponse } from './communication/index.js';
+import { getCodexLLMConfig } from './core/config.js';
 
 // ==========================================
 // Tool Input Schemas (Zod)
@@ -376,6 +381,53 @@ const ConfigLoadInputSchema = z.object({
 
 const ConfigSaveInputSchema = z.object({
   path: z.string().optional().describe('Path to save configuration to')
+});
+
+// ==========================================
+// Collaborative Partner Tool Input Schemas
+// ==========================================
+
+const PartnerConfigInputSchema = z.object({
+  enabled: z.boolean().optional().describe('Enable/disable collaborative partner features'),
+  thresholds: z.object({
+    credibilityHardGate: z.number().min(0).max(1).optional().describe('Credibility below this = BLOCK (default: 0.3)'),
+    credibilityWarnGate: z.number().min(0).max(1).optional().describe('Credibility below this = WARN (default: 0.5)'),
+    lScoreHardGate: z.number().min(0).max(1).optional().describe('L-Score below this = BLOCK (default: 0.2)'),
+    lScoreWarnGate: z.number().min(0).max(1).optional().describe('L-Score below this = WARN (default: 0.5)')
+  }).optional().describe('Challenge thresholds'),
+  behaviors: z.object({
+    proactiveCuriosity: z.boolean().optional().describe('Ask questions before executing'),
+    challengeDecisions: z.boolean().optional().describe('Use shadow search to find problems'),
+    hardGateHighRisk: z.boolean().optional().describe('Require override for risky decisions')
+  }).optional().describe('Behavior flags')
+});
+
+const PartnerChallengeInputSchema = z.object({
+  approach: z.string().describe('The approach/plan to assess for potential issues'),
+  taskDescription: z.string().optional().describe('Description of the current task'),
+  subtaskDescription: z.string().optional().describe('Description of the current subtask')
+});
+
+const ContainmentCheckInputSchema = z.object({
+  path: z.string().describe('File path to check'),
+  operation: z.enum(['read', 'write']).describe('Operation type')
+});
+
+const ContainmentConfigInputSchema = z.object({
+  enabled: z.boolean().optional().describe('Enable/disable containment'),
+  projectRoot: z.string().optional().describe('Project root path (always allowed)'),
+  defaultPermission: z.enum(['deny', 'read', 'write', 'read-write']).optional().describe('Default for unmatched paths')
+});
+
+const ContainmentAddRuleInputSchema = z.object({
+  pattern: z.string().describe('Glob pattern to match (e.g., "**/.env*")'),
+  permission: z.enum(['deny', 'read', 'write', 'read-write']).describe('Permission for matching paths'),
+  reason: z.string().optional().describe('Human-readable reason'),
+  priority: z.number().optional().describe('Priority (higher = checked first)')
+});
+
+const ContainmentRemoveRuleInputSchema = z.object({
+  pattern: z.string().describe('Glob pattern to remove')
 });
 
 // ==========================================
@@ -1672,6 +1724,176 @@ const TOOLS: Tool[] = [
     - Decisions and escalations
 
     Useful for understanding what CODEX did.`,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+
+  // ==========================================
+  // Collaborative Partner Tools
+  // ==========================================
+
+  {
+    name: 'god_partner_config',
+    description: `Configure the Collaborative Partner behavior.
+
+    The Collaborative Partner provides:
+    - Proactive Curiosity: Asks questions before executing
+    - Challenge Decisions: Uses shadow search to find contradictions
+    - Confidence Gates: L-Score thresholds for warn/block
+    - Hard Gate: Requires override for risky decisions
+
+    Thresholds determine challenge behavior:
+    - credibilityHardGate (0.3): BLOCK if credibility below this
+    - credibilityWarnGate (0.5): WARN if credibility below this
+    - lScoreHardGate (0.2): BLOCK if L-Score below this
+    - lScoreWarnGate (0.5): WARN if L-Score below this`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', description: 'Enable/disable collaborative partner' },
+        thresholds: {
+          type: 'object',
+          properties: {
+            credibilityHardGate: { type: 'number', description: 'Credibility BLOCK threshold (default: 0.3)' },
+            credibilityWarnGate: { type: 'number', description: 'Credibility WARN threshold (default: 0.5)' },
+            lScoreHardGate: { type: 'number', description: 'L-Score BLOCK threshold (default: 0.2)' },
+            lScoreWarnGate: { type: 'number', description: 'L-Score WARN threshold (default: 0.5)' }
+          }
+        },
+        behaviors: {
+          type: 'object',
+          properties: {
+            proactiveCuriosity: { type: 'boolean', description: 'Ask questions before executing' },
+            challengeDecisions: { type: 'boolean', description: 'Use shadow search for contradictions' },
+            hardGateHighRisk: { type: 'boolean', description: 'Require override for risky decisions' }
+          }
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'god_partner_challenge',
+    description: `Manually trigger a challenge assessment on an approach.
+
+    The Collaborative Partner will:
+    1. Run shadow search to find contradictions
+    2. Check memory for approach L-Score
+    3. Return assessment with credibility and concerns
+
+    Useful for testing challenge behavior before execution.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        approach: { type: 'string', description: 'The approach/plan to assess' },
+        taskDescription: { type: 'string', description: 'Optional task description' },
+        subtaskDescription: { type: 'string', description: 'Optional subtask description' }
+      },
+      required: ['approach']
+    }
+  },
+  {
+    name: 'god_partner_status',
+    description: `Get current Collaborative Partner status and configuration.
+
+    Shows:
+    - Current configuration (thresholds, behaviors)
+    - Whether partner is enabled
+    - Containment status`,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+
+  // ==========================================
+  // Containment Tools
+  // ==========================================
+
+  {
+    name: 'god_containment_check',
+    description: `Check if a path is allowed for an operation.
+
+    The ContainmentManager enforces path-based permissions:
+    - Project folder is always allowed (read-write)
+    - Dangerous paths (secrets, keys) are always denied
+    - Other paths follow configured rules
+
+    Returns whether the operation is allowed and why.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path to check' },
+        operation: { type: 'string', enum: ['read', 'write'], description: 'Operation type' }
+      },
+      required: ['path', 'operation']
+    }
+  },
+  {
+    name: 'god_containment_config',
+    description: `Configure containment settings.
+
+    Containment controls which paths CODEX can access:
+    - projectRoot: Always allowed for read-write
+    - defaultPermission: Permission for unmatched paths
+    - enabled: Enable/disable containment entirely`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean', description: 'Enable/disable containment' },
+        projectRoot: { type: 'string', description: 'Project root (always allowed)' },
+        defaultPermission: { type: 'string', enum: ['deny', 'read', 'write', 'read-write'], description: 'Default permission' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'god_containment_add_rule',
+    description: `Add a path permission rule.
+
+    Rules are glob patterns matched against paths:
+    - "**/.env*" - Match any .env file
+    - "/etc/**" - Match anything under /etc
+    - "**/secrets*" - Match any file with "secrets" in name
+
+    Higher priority rules are checked first.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Glob pattern to match' },
+        permission: { type: 'string', enum: ['deny', 'read', 'write', 'read-write'], description: 'Permission level' },
+        reason: { type: 'string', description: 'Human-readable reason' },
+        priority: { type: 'number', description: 'Priority (higher = checked first)' }
+      },
+      required: ['pattern', 'permission']
+    }
+  },
+  {
+    name: 'god_containment_remove_rule',
+    description: `Remove a path permission rule by pattern.
+
+    Removes the rule matching the exact pattern.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Glob pattern to remove' }
+      },
+      required: ['pattern']
+    }
+  },
+  {
+    name: 'god_containment_status',
+    description: `Get current containment status and rules.
+
+    Shows:
+    - Whether containment is enabled
+    - Project root path
+    - Default permission
+    - All configured rules`,
     inputSchema: {
       type: 'object',
       properties: {},
@@ -3158,6 +3380,27 @@ class GodAgentMCPServer {
             return await this.handleCodexCancel();
           case 'god_codex_log':
             return await this.handleCodexLog();
+
+          // Collaborative Partner Tools
+          case 'god_partner_config':
+            return await this.handlePartnerConfig(args);
+          case 'god_partner_challenge':
+            return await this.handlePartnerChallenge(args);
+          case 'god_partner_status':
+            return await this.handlePartnerStatus();
+
+          // Containment Tools
+          case 'god_containment_check':
+            return await this.handleContainmentCheck(args);
+          case 'god_containment_config':
+            return await this.handleContainmentConfig(args);
+          case 'god_containment_add_rule':
+            return await this.handleContainmentAddRule(args);
+          case 'god_containment_remove_rule':
+            return await this.handleContainmentRemoveRule(args);
+          case 'god_containment_status':
+            return await this.handleContainmentStatus();
+
           // Capability tools (Stage 4)
           // LSP Tools
           case 'god_lsp_start':
@@ -4743,6 +4986,51 @@ class GodAgentMCPServer {
         this.playwright || undefined,
         this.verificationService || undefined
       );
+
+      // Initialize CodeGenerator with Anthropic API and ultrathink configuration
+      const llmConfig = getCodexLLMConfig();
+      if (llmConfig.apiKey) {
+        try {
+          const codeGenerator = new CodeGenerator({
+            apiKey: llmConfig.apiKey,
+            model: llmConfig.model,
+            maxTokens: llmConfig.maxTokens,
+            codebaseRoot: process.cwd(),
+            extendedThinking: llmConfig.extendedThinking
+          });
+          this.taskExecutor.setCodeGenerator(codeGenerator);
+
+          // Set extended thinking on TaskExecutor for budget calculation
+          if (llmConfig.extendedThinking) {
+            this.taskExecutor.setExtendedThinking(llmConfig.extendedThinking);
+            console.log(`[MCP Server] Ultrathink enabled: base=${llmConfig.extendedThinking.baseBudget}, max=${llmConfig.extendedThinking.maxBudget}`);
+          }
+
+          // Initialize CollaborativePartner and ContainmentManager
+          const containmentManager = new ContainmentManager({
+            enabled: true,
+            projectRoot: process.cwd()
+          });
+
+          const collaborativePartner = new CollaborativePartner(engine, {
+            enabled: true,
+            containment: containmentManager.getConfig()
+          });
+
+          // Wire into TaskExecutor and CodeGenerator
+          this.taskExecutor.setCollaborativePartner(collaborativePartner);
+          codeGenerator.setContainment(containmentManager);
+
+          console.log('[MCP Server] CollaborativePartner initialized - proactive curiosity and challenge decisions enabled');
+          console.log('[MCP Server] ContainmentManager initialized - path-based permissions active');
+
+          console.log('[MCP Server] CodeGenerator initialized - CODEX can now write real code');
+        } catch (error) {
+          console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
+        }
+      } else {
+        console.warn('[MCP Server] ANTHROPIC_API_KEY not set - CODEX will run in simulation mode');
+      }
     }
     return this.taskExecutor;
   }
@@ -5018,6 +5306,527 @@ class GodAgentMCPServer {
             entries: [],
             count: 0,
             message: 'No work log available.'
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  // ==========================================
+  // Collaborative Partner Handlers
+  // ==========================================
+
+  private async handlePartnerConfig(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = PartnerConfigInputSchema.parse(args);
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'CollaborativePartner not initialized. Ensure ANTHROPIC_API_KEY is set.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      // Update configuration - only include defined fields
+      const configUpdate: Record<string, unknown> = {};
+      if (input.enabled !== undefined) configUpdate.enabled = input.enabled;
+      if (input.thresholds) configUpdate.thresholds = input.thresholds;
+      if (input.behaviors) configUpdate.behaviors = input.behaviors;
+
+      // Check result - security bounds may reject some updates
+      const result = partner.updateConfig(configUpdate);
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: result.reason,
+              message: 'Configuration update rejected for security reasons'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const config = partner.getConfig();
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            config: {
+              enabled: config.enabled,
+              thresholds: config.thresholds,
+              behaviors: config.behaviors
+            },
+            message: 'Collaborative Partner configuration updated'
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handlePartnerChallenge(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = PartnerChallengeInputSchema.parse(args);
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'CollaborativePartner not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      // Create mock context for assessment
+      const mockTask = {
+        id: 'manual-challenge',
+        description: input.taskDescription || 'Manual challenge assessment',
+        codebase: process.cwd(),
+        status: CodexTaskStatus.EXECUTING,
+        subtasks: [],
+        decisions: [],
+        assumptions: [],
+        createdAt: new Date()
+      };
+
+      const assessment = await partner.assessApproach(input.approach, {
+        task: mockTask,
+        codebaseContext: input.subtaskDescription
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            assessment: {
+              shouldChallenge: assessment.shouldChallenge,
+              isHardGate: assessment.isHardGate,
+              credibility: assessment.credibility,
+              lScore: assessment.lScore,
+              contradictions: assessment.contradictions.length,
+              recommendation: assessment.recommendation,
+              reasoning: assessment.reasoning
+            },
+            verdict: assessment.isHardGate
+              ? 'BLOCKED - Requires user override to proceed'
+              : assessment.shouldChallenge
+                ? 'WARNING - Concerns noted but can proceed'
+                : 'APPROVED - No significant concerns'
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handlePartnerStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              status: 'not_initialized',
+              message: 'CollaborativePartner not initialized. Ensure ANTHROPIC_API_KEY is set.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const config = partner.getConfig();
+      const containment = partner.getContainment();
+      const containmentConfig = containment.getConfig();
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            status: 'active',
+            partner: {
+              enabled: config.enabled,
+              thresholds: config.thresholds,
+              behaviors: config.behaviors
+            },
+            containment: {
+              enabled: containmentConfig.enabled,
+              projectRoot: containmentConfig.projectRoot,
+              defaultPermission: containmentConfig.defaultPermission,
+              rulesCount: containmentConfig.permissions.length
+            }
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  // ==========================================
+  // Containment Handlers
+  // ==========================================
+
+  private async handleContainmentCheck(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = ContainmentCheckInputSchema.parse(args);
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'ContainmentManager not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const result = partner.checkPathPermission(input.path, input.operation);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            path: input.path,
+            operation: input.operation,
+            allowed: result.allowed,
+            reason: result.reason,
+            canOverride: result.canOverride,
+            matchedRule: result.matchedRule ? {
+              pattern: result.matchedRule.pattern,
+              permission: result.matchedRule.permission,
+              reason: result.matchedRule.reason
+            } : undefined
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleContainmentConfig(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = ContainmentConfigInputSchema.parse(args);
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'ContainmentManager not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const containment = partner.getContainment();
+
+      // Check result - security bounds may reject some updates
+      const result = containment.updateConfig({
+        enabled: input.enabled,
+        projectRoot: input.projectRoot,
+        defaultPermission: input.defaultPermission
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: result.reason,
+              message: 'Configuration update rejected for security reasons'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const config = containment.getConfig();
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            config: {
+              enabled: config.enabled,
+              projectRoot: config.projectRoot,
+              defaultPermission: config.defaultPermission,
+              rulesCount: config.permissions.length
+            },
+            message: 'Containment configuration updated'
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleContainmentAddRule(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = ContainmentAddRuleInputSchema.parse(args);
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'ContainmentManager not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const containment = partner.getContainment();
+
+      // Check result - may be rejected if conflicts with immutable rules
+      const result = containment.addPermission({
+        pattern: input.pattern,
+        permission: input.permission,
+        reason: input.reason,
+        priority: input.priority  // Will be capped to 89 by ContainmentManager
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: result.reason,
+              pattern: input.pattern,
+              message: 'Rule addition rejected for security reasons'
+            }, null, 2)
+          }]
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            rule: {
+              pattern: input.pattern,
+              permission: input.permission,
+              reason: input.reason,
+              priority: Math.min(input.priority ?? 0, 89)  // Show capped priority
+            },
+            message: `Added permission rule for pattern: ${input.pattern}`
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleContainmentRemoveRule(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = ContainmentRemoveRuleInputSchema.parse(args);
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'ContainmentManager not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const containment = partner.getContainment();
+
+      // Check result - may be rejected if rule is immutable
+      const result = containment.removePermission(input.pattern);
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: result.reason,
+              pattern: input.pattern,
+              message: 'Rule removal rejected for security reasons'
+            }, null, 2)
+          }]
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            pattern: input.pattern,
+            message: `Removed permission rule for pattern: ${input.pattern}`
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleContainmentStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              status: 'not_initialized',
+              message: 'ContainmentManager not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const containment = partner.getContainment();
+      const config = containment.getConfig();
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            status: config.enabled ? 'active' : 'disabled',
+            config: {
+              enabled: config.enabled,
+              projectRoot: config.projectRoot,
+              defaultPermission: config.defaultPermission,
+              allowTaskOverrides: config.allowTaskOverrides
+            },
+            rules: config.permissions.map(p => ({
+              pattern: p.pattern,
+              permission: p.permission,
+              reason: p.reason,
+              priority: p.priority ?? 0
+            }))
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
           }, null, 2)
         }]
       };
