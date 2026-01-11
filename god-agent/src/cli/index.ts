@@ -15,6 +15,8 @@ import { statsCommand } from './commands/stats.js';
 import { migrateCommand } from './commands/migrate.js';
 import { captureSessionCommand } from './commands/capture-session.js';
 import { captureMissingCommand } from './commands/capture-missing.js';
+import { assimilateCommand } from './commands/assimilate.js';
+import { allowPathCommand } from './commands/allow-path.js';
 
 const program = new Command();
 
@@ -32,5 +34,7 @@ program.addCommand(statsCommand);
 program.addCommand(migrateCommand);
 program.addCommand(captureSessionCommand);
 program.addCommand(captureMissingCommand);
+program.addCommand(assimilateCommand);
+program.addCommand(allowPathCommand);
 
 program.parse();

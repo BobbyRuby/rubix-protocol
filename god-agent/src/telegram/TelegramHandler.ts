@@ -3,12 +3,14 @@ import { TelegramMessage, TaskRequest } from './types.js';
 import type { TaskExecutor } from '../codex/TaskExecutor.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
+import type { ContainmentManager } from '../codex/ContainmentManager.js';
 import { PlanningSession } from '../codex/PlanningSession.js';
 
 export class TelegramHandler {
   private taskExecutor: TaskExecutor | undefined;
   private comms: CommunicationManager | undefined;
   private engine: MemoryEngine | undefined;
+  private containment: ContainmentManager | undefined;
   private activeTasks: Map<string, TaskRequest>;
   private defaultCodebase: string;
 
@@ -62,6 +64,15 @@ export class TelegramHandler {
     console.log('[TelegramHandler] CommunicationManager connected for escalation forwarding');
   }
 
+  /**
+   * Set the ContainmentManager for path permission management.
+   * Enables /paths, /path-add, /path-remove commands.
+   */
+  setContainment(containment: ContainmentManager): void {
+    this.containment = containment;
+    console.log('[TelegramHandler] ContainmentManager connected for path management');
+  }
+
   async handleMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text || '';
@@ -108,6 +119,14 @@ export class TelegramHandler {
       await this.handleTaskCommand(msg, bot);
     } else if (text.startsWith('/status')) {
       await this.handleStatusCommand(chatId, bot);
+    } else if (text === '/config') {
+      await this.handleConfigCommand(msg, bot);
+    } else if (text === '/paths') {
+      await this.handlePathsCommand(chatId, bot);
+    } else if (text.startsWith('/path-add')) {
+      await this.handlePathAddCommand(msg, bot);
+    } else if (text.startsWith('/path-remove')) {
+      await this.handlePathRemoveCommand(msg, bot);
     } else {
       await this.handleTextMessage(msg, bot);
     }
@@ -180,9 +199,16 @@ Rubix Help
 - /execute - Approve plan and start execution
 - /cancel - Cancel current planning session
 
+**Configuration Commands:**
+- /config - Show configuration status
+- /paths - List allowed paths
+- /path-add <path> [rw|read] - Add allowed path
+- /path-remove <pattern> - Remove allowed path
+
 **Examples:**
 - /task Fix the API endpoint for user authentication
 - /plan Build a full-stack calculator app with history
+- /path-add E:/ rw
 
 **Planning Mode:**
 Use /plan when you want to think through a project before coding.
@@ -517,6 +543,134 @@ When ready, use /execute to run the plan.
 
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ===========================================================================
+  // CONFIGURATION HANDLERS
+  // ===========================================================================
+
+  private async handleConfigCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+
+    let message = '⚙️ *RUBIX Configuration*\n\n';
+
+    // Path permissions summary
+    if (this.containment) {
+      const rules = this.containment.getUserRules();
+      message += `📂 *Allowed Paths:* ${rules.length}\n`;
+    }
+
+    // Engine status
+    if (this.engine) {
+      const stats = await this.engine.getStats();
+      message += `🧠 *Memory:* ${stats.totalEntries} entries\n`;
+    }
+
+    // Executor status
+    if (this.taskExecutor) {
+      const status = this.taskExecutor.getStatus();
+      message += `🔧 *Executor:* ${status.currentTask ? 'Active' : 'Idle'}\n`;
+    }
+
+    message += '\n*Commands:*\n';
+    message += '`/paths` - List allowed paths\n';
+    message += '`/path-add <path> [rw|read]` - Add path\n';
+    message += '`/path-remove <pattern>` - Remove path\n';
+
+    await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  }
+
+  private async handlePathsCommand(chatId: number, bot: TelegramBotAPI): Promise<void> {
+    if (!this.containment) {
+      await bot.sendMessage(chatId, '⚠️ Containment not configured');
+      return;
+    }
+
+    const rules = this.containment.getUserRules();
+
+    if (rules.length === 0) {
+      await bot.sendMessage(chatId,
+        '📂 *Allowed Paths*\n\nNo custom paths configured.\n\nAdd with: `/path-add E:/ rw`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    let message = '📂 *Allowed Paths*\n\n';
+    for (const rule of rules) {
+      const icon = rule.permission === 'read' ? '📖' : '📝';
+      message += `${icon} \`${rule.pattern}\` (${rule.permission})\n`;
+    }
+    message += '\n_Use `/path-add` or `/path-remove`_';
+
+    await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  }
+
+  private async handlePathAddCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+
+    // Parse: /path-add E:/ rw   OR   /path-add "D:/My Folder" read
+    const match = text.match(/\/path-add\s+["']?([^"']+)["']?\s*(read|rw|read-write)?/i);
+
+    if (!match) {
+      await bot.sendMessage(chatId,
+        '❌ Usage: `/path-add <path> [permission]`\n\n' +
+        'Examples:\n' +
+        '`/path-add E:/ rw`\n' +
+        '`/path-add D:/projects read`\n\n' +
+        'Permissions: `read` | `rw` (read-write)',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    const pattern = match[1].trim();
+    const permArg = (match[2] || 'rw').toLowerCase();
+    const permission = permArg === 'rw' ? 'read-write' : permArg;
+
+    if (!this.containment) {
+      await bot.sendMessage(chatId, '⚠️ Containment not configured');
+      return;
+    }
+
+    const result = this.containment.addUserRule(pattern, permission as 'read' | 'read-write', 'Added via Telegram');
+
+    if (result.success) {
+      const icon = permission === 'read' ? '📖' : '📝';
+      await bot.sendMessage(chatId, `${icon} Added: \`${pattern}\` (${permission})`, { parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(chatId, `❌ Failed: ${result.reason}`);
+    }
+  }
+
+  private async handlePathRemoveCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+
+    const pattern = text.replace('/path-remove', '').trim();
+
+    if (!pattern) {
+      await bot.sendMessage(chatId,
+        '❌ Usage: `/path-remove <pattern>`\n\n' +
+        'Example: `/path-remove E:/**`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    if (!this.containment) {
+      await bot.sendMessage(chatId, '⚠️ Containment not configured');
+      return;
+    }
+
+    const result = this.containment.removeUserRule(pattern);
+
+    if (result.success) {
+      await bot.sendMessage(chatId, `🗑️ Removed: \`${pattern}\``, { parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(chatId, `❌ Failed: ${result.reason}`);
+    }
   }
 
   // ===========================================================================

@@ -193,6 +193,36 @@ export class SQLiteStorage {
   }
 
   /**
+   * Delete all entries EXCEPT those with specified tags
+   * Used by assimilate to preserve system knowledge while wiping project data
+   * @returns Number of deleted entries
+   */
+  deleteEntriesExceptTags(preserveTags: string[]): number {
+    if (preserveTags.length === 0) {
+      // No tags to preserve = delete everything
+      const result = this.db.prepare('DELETE FROM memory_entries').run();
+      return result.changes;
+    }
+
+    // Get IDs of entries to preserve (have any of the preserve tags)
+    const preserveIds = this.getEntryIdsByTags(preserveTags);
+
+    if (preserveIds.length === 0) {
+      // Nothing to preserve = delete everything
+      const result = this.db.prepare('DELETE FROM memory_entries').run();
+      return result.changes;
+    }
+
+    // Delete all entries NOT in the preserve list
+    const placeholders = preserveIds.map(() => '?').join(',');
+    const result = this.db.prepare(
+      `DELETE FROM memory_entries WHERE id NOT IN (${placeholders})`
+    ).run(...preserveIds);
+
+    return result.changes;
+  }
+
+  /**
    * Update an existing memory entry
    */
   updateEntry(id: string, updates: {
@@ -314,6 +344,30 @@ export class SQLiteStorage {
     this.db.prepare(`
       UPDATE vector_mappings SET compression_tier = ? WHERE label = ?
     `).run(tier, label);
+  }
+
+  /**
+   * Clear orphaned vector mappings (entries that no longer exist)
+   * Returns count of deleted mappings
+   */
+  clearOrphanedVectorMappings(): number {
+    const result = this.db.prepare(`
+      DELETE FROM vector_mappings
+      WHERE entry_id NOT IN (SELECT id FROM memory_entries)
+    `).run();
+    // Reset the label counter
+    this.loadNextVectorLabel();
+    return result.changes;
+  }
+
+  /**
+   * Clear all vector mappings (for full rebuild)
+   * Returns count of deleted mappings
+   */
+  clearAllVectorMappings(): number {
+    const result = this.db.prepare('DELETE FROM vector_mappings').run();
+    this.nextVectorLabel = 0;
+    return result.changes;
   }
 
   /**

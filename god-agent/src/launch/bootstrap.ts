@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import { MemoryEngine } from '../core/MemoryEngine.js';
 import { TaskExecutor } from '../codex/TaskExecutor.js';
 import { CodeGenerator } from '../codex/CodeGenerator.js';
+import { ContainmentManager } from '../codex/ContainmentManager.js';
 import { getCodexLLMConfig } from '../core/config.js';
 import { getEnvSummary } from './env.js';
 
@@ -27,6 +28,7 @@ export interface BootstrapResult {
   engine: MemoryEngine;
   executor: TaskExecutor;
   codeGenerator?: CodeGenerator;
+  containment: ContainmentManager;
 }
 
 /**
@@ -96,7 +98,30 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     }
   }
 
-  return { engine, executor, codeGenerator };
+  // 4. Initialize ContainmentManager and load persisted rules
+  const containment = new ContainmentManager({
+    projectRoot: options.codebaseRoot || process.cwd()
+  });
+  containment.setRulesFilePath(dataDir);
+
+  // Display loaded rules
+  const userRules = containment.getUserRules();
+  if (userRules.length > 0) {
+    console.log('[Bootstrap] Containment - Allowed paths:');
+    for (const rule of userRules) {
+      const icon = rule.permission === 'read' ? '📖' : '📝';
+      console.log(`  ${icon} ${rule.pattern} (${rule.permission})`);
+    }
+  } else {
+    console.log('[Bootstrap] Containment - No custom paths configured');
+  }
+
+  // Set containment on code generator
+  if (codeGenerator) {
+    codeGenerator.setContainment(containment);
+  }
+
+  return { engine, executor, codeGenerator, containment };
 }
 
 /**

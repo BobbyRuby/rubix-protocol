@@ -5112,6 +5112,9 @@ class GodAgentMCPServer {
             projectRoot: process.cwd()
           });
 
+          // Load persisted user rules from containment.json
+          containmentManager.setRulesFilePath(this.dataDir);
+
           const collaborativePartner = new CollaborativePartner(engine, {
             enabled: true,
             containment: containmentManager.getConfig()
@@ -5790,13 +5793,13 @@ class GodAgentMCPServer {
 
       const containment = partner.getContainment();
 
-      // Check result - may be rejected if conflicts with immutable rules
-      const result = containment.addPermission({
-        pattern: input.pattern,
-        permission: input.permission,
-        reason: input.reason,
-        priority: input.priority  // Will be capped to 89 by ContainmentManager
-      });
+      // Use addUserRule for persistence (saves to containment.json)
+      const result = containment.addUserRule(
+        input.pattern,
+        input.permission,
+        input.reason,
+        input.priority  // Will be capped to 89 by ContainmentManager
+      );
 
       if (!result.success) {
         return {
@@ -5821,9 +5824,10 @@ class GodAgentMCPServer {
               pattern: input.pattern,
               permission: input.permission,
               reason: input.reason,
-              priority: Math.min(input.priority ?? 0, 89)  // Show capped priority
+              priority: Math.min(input.priority ?? 60, 89)  // Show capped priority
             },
-            message: `Added permission rule for pattern: ${input.pattern}`
+            persisted: true,
+            message: `Added permission rule for pattern: ${input.pattern} (saved to containment.json)`
           }, null, 2)
         }]
       };
@@ -5862,8 +5866,8 @@ class GodAgentMCPServer {
 
       const containment = partner.getContainment();
 
-      // Check result - may be rejected if rule is immutable
-      const result = containment.removePermission(input.pattern);
+      // Use removeUserRule for persistence (updates containment.json)
+      const result = containment.removeUserRule(input.pattern);
 
       if (!result.success) {
         return {
@@ -5873,7 +5877,7 @@ class GodAgentMCPServer {
               success: false,
               error: result.reason,
               pattern: input.pattern,
-              message: 'Rule removal rejected for security reasons'
+              message: 'Rule removal failed - rule may not exist or be immutable'
             }, null, 2)
           }]
         };
@@ -5885,7 +5889,8 @@ class GodAgentMCPServer {
           text: JSON.stringify({
             success: true,
             pattern: input.pattern,
-            message: `Removed permission rule for pattern: ${input.pattern}`
+            persisted: true,
+            message: `Removed permission rule for pattern: ${input.pattern} (saved to containment.json)`
           }, null, 2)
         }]
       };

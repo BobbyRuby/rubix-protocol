@@ -11,14 +11,14 @@
  */
 
 import { bootstrap, setupShutdown, printBanner } from './bootstrap.js';
-import { requireEnv, ENV_REQUIREMENTS } from './env.js';
+import { requireEnvInteractive, ENV_REQUIREMENTS } from './env.js';
 import { SchedulerDaemon } from '../scheduler/SchedulerDaemon.js';
 
 async function main(): Promise<void> {
   printBanner('Scheduler Daemon');
 
-  // Validate environment
-  requireEnv(ENV_REQUIREMENTS.daemon, 'Scheduler');
+  // Validate environment - prompts for missing required config
+  await requireEnvInteractive(ENV_REQUIREMENTS.daemon, 'Scheduler');
 
   // Bootstrap core systems
   const { engine } = await bootstrap({ showEnvSummary: true });

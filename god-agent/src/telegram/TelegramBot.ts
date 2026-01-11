@@ -4,6 +4,7 @@ import { TelegramHandler } from './TelegramHandler.js';
 import type { TaskExecutor } from '../codex/TaskExecutor.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
+import type { ContainmentManager } from '../codex/ContainmentManager.js';
 
 export class TelegramBot {
   private bot: TelegramBotAPI;
@@ -45,6 +46,14 @@ export class TelegramBot {
    */
   setEngine(engine: MemoryEngine): void {
     this.handler.setEngine(engine);
+  }
+
+  /**
+   * Set the ContainmentManager for path permission management.
+   * Enables /paths, /path-add, /path-remove commands.
+   */
+  setContainment(containment: ContainmentManager): void {
+    this.handler.setContainment(containment);
   }
 
   private setupHandlers(): void {

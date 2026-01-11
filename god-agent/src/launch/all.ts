@@ -12,7 +12,7 @@
  */
 
 import { bootstrap, setupShutdown, printBanner } from './bootstrap.js';
-import { requireEnv, ENV_REQUIREMENTS } from './env.js';
+import { requireEnvInteractive, ENV_REQUIREMENTS } from './env.js';
 
 import { TelegramBot } from '../telegram/TelegramBot.js';
 import { SchedulerDaemon } from '../scheduler/SchedulerDaemon.js';
@@ -28,8 +28,8 @@ interface Service {
 async function main(): Promise<void> {
   printBanner('Full Stack');
 
-  // Validate environment
-  requireEnv(ENV_REQUIREMENTS.all, 'Full Stack');
+  // Validate environment - prompts for missing required config
+  await requireEnvInteractive(ENV_REQUIREMENTS.all, 'Full Stack');
 
   // Bootstrap core systems
   const { engine, executor } = await bootstrap({ showEnvSummary: true });

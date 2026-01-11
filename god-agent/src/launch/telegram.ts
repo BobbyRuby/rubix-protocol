@@ -12,18 +12,18 @@
  */
 
 import { bootstrap, setupShutdown, printBanner } from './bootstrap.js';
-import { requireEnv, ENV_REQUIREMENTS } from './env.js';
+import { requireEnvInteractive, ENV_REQUIREMENTS } from './env.js';
 import { TelegramBot } from '../telegram/TelegramBot.js';
 import { CommunicationManager } from '../communication/CommunicationManager.js';
 
 async function main(): Promise<void> {
   printBanner('Telegram + RUBIX');
 
-  // Validate environment
-  requireEnv(ENV_REQUIREMENTS.telegram, 'Telegram');
+  // Validate environment - prompts for missing required config
+  await requireEnvInteractive(ENV_REQUIREMENTS.telegram, 'Telegram');
 
   // Bootstrap core systems
-  const { executor, engine } = await bootstrap({ showEnvSummary: true });
+  const { executor, engine, containment } = await bootstrap({ showEnvSummary: true });
 
   // Create CommunicationManager with Telegram channel
   const comms = new CommunicationManager({
@@ -59,6 +59,9 @@ async function main(): Promise<void> {
   // Set comms on executor for escalations
   executor.setCommunications(comms);
 
+  // Wire containment for /paths, /path-add, /path-remove commands
+  bot.setContainment(containment);
+
   bot.start();
   console.log('[Launch] Telegram bot started');
   console.log('[Launch] Escalation responses will be forwarded through TelegramBot');
@@ -84,6 +87,12 @@ async function main(): Promise<void> {
   console.log('    /plan-status         - Show plan status');
   console.log('    /execute             - Run approved plan');
   console.log('    /cancel              - Cancel session');
+  console.log('');
+  console.log('  Configuration Commands:');
+  console.log('    /config              - Show configuration');
+  console.log('    /paths               - List allowed paths');
+  console.log('    /path-add <path> rw  - Add path (rw|read)');
+  console.log('    /path-remove <path>  - Remove path');
   console.log('');
   console.log('  Planning mode stores all exchanges in memory');
   console.log('  for unlimited context - no token limits!');

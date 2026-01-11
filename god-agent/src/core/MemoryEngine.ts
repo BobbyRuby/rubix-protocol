@@ -21,6 +21,7 @@ import { EnhancementLayer } from '../gnn/EnhancementLayer.js';
 import { TinyDancer } from '../routing/TinyDancer.js';
 import { getDefaultConfig, validateConfig, mergeConfig } from './config.js';
 import { ProvenanceThresholdError } from './errors.js';
+import { SYSTEM_TAGS } from './constants.js';
 
 import { MemorySource } from './types.js';
 import type {
@@ -964,6 +965,81 @@ export class MemoryEngine {
   // ==========================================
   // LIFECYCLE
   // ==========================================
+
+  /**
+   * Assimilate to new codebase - wipe project data, keep system knowledge
+   *
+   * Preserves entries tagged with SYSTEM_TAGS (rubix:core, rubix:learning, etc.)
+   * Deletes all other entries (project-specific context, tasks, conversations)
+   *
+   * @returns Count of deleted and preserved entries
+   */
+  async assimilate(): Promise<{ deleted: number; preserved: number }> {
+    await this.ensureInitialized();
+
+    console.log('[MemoryEngine] Starting assimilation...');
+    console.log(`[MemoryEngine] Preserving tags: ${SYSTEM_TAGS.join(', ')}`);
+
+    // Count entries to preserve
+    const preserveIds = this.storage.getEntryIdsByTags([...SYSTEM_TAGS]);
+    const preserved = preserveIds.length;
+
+    console.log(`[MemoryEngine] Found ${preserved} entries to preserve`);
+
+    // Delete non-system entries
+    const deleted = this.storage.deleteEntriesExceptTags([...SYSTEM_TAGS]);
+
+    console.log(`[MemoryEngine] Deleted ${deleted} project entries`);
+
+    // Rebuild vector index to remove orphaned vectors
+    if (deleted > 0) {
+      console.log('[MemoryEngine] Rebuilding vector index...');
+      // Re-initialize vector DB with remaining entries
+      await this.rebuildVectorIndex();
+    }
+
+    console.log('[MemoryEngine] Assimilation complete');
+
+    return { deleted, preserved };
+  }
+
+  /**
+   * Rebuild vector index from remaining entries
+   */
+  private async rebuildVectorIndex(): Promise<void> {
+    // Clear orphaned vector mappings from deleted entries
+    const orphanedCount = this.storage.clearOrphanedVectorMappings();
+    console.log(`[MemoryEngine] Cleared ${orphanedCount} orphaned vector mappings`);
+
+    // Get all remaining entries directly from storage
+    const allEntries = this.storage.getAllEntries();
+    console.log(`[MemoryEngine] Rebuilding vector index for ${allEntries.length} entries`);
+
+    // Clear remaining vector mappings for full rebuild
+    this.storage.clearAllVectorMappings();
+
+    // Create new VectorDB with proper config
+    this.vectorDb = new VectorDB({
+      dimensions: this.config.vectorDimensions,
+      maxElements: this.config.hnswConfig.maxElements,
+      efConstruction: this.config.hnswConfig.efConstruction,
+      efSearch: this.config.hnswConfig.efSearch,
+      M: this.config.hnswConfig.M,
+      spaceName: this.config.hnswConfig.spaceName,
+      indexPath: this.config.storageConfig.indexPath
+    });
+    await this.vectorDb.initialize();
+
+    // Re-add vectors for remaining entries
+    for (const entry of allEntries) {
+      const { embedding } = await this.embeddings.embed(entry.content);
+      const label = this.storage.storeVectorMapping(entry.id);
+      this.vectorDb.add(label, embedding);
+    }
+
+    await this.vectorDb.save();
+    console.log('[MemoryEngine] Vector index rebuilt successfully');
+  }
 
   /**
    * Ensure engine is initialized

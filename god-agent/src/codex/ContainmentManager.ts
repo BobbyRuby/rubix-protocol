@@ -11,6 +11,8 @@
  */
 
 import { join, resolve, isAbsolute } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
 import { minimatch } from 'minimatch';
 
 /**
@@ -58,6 +60,19 @@ export interface ContainmentConfig {
   defaultPermission: PermissionLevel;
   /** Allow task-specific overrides via user confirmation */
   allowTaskOverrides: boolean;
+}
+
+/**
+ * Persisted containment rules file format
+ */
+export interface ContainmentRulesFile {
+  version: number;
+  rules: Array<{
+    pattern: string;
+    permission: PermissionLevel;
+    reason?: string;
+    priority?: number;
+  }>;
 }
 
 /**
@@ -133,11 +148,167 @@ export class ContainmentManager {
   private taskOverrides: Map<string, Set<string>> = new Map();
   /** Session-scoped permissions (cleared on restart) */
   private sessionPermissions: PathPermission[] = [];
+  /** User-defined rules (persisted to file) */
+  private userRules: PathPermission[] = [];
+  /** Path to containment.json for persistence */
+  private rulesFilePath: string | null = null;
 
   constructor(config: Partial<ContainmentConfig> = {}) {
     this.config = { ...DEFAULT_CONTAINMENT_CONFIG, ...config };
     // Sort permissions by priority (descending)
     this.resortPermissions();
+  }
+
+  /**
+   * Set the path for rules persistence and load existing rules
+   */
+  setRulesFilePath(dataDir: string): void {
+    this.rulesFilePath = join(dataDir, 'containment.json');
+    this.loadRules();
+  }
+
+  /**
+   * Load user rules from containment.json
+   */
+  loadRules(): void {
+    if (!this.rulesFilePath || !existsSync(this.rulesFilePath)) {
+      return;
+    }
+
+    try {
+      const content = readFileSync(this.rulesFilePath, 'utf-8');
+      const data: ContainmentRulesFile = JSON.parse(content);
+
+      if (data.version !== 1) {
+        console.warn(`[Containment] Unknown rules file version: ${data.version}`);
+        return;
+      }
+
+      // Load rules with user priority range (max 89)
+      this.userRules = data.rules.map(rule => ({
+        pattern: rule.pattern,
+        permission: rule.permission,
+        reason: rule.reason || `User rule: ${rule.pattern}`,
+        priority: Math.min(rule.priority ?? 60, 89),
+        immutable: false
+      }));
+
+      this.resortPermissions();
+      console.log(`[Containment] Loaded ${this.userRules.length} user rules from ${this.rulesFilePath}`);
+    } catch (error) {
+      console.error(`[Containment] Failed to load rules:`, error);
+    }
+  }
+
+  /**
+   * Save user rules to containment.json
+   */
+  saveRules(): void {
+    if (!this.rulesFilePath) {
+      console.warn('[Containment] No rules file path set, cannot save');
+      return;
+    }
+
+    try {
+      // Ensure directory exists
+      const dir = dirname(this.rulesFilePath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+
+      const data: ContainmentRulesFile = {
+        version: 1,
+        rules: this.userRules.map(rule => ({
+          pattern: rule.pattern,
+          permission: rule.permission,
+          reason: rule.reason,
+          priority: rule.priority
+        }))
+      };
+
+      writeFileSync(this.rulesFilePath, JSON.stringify(data, null, 2));
+      console.log(`[Containment] Saved ${this.userRules.length} user rules to ${this.rulesFilePath}`);
+    } catch (error) {
+      console.error(`[Containment] Failed to save rules:`, error);
+    }
+  }
+
+  /**
+   * Get all user-defined rules (for display/CLI)
+   */
+  getUserRules(): PathPermission[] {
+    return [...this.userRules];
+  }
+
+  /**
+   * Add a user rule (persisted to file)
+   */
+  addUserRule(pattern: string, permission: PermissionLevel, reason?: string, priority?: number): ModifyResult {
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+
+    // Cap priority to 89
+    const cappedPriority = Math.min(priority ?? 60, 89);
+
+    // Check if trying to allow what immutable rules deny
+    if (permission !== 'deny') {
+      const conflictingImmutable = this.config.permissions.find(p =>
+        p.immutable &&
+        p.permission === 'deny' &&
+        this.patternsOverlap(normalizedPattern, p.pattern)
+      );
+      if (conflictingImmutable) {
+        this.auditLog('addUserRule', { pattern: normalizedPattern, permission }, false);
+        return {
+          success: false,
+          reason: `Cannot override immutable security rule: ${conflictingImmutable.pattern}`
+        };
+      }
+    }
+
+    // Check if rule already exists
+    const existingIndex = this.userRules.findIndex(r => r.pattern === normalizedPattern);
+    if (existingIndex >= 0) {
+      // Update existing rule
+      this.userRules[existingIndex] = {
+        pattern: normalizedPattern,
+        permission,
+        reason: reason || `User rule: ${normalizedPattern}`,
+        priority: cappedPriority,
+        immutable: false
+      };
+    } else {
+      // Add new rule
+      this.userRules.push({
+        pattern: normalizedPattern,
+        permission,
+        reason: reason || `User rule: ${normalizedPattern}`,
+        priority: cappedPriority,
+        immutable: false
+      });
+    }
+
+    this.resortPermissions();
+    this.saveRules();
+    this.auditLog('addUserRule', { pattern: normalizedPattern, permission, priority: cappedPriority }, true);
+    return { success: true };
+  }
+
+  /**
+   * Remove a user rule by pattern
+   */
+  removeUserRule(pattern: string): ModifyResult {
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+    const index = this.userRules.findIndex(r => r.pattern === normalizedPattern);
+
+    if (index === -1) {
+      return { success: false, reason: `User rule not found: ${pattern}` };
+    }
+
+    this.userRules.splice(index, 1);
+    this.resortPermissions();
+    this.saveRules();
+    this.auditLog('removeUserRule', { pattern: normalizedPattern }, true);
+    return { success: true };
   }
 
   /**
@@ -493,11 +664,11 @@ export class ContainmentManager {
   }
 
   /**
-   * Re-sort all permissions (config + session) by priority
+   * Re-sort all permissions (config + user + session) by priority
    */
   private resortPermissions(): void {
-    // Combine config permissions + session permissions
-    const allPermissions = [...this.config.permissions, ...this.sessionPermissions];
+    // Combine config permissions + user rules + session permissions
+    const allPermissions = [...this.config.permissions, ...this.userRules, ...this.sessionPermissions];
     this.sortedPermissions = allPermissions.sort(
       (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
     );
