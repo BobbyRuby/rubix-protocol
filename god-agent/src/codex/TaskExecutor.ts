@@ -15,6 +15,7 @@ import type { ExtendedThinkingConfig } from '../core/types.js';
 import type { PlaywrightManager } from '../playwright/PlaywrightManager.js';
 import type { VerificationService } from '../playwright/VerificationService.js';
 import type { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js';
+import type { WolframManager } from '../capabilities/wolfram/WolframManager.js';
 import { TaskDecomposer } from './TaskDecomposer.js';
 import { SelfHealer } from './SelfHealer.js';
 import { EscalationGate, type Situation } from './EscalationGate.js';
@@ -108,6 +109,9 @@ export class TaskExecutor {
 
   // Collaborative Partner (proactive curiosity + challenge decisions)
   private collaborativePartner: CollaborativePartner | undefined;
+
+  // Wolfram Alpha (deterministic math)
+  private wolfram: WolframManager | undefined;
 
   private currentTask: CodexTask | undefined;
   private workLog: WorkLogEntry[] = [];
@@ -1075,13 +1079,20 @@ export class TaskExecutor {
         };
       }
 
+      // WOLFRAM ENHANCEMENT - Inject deterministic math for math-heavy subtasks
+      let enhancedContext = codebaseContext;
+      if (this.wolfram && this.isMathHeavy(subtask)) {
+        console.log('[TaskExecutor] Math-heavy subtask detected, querying Wolfram Alpha');
+        enhancedContext = await this.enhanceWithWolframMath(subtask, codebaseContext);
+      }
+
       console.log(`[TaskExecutor] Generating code for: ${subtask.description}`);
 
       const genResult = await this.codeGenerator.generate({
         task,
         subtask,
         attempt,
-        codebaseContext,
+        codebaseContext: enhancedContext,
         previousAttempts: subtask.attempts.slice(0, -1)
       }, thinkingBudget);
 
@@ -1297,11 +1308,18 @@ export class TaskExecutor {
     // Integration often requires code changes too - use CodeGenerator
     if (this.codeGenerator) {
       try {
+        // WOLFRAM ENHANCEMENT - Inject deterministic math for math-heavy subtasks
+        let enhancedContext = codebaseContext;
+        if (this.wolfram && this.isMathHeavy(subtask)) {
+          console.log('[TaskExecutor] Math-heavy integration detected, querying Wolfram Alpha');
+          enhancedContext = await this.enhanceWithWolframMath(subtask, codebaseContext);
+        }
+
         const result = await this.codeGenerator.generate({
           task,
           subtask,
           attempt,
-          codebaseContext,
+          codebaseContext: enhancedContext,
           previousAttempts: subtask.attempts.slice(0, -1)
         }, thinkingBudget);
 
@@ -1879,6 +1897,27 @@ Summary: ${result.summary}`;
   }
 
   /**
+   * Set Wolfram Alpha manager (for late binding)
+   */
+  setWolfram(wolfram: WolframManager): void {
+    this.wolfram = wolfram;
+  }
+
+  /**
+   * Get the Wolfram Alpha manager if available
+   */
+  getWolfram(): WolframManager | undefined {
+    return this.wolfram;
+  }
+
+  /**
+   * Check if Wolfram Alpha is configured
+   */
+  hasWolfram(): boolean {
+    return this.wolfram !== undefined && this.wolfram.isConfigured();
+  }
+
+  /**
    * Check if code generation is available
    */
   hasCodeGenerator(): boolean {
@@ -1985,6 +2024,143 @@ Summary: ${result.summary}`;
     }
 
     return false;
+  }
+
+  // ==========================================
+  // Wolfram Alpha Integration (Deterministic Math)
+  // ==========================================
+
+  /**
+   * Check if a subtask is math-heavy and would benefit from Wolfram
+   */
+  private isMathHeavy(subtask: Subtask): boolean {
+    const mathKeywords = [
+      'calculate', 'compute', 'formula', 'equation', 'percentage',
+      'percent', 'ratio', 'convert', 'unit', 'math', 'arithmetic',
+      'sum', 'average', 'mean', 'median', 'total', 'multiply',
+      'divide', 'subtract', 'sqrt', 'square root', 'power', 'exponent',
+      'interest', 'compound', 'rate', 'growth', 'decay', 'logarithm',
+      'trigonometry', 'sin', 'cos', 'tan', 'derivative', 'integral'
+    ];
+
+    const text = subtask.description.toLowerCase();
+    return mathKeywords.some(kw => text.includes(kw));
+  }
+
+  /**
+   * Extract math expressions from text for Wolfram queries
+   * Looks for: calculations, percentages, equations, unit conversions
+   */
+  private extractMathExpressions(text: string): string[] {
+    const expressions: string[] = [];
+
+    // Percentage calculations: "15% of 500", "calculate 25% of 1000"
+    const percentRegex = /(\d+(?:\.\d+)?)\s*%\s*(?:of|from)\s*(\d+(?:\.\d+)?)/gi;
+    let match;
+    while ((match = percentRegex.exec(text)) !== null) {
+      expressions.push(`${match[1]}% of ${match[2]}`);
+    }
+
+    // Basic arithmetic with keywords: "calculate 1000 / 4"
+    const calcRegex = /(?:calculate|compute|what is)\s+([0-9\s+\-*/().^]+)/gi;
+    while ((match = calcRegex.exec(text)) !== null) {
+      const expr = match[1].trim();
+      if (expr.length > 0 && /\d/.test(expr)) {
+        expressions.push(expr);
+      }
+    }
+
+    // Square roots: "sqrt(144)", "square root of 100"
+    const sqrtRegex = /(?:sqrt|square\s*root\s*(?:of)?)\s*\(?\s*(\d+(?:\.\d+)?)\s*\)?/gi;
+    while ((match = sqrtRegex.exec(text)) !== null) {
+      expressions.push(`sqrt(${match[1]})`);
+    }
+
+    // Unit conversions: "100 miles to kilometers", "50 kg to pounds"
+    const unitRegex = /(\d+(?:\.\d+)?)\s*(miles?|km|kilometers?|feet|meters?|pounds?|kg|kilograms?|celsius|fahrenheit|inches?|cm|centimeters?)\s+(?:to|in)\s+(\w+)/gi;
+    while ((match = unitRegex.exec(text)) !== null) {
+      expressions.push(`${match[1]} ${match[2]} to ${match[3]}`);
+    }
+
+    // Explicit solve: "solve x^2 + 5x + 6 = 0"
+    const solveRegex = /solve\s+([^,.\n]+)/gi;
+    while ((match = solveRegex.exec(text)) !== null) {
+      expressions.push(`solve ${match[1].trim()}`);
+    }
+
+    // Interest formulas: "compound interest on $1000 at 5% for 10 years"
+    const interestRegex = /(?:compound|simple)\s+interest.*?(\$?\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:at|@)\s*(\d+(?:\.\d+)?)\s*%\s*(?:for|over)\s*(\d+)\s*(?:years?|months?)/gi;
+    while ((match = interestRegex.exec(text)) !== null) {
+      const principal = match[1].replace(/[$,]/g, '');
+      const rate = match[2];
+      const time = match[3];
+      expressions.push(`compound interest on ${principal} at ${rate}% for ${time} years`);
+    }
+
+    // Power/exponent: "2^10", "2 to the power of 10"
+    const powerRegex = /(\d+(?:\.\d+)?)\s*(?:\^|to\s*the\s*power\s*(?:of)?)\s*(\d+(?:\.\d+)?)/gi;
+    while ((match = powerRegex.exec(text)) !== null) {
+      expressions.push(`${match[1]}^${match[2]}`);
+    }
+
+    // Dedupe and return
+    return [...new Set(expressions)];
+  }
+
+  /**
+   * Enhance context with Wolfram-computed math values
+   * Called before code generation for math-heavy subtasks
+   */
+  private async enhanceWithWolframMath(
+    subtask: Subtask,
+    context: string
+  ): Promise<string> {
+    if (!this.wolfram || !this.wolfram.isConfigured()) {
+      return context;
+    }
+
+    // Combine subtask description and context for expression extraction
+    const fullText = `${subtask.description}\n${context}`;
+
+    // Extract math expressions
+    const mathExpressions = this.extractMathExpressions(fullText);
+
+    if (mathExpressions.length === 0) {
+      return context;
+    }
+
+    this.log('progress', `Wolfram: querying ${mathExpressions.length} expression(s)`, {
+      expressions: mathExpressions
+    });
+
+    const wolframResults: string[] = [];
+
+    for (const expr of mathExpressions) {
+      try {
+        const result = await this.wolfram.query(expr);
+        if (result.success && result.result) {
+          wolframResults.push(`${expr} = ${result.result}`);
+          this.log('progress', `Wolfram computed: ${expr} = ${result.result}`);
+        }
+      } catch (error) {
+        // Skip failed expressions but log for debugging
+        console.log(`[TaskExecutor] Wolfram query failed for "${expr}":`, error);
+      }
+    }
+
+    if (wolframResults.length === 0) {
+      return context;
+    }
+
+    // Inject computed values into context with clear markers
+    const wolframContext = `\n\n=== WOLFRAM ALPHA COMPUTED VALUES ===
+IMPORTANT: Use these exact computed values in your implementation.
+Do NOT recalculate these - they are verified deterministic results.
+
+${wolframResults.join('\n')}
+=== END WOLFRAM ===`;
+
+    return context + wolframContext;
   }
 
   /**

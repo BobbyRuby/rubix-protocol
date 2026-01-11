@@ -5096,6 +5096,14 @@ class GodAgentMCPServer {
           console.log('[MCP Server] CollaborativePartner initialized - proactive curiosity and challenge decisions enabled');
           console.log('[MCP Server] ContainmentManager initialized - path-based permissions active');
 
+          // Wire Wolfram Alpha for deterministic math
+          const wolframAppId = process.env.WOLFRAM_APP_ID || '';
+          if (wolframAppId) {
+            const wolfram = this.getWolfram();
+            this.taskExecutor.setWolfram(wolfram);
+            console.log('[MCP Server] Wolfram Alpha integrated - deterministic math enabled for CODEX');
+          }
+
           console.log('[MCP Server] CodeGenerator initialized - CODEX can now write real code');
         } catch (error) {
           console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
