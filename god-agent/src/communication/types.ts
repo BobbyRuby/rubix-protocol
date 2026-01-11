@@ -139,6 +139,7 @@ export interface IChannel {
   canReceiveResponses(): boolean;
   handleIncomingResponse(payload: unknown): Promise<void>;
   getStatus(): ChannelStatus;
+  hasPendingRequests(): boolean;
   test(): Promise<boolean>;
 }
 

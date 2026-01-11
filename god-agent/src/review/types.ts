@@ -64,6 +64,8 @@ export interface ReviewConfig {
   sensitivePatterns: string[];
   /** Custom rules to apply */
   customRules?: CustomReviewRule[];
+  /** Minimum required test coverage percentage (default: 80) */
+  coverageThreshold?: number;
 }
 
 /**

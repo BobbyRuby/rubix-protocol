@@ -408,21 +408,155 @@ export class CodeReviewer {
   // ===========================================================================
 
   /**
-   * Check test coverage
+   * Check test coverage by running the test runner with coverage
    */
   private async checkTestCoverage(): Promise<TestCoverageResult> {
-    // In a full implementation, this would run tests and get coverage
-    // For now, return placeholder
-    return {
-      overall: 0,
-      lines: 0,
-      branches: 0,
-      functions: 0,
-      statements: 0,
-      uncoveredFiles: [],
-      meetsThreshold: false,
-      threshold: 80
-    };
+    const threshold = this.config.coverageThreshold || 80;
+
+    try {
+      // Detect test runner
+      const testRunner = await this.detectTestRunner();
+
+      if (!testRunner) {
+        console.log('[CodeReviewer] No test runner detected (jest/vitest)');
+        return {
+          overall: 0,
+          lines: 0,
+          branches: 0,
+          functions: 0,
+          statements: 0,
+          uncoveredFiles: [],
+          meetsThreshold: false,
+          threshold
+        };
+      }
+
+      console.log(`[CodeReviewer] Detected test runner: ${testRunner}`);
+
+      // Run test with coverage
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      let coverageCmd: string;
+      if (testRunner === 'vitest') {
+        coverageCmd = 'npx vitest run --coverage --reporter=json';
+      } else {
+        coverageCmd = 'npx jest --coverage --json --outputFile=coverage/coverage-summary.json';
+      }
+
+      try {
+        await execAsync(coverageCmd, {
+          cwd: this.projectRoot,
+          timeout: 120000 // 2 minute timeout
+        });
+      } catch (testError) {
+        // Tests might fail but we still want coverage data
+        console.log('[CodeReviewer] Tests completed (some may have failed)');
+      }
+
+      // Parse coverage report
+      const coverageResult = await this.parseCoverageReport(testRunner);
+
+      return {
+        ...coverageResult,
+        threshold,
+        meetsThreshold: coverageResult.overall >= threshold
+      };
+    } catch (error) {
+      console.warn('[CodeReviewer] Failed to run test coverage:', error);
+      return {
+        overall: 0,
+        lines: 0,
+        branches: 0,
+        functions: 0,
+        statements: 0,
+        uncoveredFiles: [],
+        meetsThreshold: false,
+        threshold
+      };
+    }
+  }
+
+  /**
+   * Detect which test runner is installed
+   */
+  private async detectTestRunner(): Promise<'jest' | 'vitest' | null> {
+    const pkgPath = path.join(this.projectRoot, 'package.json');
+
+    try {
+      const pkgContent = await fs.readFile(pkgPath, 'utf-8');
+      const pkg = JSON.parse(pkgContent);
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+      if (deps['vitest']) return 'vitest';
+      if (deps['jest']) return 'jest';
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parse coverage report from test runner
+   */
+  private async parseCoverageReport(
+    testRunner: 'jest' | 'vitest'
+  ): Promise<Omit<TestCoverageResult, 'threshold' | 'meetsThreshold'>> {
+    let coveragePath: string;
+
+    if (testRunner === 'vitest') {
+      coveragePath = path.join(this.projectRoot, 'coverage', 'coverage-summary.json');
+    } else {
+      coveragePath = path.join(this.projectRoot, 'coverage', 'coverage-summary.json');
+    }
+
+    try {
+      const coverageContent = await fs.readFile(coveragePath, 'utf-8');
+      const coverage = JSON.parse(coverageContent);
+
+      // Extract total metrics
+      const total = coverage.total || {};
+
+      const lines = total.lines?.pct ?? 0;
+      const branches = total.branches?.pct ?? 0;
+      const functions = total.functions?.pct ?? 0;
+      const statements = total.statements?.pct ?? 0;
+
+      // Calculate overall as average
+      const overall = (lines + branches + functions + statements) / 4;
+
+      // Find uncovered files (less than 50% coverage)
+      const uncoveredFiles: string[] = [];
+      for (const [filePath, fileCoverage] of Object.entries(coverage)) {
+        if (filePath === 'total') continue;
+        const fc = fileCoverage as { lines?: { pct: number } };
+        if (fc.lines && fc.lines.pct < 50) {
+          uncoveredFiles.push(filePath);
+        }
+      }
+
+      console.log(`[CodeReviewer] Coverage: ${overall.toFixed(1)}% overall (L:${lines.toFixed(1)}% B:${branches.toFixed(1)}% F:${functions.toFixed(1)}% S:${statements.toFixed(1)}%)`);
+
+      return {
+        overall,
+        lines,
+        branches,
+        functions,
+        statements,
+        uncoveredFiles
+      };
+    } catch (error) {
+      console.warn('[CodeReviewer] Failed to parse coverage report:', error);
+      return {
+        overall: 0,
+        lines: 0,
+        branches: 0,
+        functions: 0,
+        statements: 0,
+        uncoveredFiles: []
+      };
+    }
   }
 
   // ===========================================================================

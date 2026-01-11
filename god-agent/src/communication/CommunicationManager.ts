@@ -378,6 +378,44 @@ export class CommunicationManager {
   isEnabled(): boolean {
     return this.config.enabled && this.channels.size > 0;
   }
+
+  /**
+   * Enable/disable TelegramBot polling mode.
+   * When active, TelegramChannel operates in send-only mode
+   * to avoid conflict (only one poller per bot token allowed).
+   */
+  setTelegramBotActive(active: boolean): void {
+    const telegramChannel = this.channels.get('telegram') as TelegramChannel | undefined;
+    if (telegramChannel) {
+      telegramChannel.setSendOnlyMode(active);
+      console.log(`[CommunicationManager] Telegram send-only mode: ${active}`);
+    }
+  }
+
+  /**
+   * Handle a Telegram response forwarded from TelegramBot.
+   * Used when TelegramBot handles all polling and forwards escalation responses.
+   */
+  async handleTelegramResponse(message: {
+    text: string;
+    replyToText?: string;
+    callbackData?: string;
+  }): Promise<void> {
+    const telegramChannel = this.channels.get('telegram') as TelegramChannel | undefined;
+    if (telegramChannel) {
+      const response = await telegramChannel.receiveForwardedResponse(message);
+      if (response) {
+        console.log(`[CommunicationManager] Received escalation response: ${response.response}`);
+      }
+    }
+  }
+
+  /**
+   * Get the TelegramChannel for direct access (e.g., from TelegramBot).
+   */
+  getTelegramChannel(): TelegramChannel | undefined {
+    return this.channels.get('telegram') as TelegramChannel | undefined;
+  }
 }
 
 export default CommunicationManager;

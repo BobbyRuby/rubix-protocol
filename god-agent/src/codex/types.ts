@@ -239,7 +239,7 @@ export interface WorkLogEntry {
   taskId: string;
   subtaskId?: string;
   timestamp: Date;
-  type: 'start' | 'progress' | 'success' | 'failure' | 'decision' | 'escalation' | 'complete';
+  type: 'start' | 'progress' | 'success' | 'failure' | 'decision' | 'escalation' | 'complete' | 'memory';
   message: string;
   details?: Record<string, unknown>;
 }

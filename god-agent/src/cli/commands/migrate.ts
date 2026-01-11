@@ -102,11 +102,11 @@ function printSummary(results: MigrationResult[], totalDuration: number): void {
   }
 
   console.log();
-  console.log(chalk.dim('Verify with: god-agent stats'));
+  console.log(chalk.dim('Verify with: rubix stats'));
 }
 
 export const migrateCommand = new Command('migrate')
-  .description('Migrate knowledge into God Agent memory')
+  .description('Migrate knowledge into Rubix memory')
   .option('-d, --data-dir <path>', 'Data directory path', DEFAULT_MIGRATION_CONFIG.dataDir)
   .option('--all', 'Run all migration phases')
   .option('--git', 'Migrate git history')
@@ -141,7 +141,7 @@ export const migrateCommand = new Command('migrate')
 
     // Print header
     console.log();
-    console.log(chalk.bold('God Agent Knowledge Migration'));
+    console.log(chalk.bold('Rubix Knowledge Migration'));
     console.log(chalk.bold('═══════════════════════════════════════════════════════════'));
     if (config.dryRun) {
       console.log(chalk.yellow('DRY RUN MODE - No changes will be made'));
@@ -154,10 +154,10 @@ export const migrateCommand = new Command('migrate')
     try {
       // Initialize engine (except for claude-md only)
       if (runGit || runSkills || runSecurity) {
-        spinner = ora('Initializing God Agent...').start();
+        spinner = ora('Initializing Rubix...').start();
         engine = new MemoryEngine({ dataDir: config.dataDir });
         await engine.initialize();
-        spinner.succeed('God Agent initialized');
+        spinner.succeed('Rubix initialized');
       }
 
       const progressCallback = spinner ? createProgressCallback(spinner) : undefined;

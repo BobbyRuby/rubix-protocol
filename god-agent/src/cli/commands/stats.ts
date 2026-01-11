@@ -29,7 +29,7 @@ export const statsCommand = new Command('stats')
         console.log(JSON.stringify(stats, null, 2));
       } else {
         console.log();
-        console.log(chalk.cyan('God Agent Memory Statistics'));
+        console.log(chalk.cyan('Rubix Memory Statistics'));
         console.log(chalk.dim('─'.repeat(40)));
         console.log();
         console.log(chalk.dim('Memory Entries:'), chalk.white(stats.totalEntries.toString()));

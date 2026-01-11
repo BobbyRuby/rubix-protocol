@@ -24,7 +24,10 @@ import { AlternativesFinder, type AlternativeApproach } from './AlternativesFind
 import { CausalDebugger, type CausalChain } from './CausalDebugger.js';
 import { CodeGenerator } from './CodeGenerator.js';
 import { CollaborativePartner } from './CollaborativePartner.js';
+import { WorkingMemoryManager } from './WorkingMemoryManager.js';
 import type { NotificationService } from '../notification/NotificationService.js';
+import type { CodeReviewer } from '../review/CodeReviewer.js';
+import type { ReviewIssue } from '../review/types.js';
 import { DeepWorkManager, type DeepWorkSession, type DeepWorkOptions, type FocusLevel } from '../deepwork/index.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { EscalationResponse } from '../communication/types.js';
@@ -113,6 +116,12 @@ export class TaskExecutor {
   // Wolfram Alpha (deterministic math)
   private wolfram: WolframManager | undefined;
 
+  // Code Reviewer (self-review after generation)
+  private codeReviewer: CodeReviewer | undefined;
+
+  // Working Memory (active memory engagement during task execution)
+  private workingMemory: WorkingMemoryManager | undefined;
+
   private currentTask: CodexTask | undefined;
   private workLog: WorkLogEntry[] = [];
   private isExecuting = false;
@@ -167,6 +176,29 @@ export class TaskExecutor {
       });
 
       this.log('start', `Starting task: ${task.description}`);
+
+      // === INITIALIZE WORKING MEMORY ===
+      // Active memory engagement throughout task execution
+      this.workingMemory = new WorkingMemoryManager(this.engine, {
+        sessionId: task.id,
+        codebase: task.codebase,
+        taskDescription: task.description
+      });
+
+      // Store initial task context
+      await this.workingMemory.storeContext(
+        `TASK: ${task.description}\nCODEBASE: ${task.codebase}\nSPEC: ${task.specification || 'None'}`,
+        undefined
+      );
+
+      // Query for similar past approaches
+      const similarApproaches = await this.workingMemory.findSimilarApproaches(task.description);
+      if (similarApproaches.length > 0) {
+        this.log('memory', `Found ${similarApproaches.length} similar past approaches for reference`);
+        for (const approach of similarApproaches.slice(0, 3)) {
+          this.log('memory', `  - ${approach.content.substring(0, 100)}...`);
+        }
+      }
 
       // Update status
       task.status = TaskStatus.DECOMPOSING;
@@ -382,6 +414,25 @@ export class TaskExecutor {
         // Store decomposition pattern in learning
         await this.learning.learnDecomposition(task, task.subtasks.length, true);
 
+        // === STORE DECOMPOSITION IN WORKING MEMORY ===
+        if (this.workingMemory) {
+          const subtaskTypes = task.subtasks.map(s => s.type).join(' → ');
+          const planId = await this.workingMemory.storeDecision(
+            `Decomposed into ${task.subtasks.length} subtasks: ${subtaskTypes}`,
+            `Complexity: ${decomposition.estimatedComplexity}. Ambiguities: ${decomposition.ambiguities.length}`,
+            [] // No alternatives tracked currently
+          );
+
+          // Link subtask dependencies as causal relations
+          for (const subtask of task.subtasks) {
+            for (const depId of subtask.dependencies) {
+              await this.workingMemory.linkCause(depId, subtask.id, 'enables');
+            }
+          }
+
+          this.log('memory', `Stored decomposition decision: ${planId}`);
+        }
+
         // Create initial checkpoint after decomposition
         this.deepWork.createCheckpoint(
           0,
@@ -421,6 +472,18 @@ export class TaskExecutor {
         }
       });
       this.deepWork.endSession(result.success ? 'completed' : 'interrupted');
+
+      // === STORE SESSION SUMMARY IN WORKING MEMORY ===
+      if (this.workingMemory) {
+        const summary = await this.workingMemory.summarizeSession();
+        this.log('memory', `Session summary:\n${summary}`);
+
+        // Store the summary for future reference
+        await this.workingMemory.storeSessionSummary(result.success);
+
+        const stats = this.workingMemory.getSessionStats();
+        this.log('memory', `Session stats: ${stats.entries} entries, ${stats.decisions} decisions, ${stats.failures} failures`);
+      }
 
       // Store completion in memory
       await this.storeTaskCompletion(task, result);
@@ -557,6 +620,21 @@ export class TaskExecutor {
       });
     }
 
+    // === QUERY WORKING MEMORY FOR CONTEXT ===
+    let memoryContext = '';
+    let previousFailures: Array<{ id: string; content: string }> = [];
+    if (this.workingMemory) {
+      // Get relevant context from this session
+      const relevantContext = await this.workingMemory.getRelevantContext(subtask.description, 5);
+      // Get any previous failures for this subtask
+      previousFailures = await this.workingMemory.getFailuresForSubtask(subtask.id);
+
+      if (relevantContext.length > 0 || previousFailures.length > 0) {
+        memoryContext = this.workingMemory.formatContextForPrompt(relevantContext, previousFailures);
+        this.log('memory', `Retrieved ${relevantContext.length} context entries, ${previousFailures.length} previous failures`);
+      }
+    }
+
     while (attempt < subtask.maxAttempts) {
       attempt++;
 
@@ -594,6 +672,19 @@ export class TaskExecutor {
 
       // Track attempt start with learning
       await this.learning.trackAttemptStart(task, subtask, attemptRecord);
+
+      // === STORE APPROACH IN WORKING MEMORY ===
+      let approachEntryId: string | undefined;
+      if (this.workingMemory) {
+        const failureContext = previousFailures.length > 0
+          ? `. Avoiding: ${previousFailures.map(f => f.content.split('\n')[0]).join('; ')}`
+          : '';
+        approachEntryId = await this.workingMemory.storeApproach(
+          approach,
+          `Attempt ${attempt}/${subtask.maxAttempts} for ${subtask.type} subtask${failureContext}`,
+          subtask.id
+        );
+      }
 
       // === CHALLENGE CHECK ===
       // Before execution, assess the approach for potential issues
@@ -709,12 +800,16 @@ export class TaskExecutor {
           });
         }
 
-        // Execute the approach
+        // Execute the approach with memory context
+        const enhancedContext = memoryContext
+          ? `${codebaseContext}\n\n${memoryContext}`
+          : codebaseContext;
+
         const result = await this.performSubtaskExecution(
           task,
           subtask,
           attemptRecord,
-          codebaseContext,
+          enhancedContext,
           thinkingBudget
         );
 
@@ -775,6 +870,23 @@ export class TaskExecutor {
         // Record failure outcome with learning
         await this.learning.recordOutcome(subtask, attemptRecord, false);
 
+        // === STORE FAILURE IN WORKING MEMORY WITH CAUSAL LINKS ===
+        if (this.workingMemory) {
+          const failureId = await this.workingMemory.storeFailure(
+            result.error || 'Unknown error',
+            attemptRecord.approach,
+            undefined, // Root cause will be added by SelfHealer
+            subtask.id
+          );
+
+          // Link approach to failure (this approach caused this failure)
+          if (approachEntryId) {
+            await this.workingMemory.linkCause(approachEntryId, failureId, 'causes');
+          }
+
+          this.log('memory', `Stored failure: ${failureId}`);
+        }
+
         // Start causal chain on first failure
         if (!activeChain) {
           activeChain = await this.causalDebugger.startChain(task, subtask, attemptRecord);
@@ -812,6 +924,26 @@ export class TaskExecutor {
         };
 
         const healing = await this.healer.analyze(context);
+
+        // === STORE HEALING DECISION IN WORKING MEMORY ===
+        if (this.workingMemory && healing.newApproach) {
+          const healingId = await this.workingMemory.storeDecision(
+            `Healing: ${healing.newApproach}`,
+            `Reason: ${healing.reason || 'Unknown'}. Actions: ${healing.suggestedActions?.join(', ') || 'none'}`,
+            [] // Alternatives could be added here
+          );
+
+          // Update the failure entry with root cause if we have it
+          if (healing.reason) {
+            await this.workingMemory.storeFinding(
+              `ROOT CAUSE: ${healing.reason}`,
+              'SelfHealer',
+              subtask.id
+            );
+          }
+
+          this.log('memory', `Stored healing decision: ${healingId}`);
+        }
 
         if (healing.isFundamentalBlocker) {
           // Escalate - we can't fix this ourselves
@@ -1088,6 +1220,17 @@ export class TaskExecutor {
 
       console.log(`[TaskExecutor] Generating code for: ${subtask.description}`);
 
+      // === STORE CODE GENERATION CONTEXT IN WORKING MEMORY ===
+      let generationContextId: string | undefined;
+      if (this.workingMemory) {
+        generationContextId = await this.workingMemory.storeContext(
+          `CODE GENERATION: ${subtask.description}\n` +
+          `APPROACH: ${attempt.approach}\n` +
+          `ATTEMPT: ${attempt.attemptNumber}/${subtask.maxAttempts}`,
+          subtask.id
+        );
+      }
+
       const genResult = await this.codeGenerator.generate({
         task,
         subtask,
@@ -1167,6 +1310,50 @@ export class TaskExecutor {
       const filesModified = [...genResult.filesCreated, ...genResult.filesModified];
       console.log(`[TaskExecutor] Generated ${filesModified.length} files`);
 
+      // === STORE CODE GENERATION RESULT IN WORKING MEMORY ===
+      if (this.workingMemory && filesModified.length > 0) {
+        await this.workingMemory.storeCodeGeneration(
+          filesModified,
+          attempt.approach,
+          genResult.output.substring(0, 500),
+          subtask.id,
+          generationContextId
+        );
+
+        // Link the generation context to the result
+        if (generationContextId) {
+          const resultId = await this.workingMemory.storeFinding(
+            `Generated ${filesModified.length} files: ${filesModified.slice(0, 5).join(', ')}${filesModified.length > 5 ? '...' : ''}`,
+            'CodeGenerator',
+            subtask.id
+          );
+          await this.workingMemory.linkCause(generationContextId, resultId, 'causes');
+        }
+      }
+
+      // VALIDATION STEP 1: Ensure files were actually generated
+      if (filesModified.length === 0) {
+        return {
+          success: false,
+          error: 'Code generation produced no files',
+          output: genResult.output,
+          filesModified: [],
+          consoleErrors: ['Expected code output but no files were created or modified']
+        };
+      }
+
+      // VALIDATION STEP 2: Verify all files exist on disk
+      const existsSync = await import('fs').then(m => m.existsSync);
+      const missingFiles = filesModified.filter(f => !existsSync(f));
+      if (missingFiles.length > 0) {
+        return {
+          success: false,
+          error: `Generated files not found on disk: ${missingFiles.join(', ')}`,
+          filesModified: filesModified.filter(f => existsSync(f)),
+          consoleErrors: missingFiles.map(f => `File not found: ${f}`)
+        };
+      }
+
       // Post-coding verification with capabilities
       if (this.capabilities && filesModified.length > 0) {
         // Run type checking on modified files
@@ -1215,6 +1402,51 @@ export class TaskExecutor {
           filesModified,
           consoleErrors: errors
         };
+      }
+
+      // SELF-REVIEW STEP: Run quick review on generated code
+      if (this.codeReviewer && filesModified.length > 0) {
+        try {
+          this.log('progress', 'Running self-review on generated code');
+          const review = await this.codeReviewer.quickReview(filesModified);
+
+          if (review && review.criticalIssues.length > 0) {
+            this.log('progress', `Self-review found ${review.criticalIssues.length} critical issue(s)`);
+
+            // Attempt auto-fix for fixable issues
+            const fixableIssues = review.criticalIssues.filter((i: ReviewIssue) => i.fix?.autoApplicable);
+            if (fixableIssues.length > 0) {
+              this.log('progress', `Attempting auto-fix for ${fixableIssues.length} issue(s)`);
+              const fixCount = await this.applyAutoFixes(fixableIssues);
+              if (fixCount > 0) {
+                this.log('progress', `Auto-fixed ${fixCount} issue(s)`);
+              }
+            }
+
+            // If review didn't pass (critical issues remain), fail for retry
+            if (!review.pass) {
+              return {
+                success: false,
+                error: `Self-review found ${review.criticalIssues.length} critical issue(s)`,
+                output: review.summary,
+                filesModified,
+                consoleErrors: review.criticalIssues.map((i: ReviewIssue) =>
+                  `${i.file}:${i.line}: [${i.severity}] ${i.title}: ${i.description}`
+                )
+              };
+            }
+
+            // Non-critical issues become warnings
+            warnings.push(...review.criticalIssues.map((i: ReviewIssue) =>
+              `${i.file}:${i.line}: [${i.severity}] ${i.title}`
+            ));
+          } else if (review.pass) {
+            this.log('progress', 'Self-review passed - no critical issues found');
+          }
+        } catch (reviewError) {
+          // Self-review is optional, don't fail if it errors
+          console.warn('[TaskExecutor] Self-review failed:', reviewError);
+        }
       }
 
       const outputParts = [genResult.output];
@@ -1918,6 +2150,27 @@ Summary: ${result.summary}`;
   }
 
   /**
+   * Set code reviewer (for late binding)
+   */
+  setCodeReviewer(reviewer: CodeReviewer): void {
+    this.codeReviewer = reviewer;
+  }
+
+  /**
+   * Get the code reviewer if available
+   */
+  getCodeReviewer(): CodeReviewer | undefined {
+    return this.codeReviewer;
+  }
+
+  /**
+   * Check if code reviewer is available
+   */
+  hasCodeReviewer(): boolean {
+    return this.codeReviewer !== undefined;
+  }
+
+  /**
    * Check if code generation is available
    */
   hasCodeGenerator(): boolean {
@@ -2361,6 +2614,30 @@ ${wolframResults.join('\n')}
    */
   shouldNotifyDeepWork(type: string, urgency: 'low' | 'normal' | 'high' | 'critical'): boolean {
     return this.deepWork.shouldNotify(type, urgency);
+  }
+
+  /**
+   * Apply auto-fixes for fixable issues using CapabilitiesManager
+   * @param issues Review issues with autoApplicable fixes
+   * @returns Number of issues fixed
+   */
+  private async applyAutoFixes(issues: ReviewIssue[]): Promise<number> {
+    if (!this.capabilities) return 0;
+
+    // Get unique files that need fixing
+    const filesToFix = [...new Set(issues.map(i => i.file).filter(Boolean))] as string[];
+
+    if (filesToFix.length === 0) return 0;
+
+    try {
+      // Run ESLint with --fix via CapabilitiesManager
+      const result = await this.capabilities.fixLintIssues(filesToFix);
+      this.log('progress', `Auto-fixed ${result.fixedCount} issues in ${filesToFix.length} file(s)`);
+      return result.fixedCount;
+    } catch (error) {
+      console.warn('[TaskExecutor] Auto-fix failed:', error);
+      return 0;
+    }
   }
 }
 

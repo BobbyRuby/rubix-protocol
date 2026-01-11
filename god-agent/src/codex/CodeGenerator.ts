@@ -245,11 +245,16 @@ export class CodeGenerator {
           const hasCodeBlock = /```[\w]*\n/.test(textContent.text);
           console.warn(`[CodeGenerator] Contains <file> tag: ${hasFileTag}, Contains code blocks: ${hasCodeBlock}`);
 
+          // This is a FAILURE - we expected code but Claude didn't produce proper file operations
+          // The response may contain code blocks but not in the expected format
           return {
-            success: true,
+            success: false,
             filesCreated: [],
             filesModified: [],
             output: textContent.text,
+            error: hasFileTag || hasCodeBlock
+              ? 'No file operations parsed - code found but format incorrect (expected <file path="..." action="create|modify">)'
+              : 'No file operations generated - Claude did not produce code',
             tokensUsed: totalTokensUsed,
             thinkingContent: allThinkingContent || undefined,
             thinkingTokensUsed: this.countThinkingTokens(response)

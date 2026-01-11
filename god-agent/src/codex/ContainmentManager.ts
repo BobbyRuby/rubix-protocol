@@ -129,15 +129,15 @@ export const DEFAULT_CONTAINMENT_CONFIG: ContainmentConfig = {
  */
 export class ContainmentManager {
   private config: ContainmentConfig;
-  private sortedPermissions: PathPermission[];
+  private sortedPermissions: PathPermission[] = [];
   private taskOverrides: Map<string, Set<string>> = new Map();
+  /** Session-scoped permissions (cleared on restart) */
+  private sessionPermissions: PathPermission[] = [];
 
   constructor(config: Partial<ContainmentConfig> = {}) {
     this.config = { ...DEFAULT_CONTAINMENT_CONFIG, ...config };
     // Sort permissions by priority (descending)
-    this.sortedPermissions = [...this.config.permissions].sort(
-      (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
-    );
+    this.resortPermissions();
   }
 
   /**
@@ -215,6 +215,64 @@ export class ContainmentManager {
   }
 
   /**
+   * Add a session-scoped permission (temporary, clears on restart)
+   * Still respects immutable security rules.
+   */
+  addSessionPermission(pattern: string, permission: PermissionLevel, reason?: string): ModifyResult {
+    // Normalize pattern
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+
+    // Check if trying to allow what immutable rules deny
+    // Note: We don't block the addition, we just warn - the priority system handles it
+    // Security rules at priority 100 will still be checked first
+
+    // Add session permission at priority 15 (above defaults, below everything else)
+    this.sessionPermissions.push({
+      pattern: normalizedPattern,
+      permission,
+      reason: reason || `Session access: ${normalizedPattern}`,
+      priority: 15
+    });
+
+    // Re-sort all permissions
+    this.resortPermissions();
+
+    this.auditLog('addSessionPermission', { pattern: normalizedPattern, permission }, true);
+    return { success: true };
+  }
+
+  /**
+   * Remove a session permission by pattern
+   */
+  removeSessionPermission(pattern: string): ModifyResult {
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+    const index = this.sessionPermissions.findIndex(p => p.pattern === normalizedPattern);
+    if (index === -1) {
+      return { success: false, reason: 'Session permission not found' };
+    }
+    this.sessionPermissions.splice(index, 1);
+    this.resortPermissions();
+    this.auditLog('removeSessionPermission', { pattern: normalizedPattern }, true);
+    return { success: true };
+  }
+
+  /**
+   * List current session permissions
+   */
+  getSessionPermissions(): PathPermission[] {
+    return [...this.sessionPermissions];
+  }
+
+  /**
+   * Clear all session permissions
+   */
+  clearSessionPermissions(): void {
+    this.sessionPermissions = [];
+    this.resortPermissions();
+    this.auditLog('clearSessionPermissions', {}, true);
+  }
+
+  /**
    * Add a new permission rule
    * Returns ModifyResult indicating success/failure
    */
@@ -242,9 +300,7 @@ export class ContainmentManager {
     }
 
     this.config.permissions.push(cappedPermission);
-    this.sortedPermissions = [...this.config.permissions].sort(
-      (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
-    );
+    this.resortPermissions();
     this.auditLog('addPermission', { pattern: cappedPermission.pattern, permission: cappedPermission.permission }, true);
     return { success: true };
   }
@@ -273,9 +329,7 @@ export class ContainmentManager {
     // Remove the rule
     const index = this.config.permissions.indexOf(rule);
     this.config.permissions.splice(index, 1);
-    this.sortedPermissions = [...this.config.permissions].sort(
-      (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
-    );
+    this.resortPermissions();
     this.auditLog('removePermission', { pattern }, true);
     return { success: true };
   }
@@ -335,9 +389,7 @@ export class ContainmentManager {
 
     this.config = { ...this.config, ...safeUpdates };
     if (safeUpdates.permissions) {
-      this.sortedPermissions = [...this.config.permissions].sort(
-        (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
-      );
+      this.resortPermissions();
     }
     this.auditLog('updateConfig', safeUpdates, true);
     return { success: true };
@@ -438,6 +490,17 @@ export class ContainmentManager {
     if (permission === 'deny') return false;
     if (permission === 'read-write') return true;
     return permission === operation;
+  }
+
+  /**
+   * Re-sort all permissions (config + session) by priority
+   */
+  private resortPermissions(): void {
+    // Combine config permissions + session permissions
+    const allPermissions = [...this.config.permissions, ...this.sessionPermissions];
+    this.sortedPermissions = allPermissions.sort(
+      (a, b) => (b.priority ?? 0) - (a.priority ?? 0)
+    );
   }
 
   /**

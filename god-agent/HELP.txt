@@ -1,0 +1,169 @@
+================================================================================
+                         GOD-AGENT LAUNCHER HELP
+================================================================================
+
+God-Agent is an autonomous AI agent system with multiple deployment modes.
+Double-click any .bat file to start the corresponding service.
+
+Press Ctrl+C to stop any running service.
+
+================================================================================
+                              LAUNCHERS
+================================================================================
+
+LAUNCH.BAT - Full Stack
+-----------------------
+Starts ALL services at once:
+  - MemoryEngine (vector database + provenance tracking)
+  - CODEX (autonomous code generation)
+  - Telegram Bot (if TELEGRAM_BOT_TOKEN is set)
+  - Scheduler Daemon (cron jobs, event triggers)
+  - Webhook Server (port 3456)
+  - Notification Service
+  - Communication Manager
+
+Use when: You want everything running together.
+
+
+LAUNCH-TELEGRAM.BAT - Telegram Bot + CODEX
+------------------------------------------
+Starts the Telegram bot connected to CODEX for mobile control.
+
+Telegram Commands:
+  /start              - Confirm bot is alive, show welcome
+  /help               - Show available commands
+  /task <description> - Submit a task to CODEX
+                        Example: /task Create a hello world React component
+  /status             - Check if a task is running and its progress
+
+Use when: You want to control CODEX from your phone via Telegram.
+Bot: @RubixProtocolBot
+
+
+LAUNCH-DAEMON.BAT - Scheduler Daemon
+------------------------------------
+Runs background tasks on schedules or triggers.
+
+Trigger Types:
+  - datetime : Execute at a specific time (ISO format)
+  - cron     : Recurring schedule (cron syntax: "0 9 * * 1-5" = 9am weekdays)
+  - event    : Execute when a named event is fired
+  - file     : Execute when a file changes
+  - manual   : Only runs when manually triggered
+
+Use when: You want automated background tasks without Telegram.
+
+
+LAUNCH-WEBHOOKS.BAT - Webhook Server Only
+-----------------------------------------
+Runs ONLY the webhook HTTP server on port 3456.
+No MemoryEngine, no CODEX - completely standalone.
+
+Endpoints:
+  POST http://localhost:3456/webhooks/sms     - Receive SMS callbacks
+  POST http://localhost:3456/webhooks/slack   - Receive Slack interactions
+  POST http://localhost:3456/webhooks/discord - Receive Discord interactions
+  POST http://localhost:3456/webhooks/phone   - Receive phone call callbacks
+  GET  http://localhost:3456/health           - Health check (returns 200 OK)
+
+Use when: You only need to receive webhook callbacks from external services.
+
+
+================================================================================
+                          ENVIRONMENT VARIABLES
+================================================================================
+
+Required variables are set in the .env file in this directory.
+
+OPENAI_API_KEY        - Required for embeddings (memory search)
+ANTHROPIC_API_KEY     - Required for CODEX code generation
+TELEGRAM_BOT_TOKEN    - Required for Telegram bot
+TELEGRAM_CHAT_ID      - Required for Telegram escalation channel
+GOD_AGENT_DATA_DIR    - Data directory (default: ./data)
+WEBHOOK_PORT          - Webhook server port (default: 3456)
+
+Optional:
+SLACK_WEBHOOK_URL     - For Slack notifications
+DISCORD_WEBHOOK_URL   - For Discord notifications
+TELEGRAM_ALLOWED_USERS - Comma-separated user IDs to restrict access
+
+
+================================================================================
+                             CODEX CAPABILITIES
+================================================================================
+
+When you submit a task via Telegram (/task) or programmatically, CODEX:
+
+1. DECOMPOSES the task into subtasks:
+   - research   : Analyze existing codebase
+   - design     : Plan the architecture
+   - code       : Generate/modify code files
+   - test       : Write and run tests
+   - integrate  : Wire components together
+   - verify     : Browser verification (if URL provided)
+   - review     : Code quality check
+
+2. EXECUTES each subtask with up to 3 attempts:
+   - Attempt 1: Standard approach
+   - Attempt 2: Alternative approach + learning suggestions
+   - Attempt 3: Ultrathink mode (extended thinking)
+
+3. SELF-HEALS on failure:
+   - Analyzes error patterns
+   - Queries memory for similar past failures
+   - Tries alternative approaches
+
+4. ESCALATES only when genuinely blocked:
+   - Sends notification via Telegram
+   - Falls back through: Telegram -> Phone -> SMS -> Slack -> Discord -> Email
+
+
+================================================================================
+                            TROUBLESHOOTING
+================================================================================
+
+"OPENAI_API_KEY environment variable is required"
+  -> Check your .env file has OPENAI_API_KEY set
+
+"ANTHROPIC_API_KEY not set - CODEX in simulation mode"
+  -> CODEX won't generate real code without ANTHROPIC_API_KEY
+
+"SqliteError: no such column"
+  -> Database schema mismatch. Delete ./data/memory.db and restart.
+
+Telegram bot not responding:
+  -> Check TELEGRAM_BOT_TOKEN is correct
+  -> Make sure no other instance is running (only one can poll)
+
+Webhook server won't start:
+  -> Port 3456 may be in use. Set WEBHOOK_PORT to another port.
+
+Service crashes immediately:
+  -> Run from command prompt to see error messages:
+     cd D:\rubix-protocol\god-agent
+     npm run launch:telegram
+
+
+================================================================================
+                              FILE LOCATIONS
+================================================================================
+
+Batch Files:     D:\rubix-protocol\god-agent\*.bat
+Source Code:     D:\rubix-protocol\god-agent\src\launch\
+Compiled:        D:\rubix-protocol\god-agent\dist\launch\
+Configuration:   D:\rubix-protocol\god-agent\.env
+Database:        D:\rubix-protocol\god-agent\data\memory.db
+Documentation:   D:\rubix-protocol\god-agent\CLAUDE.md
+
+
+================================================================================
+                               QUICK START
+================================================================================
+
+1. Double-click launch-telegram.bat
+2. Open Telegram and message @RubixProtocolBot
+3. Send: /start
+4. Send: /task Create a hello world function in TypeScript
+5. Watch CODEX work!
+
+================================================================================

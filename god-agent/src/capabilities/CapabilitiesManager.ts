@@ -420,6 +420,18 @@ export class CapabilitiesManager {
     return this.analyzer.analyze(files);
   }
 
+  /**
+   * Run ESLint with --fix to auto-correct fixable issues
+   * @param files Optional list of files to fix
+   * @returns Object with count of fixed issues and remaining error count
+   */
+  async fixLintIssues(files?: string[]): Promise<{ fixedCount: number; remainingErrors: number }> {
+    if (!this.analyzer) {
+      return { fixedCount: 0, remainingErrors: 0 };
+    }
+    return this.analyzer.fixLintIssues(files);
+  }
+
   // ===========================================================================
   // AST Operations
   // ===========================================================================

@@ -19,8 +19,8 @@ import { captureMissingCommand } from './commands/capture-missing.js';
 const program = new Command();
 
 program
-  .name('god-agent')
-  .description('God Agent - Neuro-symbolic cognitive architecture for multi-agent orchestration')
+  .name('rubix')
+  .description('Rubix - Autonomous developer agent with unlimited memory')
   .version('0.1.0');
 
 program.addCommand(initCommand);

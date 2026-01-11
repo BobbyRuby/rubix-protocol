@@ -18,10 +18,30 @@ export class TelegramChannel extends BaseChannel {
   private config: TelegramChannelConfig;
   private lastUpdateId: number = 0;
   private pollingInterval: NodeJS.Timeout | null = null;
+  private sendOnlyMode: boolean = false;
 
   constructor(config: TelegramChannelConfig) {
     super();
     this.config = config;
+  }
+
+  /**
+   * Enable send-only mode - disables polling.
+   * Use when TelegramBot is handling polling to avoid conflicts.
+   */
+  setSendOnlyMode(enabled: boolean): void {
+    this.sendOnlyMode = enabled;
+    if (enabled) {
+      this.stopPolling();
+      console.log('[TelegramChannel] Send-only mode enabled (TelegramBot handles polling)');
+    }
+  }
+
+  /**
+   * Check if in send-only mode
+   */
+  isSendOnlyMode(): boolean {
+    return this.sendOnlyMode;
   }
 
   get isConfigured(): boolean {
@@ -142,6 +162,11 @@ export class TelegramChannel extends BaseChannel {
   }
 
   private async getUpdates(): Promise<Array<{ update_id: number; message?: unknown; callback_query?: unknown }>> {
+    // Skip polling in send-only mode to avoid conflict with TelegramBot
+    if (this.sendOnlyMode) {
+      return [];
+    }
+
     try {
       const url = `${this.apiBase}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=1`;
       const response = await fetch(url);
@@ -286,6 +311,97 @@ export class TelegramChannel extends BaseChannel {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Resolve a pending request directly without going through parseResponse.
+   * Used by receiveForwardedResponse to avoid incomplete payload issues.
+   */
+  private resolvePendingRequest(requestId: string, response: EscalationResponse): void {
+    const pending = this.pendingRequests.get(requestId);
+    if (pending) {
+      clearTimeout(pending.timeoutHandle);
+      this.pendingRequests.delete(requestId);
+      this.status = 'responded';
+      console.log(`[TelegramChannel] Got response: ${response.response.slice(0, 100)}...`);
+      pending.resolve(response);
+    }
+  }
+
+  /**
+   * Receive a forwarded response from TelegramBot (in send-only mode).
+   * This allows TelegramBot to handle all polling while forwarding
+   * escalation responses to this channel.
+   */
+  async receiveForwardedResponse(message: {
+    text: string;
+    replyToText?: string;
+    callbackData?: string;
+  }): Promise<EscalationResponse | null> {
+    // Handle callback button press
+    if (message.callbackData) {
+      try {
+        const data = JSON.parse(message.callbackData) as { rid: string; opt: string };
+        const requestId = this.findRequestByRef(data.rid);
+
+        if (requestId) {
+          const response: EscalationResponse = {
+            requestId,
+            channel: 'telegram',
+            response: data.opt,
+            selectedOption: data.opt,
+            receivedAt: new Date(),
+            rawPayload: message
+          };
+
+          // Resolve the pending request directly
+          this.resolvePendingRequest(requestId, response);
+          return response;
+        }
+      } catch {
+        // Not valid callback data
+      }
+    }
+
+    // Handle text reply
+    if (message.text && !message.text.startsWith('/')) {
+      // Try to match via reply-to reference
+      if (message.replyToText?.includes('[CODEX]')) {
+        const refMatch = message.replyToText.match(/Ref: ([a-f0-9]+)/i);
+        const requestId = this.findRequestByRef(refMatch?.[1]);
+
+        if (requestId) {
+          const response: EscalationResponse = {
+            requestId,
+            channel: 'telegram',
+            response: message.text,
+            receivedAt: new Date(),
+            rawPayload: message
+          };
+
+          // Resolve the pending request directly
+          this.resolvePendingRequest(requestId, response);
+          return response;
+        }
+      }
+
+      // Fallback: use most recent pending request
+      if (this.pendingRequests.size > 0) {
+        const [fallbackId] = Array.from(this.pendingRequests.keys()).slice(-1);
+        const response: EscalationResponse = {
+          requestId: fallbackId,
+          channel: 'telegram',
+          response: message.text,
+          receivedAt: new Date(),
+          rawPayload: message
+        };
+
+        this.resolvePendingRequest(fallbackId, response);
+        return response;
+      }
+    }
+
+    return null;
   }
 }
 

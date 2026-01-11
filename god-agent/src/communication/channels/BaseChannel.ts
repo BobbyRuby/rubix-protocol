@@ -108,6 +108,13 @@ export abstract class BaseChannel implements IChannel {
   }
 
   /**
+   * Check if there are pending requests awaiting response
+   */
+  hasPendingRequests(): boolean {
+    return this.pendingRequests.size > 0;
+  }
+
+  /**
    * Find request by short reference ID
    */
   protected findRequestByRef(ref: string | undefined): string | null {

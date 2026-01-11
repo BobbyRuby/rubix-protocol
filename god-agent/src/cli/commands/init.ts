@@ -11,11 +11,11 @@ import chalk from 'chalk';
 import ora from 'ora';
 
 export const initCommand = new Command('init')
-  .description('Initialize God Agent data directory')
+  .description('Initialize Rubix data directory')
   .option('-d, --data-dir <path>', 'Data directory path', './data')
   .option('-f, --force', 'Overwrite existing configuration', false)
   .action(async (options) => {
-    const spinner = ora('Initializing God Agent...').start();
+    const spinner = ora('Initializing Rubix...').start();
 
     try {
       const dataDir = options.dataDir;
@@ -57,15 +57,15 @@ export const initCommand = new Command('init')
       await engine.initialize();
       await engine.close();
 
-      spinner.succeed(chalk.green('God Agent initialized successfully!'));
+      spinner.succeed(chalk.green('Rubix initialized successfully!'));
       console.log();
       console.log(chalk.dim('Data directory:'), dataDir);
       console.log(chalk.dim('Database:'), join(dataDir, 'memory.db'));
       console.log(chalk.dim('Vector index:'), join(dataDir, 'vectors.hnsw'));
       console.log();
       console.log(chalk.cyan('Next steps:'));
-      console.log('  god-agent store "Your first memory"');
-      console.log('  god-agent query "Search for memories"');
+      console.log('  rubix store "Your first memory"');
+      console.log('  rubix query "Search for memories"');
 
     } catch (error) {
       spinner.fail(chalk.red('Initialization failed'));

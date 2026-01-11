@@ -22,8 +22,33 @@ export { TaskDecomposer } from './TaskDecomposer.js';
 // Self-healing
 export { SelfHealer } from './SelfHealer.js';
 
+// Working Memory (Active memory engagement during task execution)
+export {
+  WorkingMemoryManager,
+  type WorkingMemoryConfig,
+  type MemoryResult,
+  type ContradictionResult,
+  type SessionStats
+} from './WorkingMemoryManager.js';
+
 // Escalation
 export { EscalationGate, type Situation, type SituationType } from './EscalationGate.js';
+
+// Planning Mode (Memory-backed unlimited planning sessions)
+export {
+  PlanningSession,
+  type PlanningSessionConfig,
+  type PlanningStatus,
+  type SessionSummary
+} from './PlanningSession.js';
+
+export {
+  PlanningAgent,
+  type PlanningAgentConfig,
+  type PlanDocument,
+  type PlanComponent,
+  type PlanningExchange
+} from './PlanningAgent.js';
 
 // Intelligence Layer
 export {

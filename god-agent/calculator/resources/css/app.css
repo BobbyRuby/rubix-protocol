@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+    .calc-button {
+        @apply w-16 h-16 rounded-xl text-xl font-semibold transition-all duration-200 
+               hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 
+               focus:ring-offset-2 focus:ring-offset-calculator-bg;
+    }
+    
+    .calc-button-number {
+        @apply calc-button bg-calculator-number text-white hover:bg-purple-600 
+               focus:ring-purple-400;
+    }
+    
+    .calc-button-operator {
+        @apply calc-button bg-calculator-operator text-white hover:bg-red-500 
+               focus:ring-red-400;
+    }
+    
+    .calc-button-function {
+        @apply calc-button bg-calculator-function text-white hover:bg-purple-500 
+               focus:ring-purple-400;
+    }
+    
+    .calc-button-equals {
+        @apply calc-button bg-calculator-equals text-calculator-bg hover:bg-cyan-300 
+               focus:ring-cyan-400 font-bold;
+    }
+    
+    .calc-button-clear {
+        @apply calc-button bg-gray-600 text-white hover:bg-gray-500 
+               focus:ring-gray-400;
+    }
+
+    .calc-button-wide {
+        @apply w-36;
+    }
+
+    .calc-display {
+        @apply bg-calculator-display rounded-xl p-4 mb-6 border-2 border-calculator-button;
+    }
+
+    .history-item {
+        @apply bg-calculator-button/50 rounded-lg p-3 mb-2 text-sm text-gray-300
+               hover:bg-calculator-button transition-colors;
+    }
+}

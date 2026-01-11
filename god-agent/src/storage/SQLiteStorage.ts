@@ -40,9 +40,58 @@ export class SQLiteStorage {
   }
 
   private initializeSchema(): void {
+    // Run migrations BEFORE schema to ensure columns exist for indexes
+    this.runMigrations();
+
     const schemaPath = join(__dirname, 'schema.sql');
     const schema = readFileSync(schemaPath, 'utf-8');
     this.db.exec(schema);
+  }
+
+  /**
+   * Run migrations for existing databases that may be missing columns.
+   * Must run BEFORE schema.sql because schema creates indexes on new columns.
+   */
+  private runMigrations(): void {
+    // Migrate causal_relations
+    this.migrateTable('causal_relations', [
+      { name: 'ttl', type: 'INTEGER' },
+      { name: 'expires_at', type: 'TEXT' }
+    ]);
+
+    // Migrate vector_mappings
+    this.migrateTable('vector_mappings', [
+      { name: 'access_count', type: 'INTEGER DEFAULT 0' },
+      { name: 'last_accessed_at', type: 'TEXT' },
+      { name: 'compression_tier', type: "TEXT DEFAULT 'hot'" }
+    ]);
+  }
+
+  /**
+   * Add missing columns to an existing table
+   */
+  private migrateTable(tableName: string, columns: Array<{ name: string; type: string }>): void {
+    // Check if table exists
+    const tableExists = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name=?
+    `).get(tableName);
+
+    if (!tableExists) {
+      // Table doesn't exist yet, schema.sql will create it with all columns
+      return;
+    }
+
+    // Get current columns
+    const currentColumns = this.db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    const columnNames = new Set(currentColumns.map(col => col.name));
+
+    // Add missing columns
+    for (const col of columns) {
+      if (!columnNames.has(col.name)) {
+        console.log(`[SQLiteStorage] Running migration: Adding ${col.name} column to ${tableName}`);
+        this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${col.name} ${col.type}`);
+      }
+    }
   }
 
   private loadNextVectorLabel(): void {

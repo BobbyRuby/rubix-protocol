@@ -234,6 +234,33 @@ export interface LScoreConfig {
   enforceThreshold: boolean;
 }
 
+export interface CodexLLMConfig {
+  /** Anthropic API key for code generation */
+  apiKey?: string;
+  /** Claude model to use (default: claude-opus-4-5-20250514) */
+  model?: string;
+  /** Maximum tokens for generation (default: 8192) */
+  maxTokens?: number;
+  /** Extended thinking (ultrathink) configuration */
+  extendedThinking?: ExtendedThinkingConfig;
+}
+
+/**
+ * Configuration for CODEX ultrathink - extended thinking that escalates on failures
+ */
+export interface ExtendedThinkingConfig {
+  /** Enable extended thinking (default: true) */
+  enabled: boolean;
+  /** Base thinking budget in tokens (default: 5000, min: 1024) */
+  baseBudget: number;
+  /** Additional tokens per retry attempt (default: 5000) */
+  budgetIncrement: number;
+  /** Maximum thinking budget cap (default: 16000) */
+  maxBudget: number;
+  /** First attempt to enable extended thinking (default: 2, 1 = always) */
+  enableOnAttempt: number;
+}
+
 // ==========================================
 // STORE OPTIONS
 // ==========================================

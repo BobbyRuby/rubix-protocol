@@ -2,12 +2,14 @@
  * TaskDecomposer
  *
  * Breaks high-level tasks into executable subtasks with dependencies.
- * Detects ambiguities and generates verification steps for each subtask.
+ * Uses Claude API for intelligent decomposition and ambiguity detection.
  */
 
 import { randomUUID } from 'crypto';
+import Anthropic from '@anthropic-ai/sdk';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import type { VerificationStep } from '../playwright/types.js';
+import { getCodexLLMConfig } from '../core/config.js';
 import {
   SubtaskStatus,
   type CodexTask,
@@ -73,34 +75,55 @@ Return your response as JSON in this exact format:
 }`;
 
 /**
- * TaskDecomposer - Break tasks into subtasks
+ * TaskDecomposer - Break tasks into subtasks using Claude API
  */
 export class TaskDecomposer {
   private engine: MemoryEngine;
+  private client: Anthropic | null = null;
+  private model: string;
+  private useClaudeAPI: boolean = false;
 
   constructor(engine: MemoryEngine) {
     this.engine = engine;
+
+    // Initialize Claude client if API key is available
+    const llmConfig = getCodexLLMConfig();
+    this.model = llmConfig.model ?? 'claude-opus-4-5-20251101';
+
+    if (llmConfig.apiKey) {
+      this.client = new Anthropic({ apiKey: llmConfig.apiKey });
+      this.useClaudeAPI = true;
+      console.log(`[TaskDecomposer] Claude API enabled (model: ${this.model})`);
+    } else {
+      console.warn('[TaskDecomposer] ANTHROPIC_API_KEY not set - using rule-based decomposition');
+    }
   }
 
   /**
    * Decompose a task into subtasks
    */
-  async decompose(request: DecomposeRequest): Promise<DecomposeResult> {
-    const { task } = request;
-    // Note: codebaseContext and existingPatterns will be used in production with Claude API
+  async decompose(request: DecomposeRequest): Promise<DecomposeResult & { needsClarification?: boolean; clarificationText?: string }> {
+    const { task, codebaseContext } = request;
 
-    // Query memory for similar past decompositions (for future LLM integration)
-    await this.findSimilarDecompositions(task.description);
+    // Perform decomposition (Claude API if available, otherwise rule-based)
+    const decomposition = await this.performDecomposition(task, codebaseContext);
 
-    // For now, use a rule-based decomposition
-    // In production, this would call Claude API with buildDecomposePrompt()
-    const decomposition = await this.performDecomposition(task);
+    // If Claude needs clarification, return early with the questions
+    if (decomposition.needsClarification) {
+      console.log(`[TaskDecomposer] Returning clarification request to caller`);
+      return {
+        ...decomposition,
+        dependencies: { nodes: [], edges: [], executionOrder: [] }
+      };
+    }
 
     // Build dependency graph
     const dependencies = this.buildDependencyGraph(decomposition.subtasks);
 
-    // Store the decomposition pattern in memory
-    await this.storeDecompositionPattern(task, decomposition);
+    // Store the decomposition pattern in memory (only if we got actual subtasks)
+    if (decomposition.subtasks.length > 0) {
+      await this.storeDecompositionPattern(task, decomposition);
+    }
 
     return {
       ...decomposition,
@@ -166,13 +189,213 @@ export class TaskDecomposer {
   }
 
   /**
-   * Perform the actual decomposition
-   * In production, this would call Claude API
+   * Perform the actual decomposition using Claude API or fallback to rule-based
    */
   private async performDecomposition(
+    task: CodexTask,
+    codebaseContext?: string
+  ): Promise<Omit<DecomposeResult, 'dependencies'> & { needsClarification?: boolean; clarificationText?: string }> {
+    // Use Claude API if available
+    if (this.useClaudeAPI && this.client) {
+      return this.performClaudeDecomposition(task, codebaseContext);
+    }
+
+    // Fall back to rule-based decomposition
+    return this.performRuleBasedDecomposition(task);
+  }
+
+  /**
+   * Decompose using Claude API for intelligent task breakdown
+   */
+  private async performClaudeDecomposition(
+    task: CodexTask,
+    codebaseContext?: string
+  ): Promise<Omit<DecomposeResult, 'dependencies'> & { needsClarification?: boolean; clarificationText?: string }> {
+    console.log(`[TaskDecomposer] Calling Claude API for task decomposition`);
+
+    try {
+      // Build prompt with task details and codebase context
+      const prompt = this.buildDecomposePrompt(
+        task,
+        codebaseContext || 'No codebase context provided.',
+        undefined,
+        await this.findSimilarDecompositions(task.description)
+      );
+
+      const response = await this.client!.messages.create({
+        model: this.model,
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: prompt }],
+        system: `You are an expert software architect who decomposes development tasks into clear, executable subtasks.
+
+CRITICAL: You must respond with ONLY valid JSON matching this exact schema:
+{
+  "subtasks": [{ "type": "...", "description": "...", "dependencies": [] }],
+  "estimatedComplexity": "low|medium|high",
+  "ambiguities": [{ "description": "...", "critical": true|false, "possibleInterpretations": [], "suggestedQuestion": "..." }]
+}
+
+If the task is too vague or you need clarification before decomposing, respond with:
+{
+  "needsClarification": true,
+  "questions": ["Question 1?", "Question 2?"],
+  "reason": "Why clarification is needed"
+}
+
+Do NOT include any text outside the JSON object.`
+      });
+
+      const textContent = response.content.find(block => block.type === 'text');
+      if (!textContent || textContent.type !== 'text') {
+        console.warn('[TaskDecomposer] No text response from Claude, falling back to rule-based');
+        return this.performRuleBasedDecomposition(task);
+      }
+
+      console.log(`[TaskDecomposer] Claude response length: ${textContent.text.length} chars`);
+
+      // Parse JSON response
+      const parsed = this.parseClaudeResponse(textContent.text, task);
+      if (!parsed) {
+        console.warn('[TaskDecomposer] Failed to parse Claude response, falling back to rule-based');
+        return this.performRuleBasedDecomposition(task);
+      }
+
+      return parsed;
+
+    } catch (error) {
+      console.error('[TaskDecomposer] Claude API error:', error);
+      console.warn('[TaskDecomposer] Falling back to rule-based decomposition');
+      return this.performRuleBasedDecomposition(task);
+    }
+  }
+
+  /**
+   * Parse Claude's JSON response into DecomposeResult
+   */
+  private parseClaudeResponse(
+    text: string,
     task: CodexTask
-  ): Promise<Omit<DecomposeResult, 'dependencies'>> {
-    // Rule-based decomposition for common patterns
+  ): (Omit<DecomposeResult, 'dependencies'> & { needsClarification?: boolean; clarificationText?: string }) | null {
+    try {
+      // Try to extract JSON from the response (handle markdown code blocks)
+      let jsonStr = text.trim();
+
+      // Remove markdown code block if present
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+
+      const parsed = JSON.parse(jsonStr);
+
+      // Check if Claude is asking for clarification
+      if (parsed.needsClarification) {
+        const questions = parsed.questions || [];
+        const reason = parsed.reason || 'Additional information needed';
+        const clarificationText = `${reason}\n\nQuestions:\n${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join('\n')}`;
+
+        console.log(`[TaskDecomposer] Claude needs clarification: ${questions.length} questions`);
+
+        return {
+          subtasks: [],
+          estimatedComplexity: 'medium',
+          ambiguities: questions.map((q: string) => ({
+            id: randomUUID(),
+            description: q,
+            critical: true,
+            possibleInterpretations: [],
+            suggestedQuestion: q
+          })),
+          needsClarification: true,
+          clarificationText
+        };
+      }
+
+      // Validate and convert subtasks
+      if (!parsed.subtasks || !Array.isArray(parsed.subtasks)) {
+        console.warn('[TaskDecomposer] Invalid subtasks in response');
+        return null;
+      }
+
+      const subtasks: Subtask[] = parsed.subtasks.map((st: any, index: number) => {
+        // Map dependencies from string descriptions to actual IDs
+        // For now, use sequential dependencies based on order
+        const previousIds = index > 0 ? [parsed.subtasks[index - 1]?.id].filter(Boolean) : [];
+
+        return this.createSubtask(
+          task.id,
+          this.validateSubtaskType(st.type),
+          st.description || `Subtask ${index + 1}`,
+          previousIds,
+          index
+        );
+      });
+
+      // Re-map dependencies now that we have actual IDs
+      for (let i = 0; i < subtasks.length; i++) {
+        const originalDeps = parsed.subtasks[i]?.dependencies || [];
+        if (Array.isArray(originalDeps) && originalDeps.length > 0) {
+          // Map numeric indices to actual subtask IDs
+          subtasks[i].dependencies = originalDeps
+            .map((dep: number | string) => {
+              if (typeof dep === 'number' && dep >= 0 && dep < subtasks.length) {
+                return subtasks[dep].id;
+              }
+              return null;
+            })
+            .filter(Boolean) as string[];
+        } else if (i > 0) {
+          // Default: depend on previous subtask
+          subtasks[i].dependencies = [subtasks[i - 1].id];
+        }
+      }
+
+      // Parse ambiguities
+      const ambiguities: Ambiguity[] = (parsed.ambiguities || []).map((amb: any) => ({
+        id: randomUUID(),
+        description: amb.description || 'Unknown ambiguity',
+        critical: amb.critical ?? false,
+        possibleInterpretations: amb.possibleInterpretations || [],
+        suggestedQuestion: amb.suggestedQuestion || amb.description
+      }));
+
+      // Validate complexity
+      const validComplexities = ['low', 'medium', 'high'];
+      const estimatedComplexity = validComplexities.includes(parsed.estimatedComplexity)
+        ? parsed.estimatedComplexity as 'low' | 'medium' | 'high'
+        : 'medium';
+
+      console.log(`[TaskDecomposer] Parsed ${subtasks.length} subtasks, ${ambiguities.length} ambiguities, complexity: ${estimatedComplexity}`);
+
+      return {
+        subtasks,
+        estimatedComplexity,
+        ambiguities
+      };
+
+    } catch (error) {
+      console.error('[TaskDecomposer] JSON parse error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Validate subtask type string
+   */
+  private validateSubtaskType(type: string): SubtaskType {
+    const validTypes: SubtaskType[] = ['research', 'design', 'code', 'test', 'integrate', 'verify', 'review'];
+    const normalized = (type || 'code').toLowerCase() as SubtaskType;
+    return validTypes.includes(normalized) ? normalized : 'code';
+  }
+
+  /**
+   * Rule-based decomposition fallback (original implementation)
+   */
+  private performRuleBasedDecomposition(
+    task: CodexTask
+  ): Omit<DecomposeResult, 'dependencies'> {
+    console.log('[TaskDecomposer] Using rule-based decomposition');
+
     const subtasks: Subtask[] = [];
     const ambiguities: Ambiguity[] = [];
 

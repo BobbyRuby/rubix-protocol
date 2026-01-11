@@ -8,7 +8,6 @@
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as cheerio from 'cheerio';
-import { Element } from 'domhandler';
 import TurndownService from 'turndown';
 
 import type { DocsConfig } from '../types.js';
@@ -308,12 +307,12 @@ export class DocMiner {
     };
   }
 
-  private extractSections($: cheerio.CheerioAPI, container: cheerio.Cheerio<Element>): DocSection[] {
+  private extractSections($: cheerio.Root, container: cheerio.Cheerio): DocSection[] {
     const sections: DocSection[] = [];
 
-    container.find('h1, h2, h3, h4, h5, h6').each((_, element) => {
+    container.find('h1, h2, h3, h4, h5, h6').each((_: number, element: cheerio.Element) => {
       const $el = $(element);
-      const tagName = element.tagName.toLowerCase();
+      const tagName = ('tagName' in element ? element.tagName : 'h1').toLowerCase();
       const level = parseInt(tagName.replace('h', ''), 10);
       const heading = $el.text().trim();
 
@@ -327,7 +326,7 @@ export class DocMiner {
 
       // Extract code examples
       const codeExamples: DocSection['codeExamples'] = [];
-      $el.nextUntil('h1, h2, h3, h4, h5, h6').find('pre code').each((_, codeEl) => {
+      $el.nextUntil('h1, h2, h3, h4, h5, h6').find('pre code').each((_: number, codeEl: cheerio.Element) => {
         const $code = $(codeEl);
         const language = $code.attr('class')?.match(/language-(\w+)/)?.[1] ?? '';
         codeExamples.push({

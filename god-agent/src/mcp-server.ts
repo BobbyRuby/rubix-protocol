@@ -727,7 +727,7 @@ const DeepWorkCheckpointInputSchema = z.object({
 const TOOLS: Tool[] = [
   {
     name: 'god_store',
-    description: `Store information in God Agent memory with provenance tracking.
+    description: `Store information in Rubix memory with provenance tracking.
 
     Use this to save:
     - Session context and learnings
@@ -757,7 +757,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_query',
-    description: `Semantic search through God Agent memory.
+    description: `Semantic search through Rubix memory.
 
     Returns memories ranked by similarity to your query, with optional L-Score for reliability.
     Useful for:
@@ -854,7 +854,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_stats',
-    description: `Get God Agent memory statistics.
+    description: `Get Rubix memory statistics.
 
     Shows:
     - Total memory entries
@@ -1893,11 +1893,37 @@ const TOOLS: Tool[] = [
     - Whether containment is enabled
     - Project root path
     - Default permission
-    - All configured rules`,
+    - All configured rules
+    - Session permissions`,
     inputSchema: {
       type: 'object',
       properties: {},
       required: []
+    }
+  },
+  {
+    name: 'god_containment_session',
+    description: `Grant or revoke temporary session-scoped access to paths/drives.
+
+    Session permissions are temporary (cleared on server restart) and still respect
+    security rules - sensitive files (.env, credentials, keys) remain blocked.
+
+    Use this when you need to search or access files outside the project root temporarily.
+
+    Examples:
+    - Grant read access to D drive: action:"add" pattern:"D:/**" permission:"read"
+    - Grant read-write to user folder: action:"add" pattern:"C:/Users/**" permission:"read-write"
+    - Revoke access: action:"remove" pattern:"D:/**"
+    - Clear all session permissions: action:"clear"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'remove', 'clear', 'list'], description: 'Action to perform' },
+        pattern: { type: 'string', description: 'Glob pattern (e.g., D:/**, C:/Users/**)' },
+        permission: { type: 'string', enum: ['read', 'write', 'read-write'], description: 'Permission level (for add action)' },
+        reason: { type: 'string', description: 'Reason for access (for logging)' }
+      },
+      required: ['action']
     }
   },
 
@@ -3463,6 +3489,8 @@ class GodAgentMCPServer {
             return await this.handleContainmentRemoveRule(args);
           case 'god_containment_status':
             return await this.handleContainmentStatus();
+          case 'god_containment_session':
+            return await this.handleContainmentSession(args || {});
 
           // Capability tools (Stage 4)
           // LSP Tools
@@ -5105,6 +5133,22 @@ class GodAgentMCPServer {
             console.log('[MCP Server] Wolfram Alpha integrated - CODEX can verify math on-demand');
           }
 
+          // Wire CodeReviewer for self-review after code generation
+          // Create synchronously since engine is already available
+          if (!this.reviewer) {
+            const caps = this.getCapabilities();
+            this.reviewer = new CodeReviewer(
+              engine,
+              process.cwd(),
+              {},
+              caps,
+              this.playwright ?? undefined,
+              this.verificationService ?? undefined
+            );
+          }
+          this.taskExecutor.setCodeReviewer(this.reviewer);
+          console.log('[MCP Server] CodeReviewer wired - CODEX will self-review generated code');
+
           console.log('[MCP Server] CodeGenerator initialized - CODEX can now write real code');
         } catch (error) {
           console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
@@ -5879,6 +5923,7 @@ class GodAgentMCPServer {
 
       const containment = partner.getContainment();
       const config = containment.getConfig();
+      const sessionPerms = containment.getSessionPermissions();
 
       return {
         content: [{
@@ -5892,6 +5937,11 @@ class GodAgentMCPServer {
               defaultPermission: config.defaultPermission,
               allowTaskOverrides: config.allowTaskOverrides
             },
+            sessionPermissions: sessionPerms.map(p => ({
+              pattern: p.pattern,
+              permission: p.permission,
+              reason: p.reason
+            })),
             rules: config.permissions.map(p => ({
               pattern: p.pattern,
               permission: p.permission,
@@ -5901,6 +5951,151 @@ class GodAgentMCPServer {
           }, null, 2)
         }]
       };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleContainmentSession(args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text: string }> }> {
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+      const partner = executor.getCollaborativePartner();
+
+      if (!partner) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'ContainmentManager not initialized.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const containment = partner.getContainment();
+      const { action, pattern, permission = 'read', reason } = args as {
+        action: 'add' | 'remove' | 'clear' | 'list';
+        pattern?: string;
+        permission?: 'read' | 'write' | 'read-write';
+        reason?: string;
+      };
+
+      switch (action) {
+        case 'add': {
+          if (!pattern) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  error: 'Pattern is required for add action'
+                }, null, 2)
+              }]
+            };
+          }
+          const result = containment.addSessionPermission(pattern, permission, reason);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: result.success,
+                message: result.success
+                  ? `Session access granted: ${pattern} (${permission}). Note: Security rules still apply.`
+                  : result.reason,
+                sessionPermissions: containment.getSessionPermissions().map(p => ({
+                  pattern: p.pattern,
+                  permission: p.permission,
+                  reason: p.reason
+                }))
+              }, null, 2)
+            }]
+          };
+        }
+
+        case 'remove': {
+          if (!pattern) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  error: 'Pattern is required for remove action'
+                }, null, 2)
+              }]
+            };
+          }
+          const result = containment.removeSessionPermission(pattern);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: result.success,
+                message: result.success
+                  ? `Session permission removed: ${pattern}`
+                  : result.reason,
+                sessionPermissions: containment.getSessionPermissions().map(p => ({
+                  pattern: p.pattern,
+                  permission: p.permission,
+                  reason: p.reason
+                }))
+              }, null, 2)
+            }]
+          };
+        }
+
+        case 'clear': {
+          containment.clearSessionPermissions();
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: 'All session permissions cleared.',
+                sessionPermissions: []
+              }, null, 2)
+            }]
+          };
+        }
+
+        case 'list': {
+          const sessionPerms = containment.getSessionPermissions();
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                count: sessionPerms.length,
+                sessionPermissions: sessionPerms.map(p => ({
+                  pattern: p.pattern,
+                  permission: p.permission,
+                  reason: p.reason
+                }))
+              }, null, 2)
+            }]
+          };
+        }
+
+        default:
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: `Unknown action: ${action}. Use add, remove, clear, or list.`
+              }, null, 2)
+            }]
+          };
+      }
     } catch (error) {
       return {
         content: [{
@@ -8425,7 +8620,7 @@ god_comms_setup mode="set" channel="email" config={
   async run(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('God Agent MCP Server running on stdio');
+    console.error('Rubix MCP Server running on stdio');
   }
 
   async shutdown(): Promise<void> {
@@ -8456,13 +8651,13 @@ const server = new GodAgentMCPServer();
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  console.error('Shutting down God Agent MCP Server...');
+  console.error('Shutting down Rubix MCP Server...');
   await server.shutdown();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.error('Shutting down God Agent MCP Server...');
+  console.error('Shutting down Rubix MCP Server...');
   await server.shutdown();
   process.exit(0);
 });
