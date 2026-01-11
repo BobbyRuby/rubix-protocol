@@ -37,6 +37,7 @@ export { ProfilerManager } from './profiler/ProfilerManager.js';
 export { StackParser } from './stacktrace/StackParser.js';
 export { SchemaIntrospector } from './database/SchemaIntrospector.js';
 export { DocMiner } from './docs/DocMiner.js';
+export { WolframManager } from './wolfram/WolframManager.js';
 
 // Shared types
 export type {
@@ -208,3 +209,9 @@ export type {
   DocSource,
   CodeExample
 } from './docs/types.js';
+
+export type {
+  WolframConfig,
+  WolframResult,
+  WolframPod
+} from './wolfram/WolframManager.js';

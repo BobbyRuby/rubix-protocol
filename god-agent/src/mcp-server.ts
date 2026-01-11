@@ -30,7 +30,7 @@ import { CollaborativePartner } from './codex/CollaborativePartner.js';
 import { ContainmentManager } from './codex/ContainmentManager.js';
 import type { StatusReport, WorkLogEntry } from './codex/types.js';
 import { TaskStatus as CodexTaskStatus } from './codex/types.js';
-import { CapabilitiesManager } from './capabilities/index.js';
+import { CapabilitiesManager, WolframManager } from './capabilities/index.js';
 import type { RefactorOperation } from './capabilities/index.js';
 import { CodeReviewer } from './review/index.js';
 import type { ReviewType, ReviewConfig } from './review/index.js';
@@ -2396,6 +2396,68 @@ const TOOLS: Tool[] = [
     }
   },
 
+  // Wolfram Alpha Tools
+  {
+    name: 'god_wolfram_query',
+    description: `Query Wolfram Alpha computational knowledge engine.
+
+    Use for:
+    - Complex math (calculus, algebra, differential equations)
+    - Unit conversions
+    - Scientific calculations
+    - Data lookups (weather, stocks, geography)
+
+    Returns deterministic, verified results - not hallucinated.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Natural language query (e.g., "integrate x^2 sin(x) dx")' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'god_wolfram_calculate',
+    description: `Quick calculation via Wolfram Alpha.
+
+    Returns just the result string for simple calculations.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        expression: { type: 'string', description: 'Math expression to calculate' }
+      },
+      required: ['expression']
+    }
+  },
+  {
+    name: 'god_wolfram_solve',
+    description: `Solve an equation via Wolfram Alpha.
+
+    Finds all roots including complex numbers.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        equation: { type: 'string', description: 'Equation to solve (e.g., "x^3 - 4x + 2 = 0")' }
+      },
+      required: ['equation']
+    }
+  },
+  {
+    name: 'god_wolfram_convert',
+    description: `Unit conversion via Wolfram Alpha.
+
+    Converts between any units with current rates.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        value: { type: 'number', description: 'Value to convert' },
+        fromUnit: { type: 'string', description: 'Source unit (e.g., "USD", "miles", "kg")' },
+        toUnit: { type: 'string', description: 'Target unit (e.g., "EUR", "km", "lbs")' }
+      },
+      required: ['value', 'fromUnit', 'toUnit']
+    }
+  },
+
   // Capabilities Status
   {
     name: 'god_capabilities_status',
@@ -3169,6 +3231,7 @@ class GodAgentMCPServer {
   private failureService: FailureMemoryService | null = null;
   private configManager: ConfigurationManager;
   private communications: CommunicationManager | null = null;
+  private wolfram: WolframManager | null = null;
   private dataDir: string;
 
   constructor() {
@@ -3477,6 +3540,15 @@ class GodAgentMCPServer {
             return await this.handleDocsFetch(args);
           case 'god_docs_search':
             return await this.handleDocsSearch(args);
+          // Wolfram Alpha Tools
+          case 'god_wolfram_query':
+            return await this.handleWolframQuery(args);
+          case 'god_wolfram_calculate':
+            return await this.handleWolframCalculate(args);
+          case 'god_wolfram_solve':
+            return await this.handleWolframSolve(args);
+          case 'god_wolfram_convert':
+            return await this.handleWolframConvert(args);
           // Capabilities Status
           case 'god_capabilities_status':
             return await this.handleCapabilitiesStatus();
@@ -6929,6 +7001,219 @@ class GodAgentMCPServer {
             results: result.results.slice(0, 20), // Limit
             totalResults: result.results.length,
             message: `Found ${result.results.length} results`
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  // ===========================================================================
+  // Wolfram Alpha Handlers
+  // ===========================================================================
+
+  private getWolfram(): WolframManager {
+    if (!this.wolfram) {
+      const appId = process.env.WOLFRAM_APP_ID || '';
+      this.wolfram = new WolframManager({
+        appId,
+        timeout: 30000,
+        cacheEnabled: true
+      });
+    }
+    return this.wolfram;
+  }
+
+  private async handleWolframQuery(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      query: z.string()
+    }).parse(args);
+
+    const wolfram = this.getWolfram();
+
+    if (!wolfram.isConfigured()) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'Wolfram Alpha not configured. Set WOLFRAM_APP_ID environment variable.',
+            hint: 'Get a free App ID at https://developer.wolframalpha.com'
+          }, null, 2)
+        }]
+      };
+    }
+
+    try {
+      const result = await wolfram.query(input.query);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: result.success,
+            query: result.query,
+            result: result.result,
+            pods: result.pods?.map(p => ({
+              title: p.title,
+              content: p.plaintext
+            })),
+            cached: result.cached,
+            timing: result.timing,
+            error: result.error
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleWolframCalculate(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      expression: z.string()
+    }).parse(args);
+
+    const wolfram = this.getWolfram();
+
+    if (!wolfram.isConfigured()) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'Wolfram Alpha not configured. Set WOLFRAM_APP_ID environment variable.'
+          }, null, 2)
+        }]
+      };
+    }
+
+    try {
+      const result = await wolfram.calculate(input.expression);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            expression: input.expression,
+            result: result
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            expression: input.expression,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleWolframSolve(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      equation: z.string()
+    }).parse(args);
+
+    const wolfram = this.getWolfram();
+
+    if (!wolfram.isConfigured()) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'Wolfram Alpha not configured. Set WOLFRAM_APP_ID environment variable.'
+          }, null, 2)
+        }]
+      };
+    }
+
+    try {
+      const result = await wolfram.solve(input.equation);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: result.success,
+            equation: input.equation,
+            solutions: result.result,
+            pods: result.pods?.map(p => ({
+              title: p.title,
+              content: p.plaintext
+            })),
+            error: result.error
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleWolframConvert(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      value: z.number(),
+      fromUnit: z.string(),
+      toUnit: z.string()
+    }).parse(args);
+
+    const wolfram = this.getWolfram();
+
+    if (!wolfram.isConfigured()) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'Wolfram Alpha not configured. Set WOLFRAM_APP_ID environment variable.'
+          }, null, 2)
+        }]
+      };
+    }
+
+    try {
+      const result = await wolfram.convert(input.value, input.fromUnit, input.toUnit);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: result.success,
+            conversion: `${input.value} ${input.fromUnit} → ${input.toUnit}`,
+            result: result.result,
+            error: result.error
           }, null, 2)
         }]
       };
