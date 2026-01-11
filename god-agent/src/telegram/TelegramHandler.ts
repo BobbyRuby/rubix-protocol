@@ -15,6 +15,9 @@ export class TelegramHandler {
   /** Active planning session */
   private planningSession: PlanningSession | null = null;
 
+  /** Awaiting confirmation for /execute */
+  private awaitingExecuteConfirmation: boolean = false;
+
   constructor(taskExecutor?: TaskExecutor, defaultCodebase?: string, engine?: MemoryEngine) {
     this.taskExecutor = taskExecutor;
     this.engine = engine;
@@ -62,6 +65,21 @@ export class TelegramHandler {
   async handleMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text || '';
+
+    // Check for /execute confirmation responses
+    if (this.awaitingExecuteConfirmation) {
+      if (/^(yes|y|go|confirm|do it)$/i.test(text.trim())) {
+        this.awaitingExecuteConfirmation = false;
+        await this.executeApprovedPlan(msg, bot);
+        return;
+      } else if (/^(no|n|cancel|back|wait)$/i.test(text.trim())) {
+        this.awaitingExecuteConfirmation = false;
+        await bot.sendMessage(chatId, '↩️ Back to planning. Continue the conversation or /execute again when ready.');
+        return;
+      }
+      // Any other message = back to planning mode
+      this.awaitingExecuteConfirmation = false;
+    }
 
     // Check if in active planning session first (non-command messages route there)
     if (this.planningSession?.isActive() && !text.startsWith('/')) {
@@ -351,21 +369,60 @@ When ready, use /execute to run the plan.
     }
 
     try {
-      // Approve the plan
-      await bot.sendMessage(chatId, '✅ Approving plan...');
-      const plan = await this.planningSession.approve();
+      // Preview the plan (don't approve yet)
+      await bot.sendMessage(chatId, '📋 Generating current plan...');
+      const plan = await this.planningSession.previewPlan();
 
-      // Show the final plan
-      let planSummary = `📋 *Final Plan: ${plan.title}*\n\n`;
-      planSummary += `${plan.description}\n\n`;
-      planSummary += `**Goals:**\n`;
-      plan.goals.slice(0, 5).forEach(g => { planSummary += `• ${g}\n`; });
-      if (plan.components.length > 0) {
-        planSummary += `\n**Components:** ${plan.components.map(c => c.name).join(', ')}\n`;
+      if (!plan) {
+        await bot.sendMessage(chatId, 'Not enough context to generate a plan yet. Continue the conversation first.');
+        return;
       }
-      planSummary += `\n**Complexity:** ${plan.estimatedComplexity}`;
+
+      // Show the plan with details
+      let planSummary = `📋 *Current Plan: ${plan.title}*\n\n`;
+      planSummary += `${plan.description}\n\n`;
+      planSummary += `*Goals:*\n`;
+      plan.goals.slice(0, 5).forEach(g => { planSummary += `• ${g}\n`; });
+
+      if (plan.components.length > 0) {
+        planSummary += `\n*Components:*\n`;
+        plan.components.forEach(c => {
+          planSummary += `• *${c.name}*: ${c.description.substring(0, 80)}${c.description.length > 80 ? '...' : ''}\n`;
+        });
+      }
+
+      if (plan.openQuestions.length > 0) {
+        planSummary += `\n⚠️ *Open Questions:*\n`;
+        plan.openQuestions.slice(0, 3).forEach(q => { planSummary += `• ${q}\n`; });
+      }
+
+      planSummary += `\n*Complexity:* ${plan.estimatedComplexity}`;
+      planSummary += `\n\n---\n`;
+      planSummary += `Reply *yes* to execute, or *no* to continue planning.`;
 
       await bot.sendMessage(chatId, planSummary, { parse_mode: 'Markdown' });
+
+      // Set confirmation state
+      this.awaitingExecuteConfirmation = true;
+
+    } catch (error) {
+      console.error('[TelegramHandler] Plan preview failed:', error);
+      await bot.sendMessage(chatId, `Failed to generate plan: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async executeApprovedPlan(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+
+    if (!this.planningSession || !this.taskExecutor) {
+      await bot.sendMessage(chatId, 'Session expired. Please start a new /plan');
+      return;
+    }
+
+    try {
+      // NOW approve the plan
+      await bot.sendMessage(chatId, '✅ Approving plan...');
+      const plan = await this.planningSession.approve();
 
       // Convert to task submission
       const taskSubmission = await this.planningSession.toTaskSubmission();

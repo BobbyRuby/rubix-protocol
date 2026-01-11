@@ -331,6 +331,16 @@ export class PlanningSession {
     return this.currentPlan;
   }
 
+  /**
+   * Preview the current plan without approving
+   * Generates/updates the plan document but keeps session active
+   * @returns The current plan, or null if not enough context yet
+   */
+  async previewPlan(): Promise<PlanDocument | null> {
+    await this.updatePlanDocument();
+    return this.currentPlan || null;
+  }
+
   // ===========================================================================
   // STATIC METHODS
   // ===========================================================================
