@@ -15,6 +15,7 @@ import { promisify } from 'util';
 import type { Subtask, CodexTask, SubtaskAttempt } from './types.js';
 import type { ExtendedThinkingConfig } from '../core/types.js';
 import { ContainmentManager } from './ContainmentManager.js';
+import type { WolframManager } from '../capabilities/wolfram/WolframManager.js';
 
 const execAsync = promisify(exec);
 
@@ -76,6 +77,7 @@ export class CodeGenerator {
   private config: CodeGeneratorConfig;
   private model: string;
   private containment: ContainmentManager | undefined;
+  private wolfram: WolframManager | undefined;
 
   constructor(config: CodeGeneratorConfig) {
     if (!config.apiKey) {
@@ -98,115 +100,199 @@ export class CodeGenerator {
     try {
       // Build the prompt
       const prompt = this.buildPrompt(task, subtask, attempt, codebaseContext, previousAttempts);
+      const systemPrompt = this.getSystemPrompt();
+
+      // Get available tools (Wolfram, web search, etc.)
+      const tools = this.getTools();
+      if (tools.length > 0) {
+        console.log(`[CodeGenerator] ${tools.length} tools available: ${tools.map(t => t.name).join(', ')}`);
+      }
 
       // Log ultrathink status
       if (thinkingBudget) {
         console.log(`[CodeGenerator] Ultrathink enabled: ${thinkingBudget} token budget`);
       }
 
-      // Call Claude API with optional extended thinking
-      const response = await this.callWithThinking(prompt, this.getSystemPrompt(), thinkingBudget);
-
-      // Extract thinking content if available
-      const thinkingContent = this.extractThinkingContent(response);
-      if (thinkingContent) {
-        console.log(`[CodeGenerator] Extended thinking: ${thinkingContent.length} chars`);
+      // Build initial messages
+      type MessageRole = 'user' | 'assistant';
+      interface MessageContent {
+        type: 'text' | 'tool_result' | 'tool_use';
+        text?: string;
+        tool_use_id?: string;
+        content?: string;
+        id?: string;
+        name?: string;
+        input?: Record<string, unknown>;
       }
+      const messages: Array<{ role: MessageRole; content: string | MessageContent[] }> = [
+        { role: 'user', content: prompt }
+      ];
 
-      // Find the text content block
-      const textContent = response.content.find(block => block.type === 'text');
-      if (!textContent || textContent.type !== 'text') {
-        return {
-          success: false,
-          filesCreated: [],
-          filesModified: [],
-          output: 'Unexpected response type from Claude',
-          error: 'No text response',
-          thinkingContent
-        };
-      }
+      // Accumulate thinking content across turns
+      let allThinkingContent = '';
+      let totalTokensUsed = 0;
+      const MAX_TOOL_TURNS = 10; // Prevent infinite loops
 
-      // Log response for debugging
-      console.log(`[CodeGenerator] Claude response length: ${textContent.text.length} chars`);
-      console.log(`[CodeGenerator] Response preview: ${textContent.text.substring(0, 500)}...`);
+      // Tool use loop - keep calling Claude until it provides a final response
+      for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+        console.log(`[CodeGenerator] API turn ${turn + 1}/${MAX_TOOL_TURNS}`);
 
-      // Extract file operations from response
-      const operations = this.parseFileOperations(textContent.text);
-      console.log(`[CodeGenerator] Parsed ${operations.length} file operations`);
+        // Call Claude API with tools
+        const response = await this.callWithThinkingAndTools(
+          messages,
+          systemPrompt,
+          tools,
+          thinkingBudget
+        );
 
-      if (operations.length === 0) {
-        // Check if Claude is asking clarifying questions instead of generating code
-        const clarificationPatterns = [
-          /clarif(y|ying|ication)/i,
-          /before (I |we )?(can )?(start|begin|proceed|implement)/i,
-          /questions?.*:/i,
-          /need(s)? (more |additional )?information/i,
-          /please (confirm|specify|clarify)/i,
-          /could you (please )?(confirm|specify|clarify)/i,
-          /would you (like|prefer)/i
-        ];
+        totalTokensUsed += response.usage.input_tokens + response.usage.output_tokens;
 
-        const askedQuestions = clarificationPatterns.some(p => p.test(textContent.text));
+        // Extract thinking content
+        const thinkingContent = this.extractThinkingContent(response);
+        if (thinkingContent) {
+          allThinkingContent += (allThinkingContent ? '\n\n---\n\n' : '') + thinkingContent;
+          console.log(`[CodeGenerator] Extended thinking: ${thinkingContent.length} chars`);
+        }
 
-        if (askedQuestions) {
-          console.log('[CodeGenerator] Claude requested clarification instead of generating code');
+        // Check for tool use blocks
+        const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
+
+        if (toolUseBlocks.length > 0) {
+          console.log(`[CodeGenerator] Claude requested ${toolUseBlocks.length} tool call(s)`);
+
+          // Add assistant's response to messages
+          messages.push({ role: 'assistant', content: response.content as MessageContent[] });
+
+          // Execute each tool and collect results
+          const toolResults: MessageContent[] = [];
+          for (const toolBlock of toolUseBlocks) {
+            if (toolBlock.type === 'tool_use') {
+              const result = await this.executeTool(
+                toolBlock.name,
+                toolBlock.input as Record<string, unknown>
+              );
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolBlock.id,
+                content: result
+              });
+            }
+          }
+
+          // Add tool results to messages
+          messages.push({ role: 'user', content: toolResults });
+
+          // Continue loop for Claude to process results
+          continue;
+        }
+
+        // No tool use - this is the final response
+        // Find the text content block
+        const textContent = response.content.find(block => block.type === 'text');
+        if (!textContent || textContent.type !== 'text') {
           return {
             success: false,
             filesCreated: [],
             filesModified: [],
+            output: 'Unexpected response type from Claude',
+            error: 'No text response',
+            thinkingContent: allThinkingContent || undefined
+          };
+        }
+
+        // Log response for debugging
+        console.log(`[CodeGenerator] Claude response length: ${textContent.text.length} chars`);
+        console.log(`[CodeGenerator] Response preview: ${textContent.text.substring(0, 500)}...`);
+
+        // Extract file operations from response
+        const operations = this.parseFileOperations(textContent.text);
+        console.log(`[CodeGenerator] Parsed ${operations.length} file operations`);
+
+        if (operations.length === 0) {
+          // Check if Claude is asking clarifying questions instead of generating code
+          const clarificationPatterns = [
+            /clarif(y|ying|ication)/i,
+            /before (I |we )?(can )?(start|begin|proceed|implement)/i,
+            /questions?.*:/i,
+            /need(s)? (more |additional )?information/i,
+            /please (confirm|specify|clarify)/i,
+            /could you (please )?(confirm|specify|clarify)/i,
+            /would you (like|prefer)/i
+          ];
+
+          const askedQuestions = clarificationPatterns.some(p => p.test(textContent.text));
+
+          if (askedQuestions) {
+            console.log('[CodeGenerator] Claude requested clarification instead of generating code');
+            return {
+              success: false,
+              filesCreated: [],
+              filesModified: [],
+              output: textContent.text,
+              error: 'CLARIFICATION_NEEDED',
+              tokensUsed: totalTokensUsed,
+              thinkingContent: allThinkingContent || undefined,
+              thinkingTokensUsed: this.countThinkingTokens(response)
+            };
+          }
+
+          // Log warning - expected files but got none
+          console.warn(`[CodeGenerator] WARNING: No file operations found in response!`);
+          console.warn(`[CodeGenerator] Looking for <file path="..." action="...">...</file> blocks`);
+
+          // Check if response contains any file-like patterns we might be missing
+          const hasFileTag = /<file[\s>]/i.test(textContent.text);
+          const hasCodeBlock = /```[\w]*\n/.test(textContent.text);
+          console.warn(`[CodeGenerator] Contains <file> tag: ${hasFileTag}, Contains code blocks: ${hasCodeBlock}`);
+
+          return {
+            success: true,
+            filesCreated: [],
+            filesModified: [],
             output: textContent.text,
-            error: 'CLARIFICATION_NEEDED',
-            tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
-            thinkingContent,
+            tokensUsed: totalTokensUsed,
+            thinkingContent: allThinkingContent || undefined,
             thinkingTokensUsed: this.countThinkingTokens(response)
           };
         }
 
-        // Log warning - expected files but got none
-        console.warn(`[CodeGenerator] WARNING: No file operations found in response!`);
-        console.warn(`[CodeGenerator] Looking for <file path="..." action="...">...</file> blocks`);
+        // Execute file operations - use task's codebase if provided, fall back to config
+        const codebaseRoot = task.codebase || this.config.codebaseRoot;
+        const { filesCreated, filesModified, errors } = await this.executeOperations(operations, codebaseRoot);
 
-        // Check if response contains any file-like patterns we might be missing
-        const hasFileTag = /<file[\s>]/i.test(textContent.text);
-        const hasCodeBlock = /```[\w]*\n/.test(textContent.text);
-        console.warn(`[CodeGenerator] Contains <file> tag: ${hasFileTag}, Contains code blocks: ${hasCodeBlock}`);
+        if (errors.length > 0) {
+          return {
+            success: false,
+            filesCreated,
+            filesModified,
+            output: `Partial success. Errors: ${errors.join('; ')}`,
+            error: errors.join('; '),
+            tokensUsed: totalTokensUsed,
+            thinkingContent: allThinkingContent || undefined,
+            thinkingTokensUsed: this.countThinkingTokens(response)
+          };
+        }
 
         return {
           success: true,
-          filesCreated: [],
-          filesModified: [],
-          output: textContent.text,
-          tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
-          thinkingContent,
-          thinkingTokensUsed: this.countThinkingTokens(response)
-        };
-      }
-
-      // Execute file operations - use task's codebase if provided, fall back to config
-      const codebaseRoot = task.codebase || this.config.codebaseRoot;
-      const { filesCreated, filesModified, errors } = await this.executeOperations(operations, codebaseRoot);
-
-      if (errors.length > 0) {
-        return {
-          success: false,
           filesCreated,
           filesModified,
-          output: `Partial success. Errors: ${errors.join('; ')}`,
-          error: errors.join('; '),
-          tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
-          thinkingContent,
+          output: `Generated ${filesCreated.length} new files, modified ${filesModified.length} files`,
+          tokensUsed: totalTokensUsed,
+          thinkingContent: allThinkingContent || undefined,
           thinkingTokensUsed: this.countThinkingTokens(response)
         };
       }
 
+      // If we reach here, we hit MAX_TOOL_TURNS
       return {
-        success: true,
-        filesCreated,
-        filesModified,
-        output: `Generated ${filesCreated.length} new files, modified ${filesModified.length} files`,
-        tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
-        thinkingContent,
-        thinkingTokensUsed: this.countThinkingTokens(response)
+        success: false,
+        filesCreated: [],
+        filesModified: [],
+        output: 'Max tool turns exceeded',
+        error: 'Too many tool calls - possible infinite loop',
+        tokensUsed: totalTokensUsed,
+        thinkingContent: allThinkingContent || undefined
       };
 
     } catch (error) {
@@ -221,21 +307,24 @@ export class CodeGenerator {
   }
 
   /**
-   * Call Claude API with optional extended thinking
+   * Call Claude API with tools and optional extended thinking
+   * Used for the tool use loop where we need to pass multi-turn messages
    */
-  private async callWithThinking(
-    prompt: string,
+  private async callWithThinkingAndTools(
+    messages: Array<{ role: 'user' | 'assistant'; content: unknown }>,
     systemPrompt: string,
+    tools: Anthropic.Messages.Tool[],
     thinkingBudget?: number
   ): Promise<Message> {
-    console.log(`[CodeGenerator] Calling Claude API (model: ${this.model}, max_tokens: ${this.config.maxTokens || 8192})`);
-    console.log(`[CodeGenerator] Prompt length: ${prompt.length} chars`);
+    console.log(`[CodeGenerator] Calling Claude API with tools (model: ${this.model})`);
+    console.log(`[CodeGenerator] Messages: ${messages.length}, Tools: ${tools.length}`);
 
     const baseParams = {
       model: this.model,
       max_tokens: this.config.maxTokens || 8192,
-      messages: [{ role: 'user' as const, content: prompt }],
-      system: systemPrompt
+      messages: messages as Anthropic.Messages.MessageParam[],
+      system: systemPrompt,
+      tools: tools.length > 0 ? tools : undefined
     };
 
     try {
@@ -707,6 +796,128 @@ Be specific about file paths and code patterns.`
    */
   getContainment(): ContainmentManager | undefined {
     return this.containment;
+  }
+
+  /**
+   * Set Wolfram Alpha manager (for deterministic math)
+   */
+  setWolfram(wolfram: WolframManager): void {
+    this.wolfram = wolfram;
+  }
+
+  /**
+   * Get the Wolfram manager if available
+   */
+  getWolfram(): WolframManager | undefined {
+    return this.wolfram;
+  }
+
+  // ===========================================================================
+  // Tool Definitions for Claude (Wolfram + Web Search)
+  // ===========================================================================
+
+  /**
+   * Get available tools for Claude to use during code generation
+   */
+  private getTools(): Anthropic.Messages.Tool[] {
+    const tools: Anthropic.Messages.Tool[] = [];
+
+    // Wolfram Alpha tools
+    if (this.wolfram?.isConfigured()) {
+      tools.push(
+        {
+          name: 'wolfram_query',
+          description: 'Query Wolfram Alpha for any mathematical, scientific, or computational question. Use this to verify calculations, get formulas, convert units, solve equations, or look up mathematical/scientific facts. Returns deterministic, verified results. ALWAYS use this when you need to do math or verify numerical values.',
+          input_schema: {
+            type: 'object' as const,
+            properties: {
+              query: {
+                type: 'string',
+                description: 'The question or expression to compute (e.g., "15% of 500", "solve x^2 + 5x + 6 = 0", "100 miles to km", "compound interest formula", "factorial of 10")'
+              }
+            },
+            required: ['query']
+          }
+        },
+        {
+          name: 'wolfram_calculate',
+          description: 'Calculate a mathematical expression. Use this for arithmetic, percentages, roots, powers, or any numeric computation. Returns the exact result.',
+          input_schema: {
+            type: 'object' as const,
+            properties: {
+              expression: {
+                type: 'string',
+                description: 'The expression to calculate (e.g., "sqrt(144)", "15% of 500", "2^10", "1000 * (1 + 0.05/12)^120")'
+              }
+            },
+            required: ['expression']
+          }
+        }
+      );
+    }
+
+    // Web search tool (always available)
+    tools.push({
+      name: 'web_search',
+      description: 'Search the web for information. Use this to verify facts, look up documentation, research libraries, check current best practices, or find examples. Use when you need external information beyond your training data.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query (e.g., "React 18 useEffect cleanup", "TypeScript strict mode configuration", "Node.js crypto createHash")'
+          }
+        },
+        required: ['query']
+      }
+    });
+
+    return tools;
+  }
+
+  /**
+   * Execute a tool call and return the result
+   */
+  private async executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+    console.log(`[CodeGenerator] Executing tool: ${name}`, input);
+
+    try {
+      switch (name) {
+        case 'wolfram_query': {
+          if (!this.wolfram) return 'Wolfram Alpha not configured';
+          const result = await this.wolfram.query(input.query as string);
+          if (result.success) {
+            const podsText = result.pods?.map(p => `${p.title}: ${p.plaintext}`).filter(Boolean).join('\n') || '';
+            const response = `Result: ${result.result || 'See details below'}\n\n${podsText}`;
+            console.log(`[CodeGenerator] Wolfram query result: ${result.result}`);
+            return response;
+          }
+          return `Query failed: ${result.error}`;
+        }
+
+        case 'wolfram_calculate': {
+          if (!this.wolfram) return 'Wolfram Alpha not configured';
+          const calcResult = await this.wolfram.calculate(input.expression as string);
+          console.log(`[CodeGenerator] Wolfram calculation: ${input.expression} = ${calcResult}`);
+          return `${input.expression} = ${calcResult}`;
+        }
+
+        case 'web_search': {
+          // Use fetch to call a simple web search API
+          // For now, provide helpful guidance since we don't have direct web access
+          const query = input.query as string;
+          console.log(`[CodeGenerator] Web search requested: ${query}`);
+          return `Web search for: "${query}"\n\nNote: Direct web search is not currently available during code generation. Consider:\n1. Using established patterns from the codebase context\n2. Following standard library documentation conventions\n3. Using well-known solutions for common problems\n\nIf this information is critical, you may need to ask the user for clarification.`;
+        }
+
+        default:
+          return `Unknown tool: ${name}`;
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[CodeGenerator] Tool execution error:`, error);
+      return `Error executing ${name}: ${errorMsg}`;
+    }
   }
 }
 

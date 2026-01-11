@@ -5096,12 +5096,13 @@ class GodAgentMCPServer {
           console.log('[MCP Server] CollaborativePartner initialized - proactive curiosity and challenge decisions enabled');
           console.log('[MCP Server] ContainmentManager initialized - path-based permissions active');
 
-          // Wire Wolfram Alpha for deterministic math
+          // Wire Wolfram Alpha for deterministic math (both TaskExecutor and CodeGenerator)
           const wolframAppId = process.env.WOLFRAM_APP_ID || '';
           if (wolframAppId) {
             const wolfram = this.getWolfram();
-            this.taskExecutor.setWolfram(wolfram);
-            console.log('[MCP Server] Wolfram Alpha integrated - deterministic math enabled for CODEX');
+            this.taskExecutor.setWolfram(wolfram);  // For pre-enhancement
+            codeGenerator.setWolfram(wolfram);       // For active tool use during generation
+            console.log('[MCP Server] Wolfram Alpha integrated - CODEX can verify math on-demand');
           }
 
           console.log('[MCP Server] CodeGenerator initialized - CODEX can now write real code');
