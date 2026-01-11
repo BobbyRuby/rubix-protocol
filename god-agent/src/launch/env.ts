@@ -103,7 +103,7 @@ export const ENV_REQUIREMENTS = {
     optional: ['TELEGRAM_BOT_TOKEN', 'SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'GOD_AGENT_DATA_DIR', 'WEBHOOK_PORT']
   },
 
-  /** Telegram bot with CODEX */
+  /** Telegram bot with RUBIX */
   telegram: {
     required: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'TELEGRAM_BOT_TOKEN'],
     optional: ['GOD_AGENT_DATA_DIR']

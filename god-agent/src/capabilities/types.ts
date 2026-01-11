@@ -1,8 +1,8 @@
 /**
  * Capabilities Types
  *
- * Shared types for all CODEX advanced coding capabilities.
- * These give CODEX IDE-like powers for code understanding and manipulation.
+ * Shared types for all RUBIX advanced coding capabilities.
+ * These give RUBIX IDE-like powers for code understanding and manipulation.
  */
 
 // =============================================================================

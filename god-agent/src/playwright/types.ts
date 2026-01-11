@@ -218,7 +218,7 @@ export interface VisualDiffResult {
 }
 
 /**
- * Verification step for CODEX tasks
+ * Verification step for RUBIX tasks
  */
 export interface VerificationStep {
   id: string;

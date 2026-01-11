@@ -1,7 +1,7 @@
 /**
  * Deep Work Mode
  *
- * Stage 8 of CODEX - enables focused, uninterrupted work sessions with:
+ * Stage 8 of RUBIX - enables focused, uninterrupted work sessions with:
  * - Smart notification batching based on focus level
  * - Progress checkpointing for crash recovery
  * - Detailed work logging for transparency

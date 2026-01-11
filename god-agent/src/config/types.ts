@@ -1,5 +1,5 @@
 /**
- * Configuration Types for CODEX
+ * Configuration Types for RUBIX
  *
  * Type definitions for the codex.yaml configuration system.
  * Provides comprehensive typing for all configurable aspects of the
@@ -25,12 +25,12 @@ export interface WorkModeConfig {
 
 /**
  * Escalation configuration
- * Controls when and how CODEX escalates to humans
+ * Controls when and how RUBIX escalates to humans
  */
 export interface EscalationConfig {
   /** Maximum attempts before escalating to user */
   maxAttemptsBeforeEscalate: number;
-  /** Decision types that CODEX can make autonomously */
+  /** Decision types that RUBIX can make autonomously */
   autonomousDecisions: string[];
   /** Decision types that always require user approval */
   requireApproval: string[];
@@ -251,7 +251,7 @@ export interface CommunicationsConfig {
 }
 
 /**
- * Main CODEX Configuration
+ * Main RUBIX Configuration
  *
  * Comprehensive configuration for the autonomous developer agent.
  * Can be loaded from codex.yaml or configured programmatically.

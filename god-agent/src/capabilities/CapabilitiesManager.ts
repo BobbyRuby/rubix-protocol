@@ -1,7 +1,7 @@
 /**
  * CapabilitiesManager
  *
- * Unified manager orchestrating all 10 CODEX advanced coding capabilities.
+ * Unified manager orchestrating all 10 RUBIX advanced coding capabilities.
  * Provides IDE-like powers for code understanding and manipulation.
  *
  * Capabilities:

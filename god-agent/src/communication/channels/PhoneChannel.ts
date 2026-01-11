@@ -62,7 +62,7 @@ export class PhoneChannel extends BaseChannel {
   }
 
   private formatForVoice(request: EscalationRequest): string {
-    let message = `Hello. This is CODEX calling with an urgent matter. `;
+    let message = `Hello. This is RUBIX calling with an urgent matter. `;
     message += request.title + '. ';
     message += request.message.replace(/\n/g, '. ').replace(/[#*`]/g, '');
 

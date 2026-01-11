@@ -1,7 +1,7 @@
 /**
  * Configuration Manager
  *
- * Central management for CODEX configuration.
+ * Central management for RUBIX configuration.
  * Handles loading, saving, validation, and live updates.
  */
 
@@ -22,7 +22,7 @@ import {
 /**
  * ConfigurationManager
  *
- * Singleton manager for CODEX configuration.
+ * Singleton manager for RUBIX configuration.
  * Supports:
  * - Loading from codex.yaml
  * - Saving configuration

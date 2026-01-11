@@ -1,5 +1,5 @@
 /**
- * CODEX Types
+ * RUBIX Types
  *
  * Type definitions for the autonomous developer agent system.
  * Covers tasks, subtasks, execution, escalation, and self-healing.
@@ -37,7 +37,7 @@ export enum SubtaskStatus {
 export type SubtaskType = 'research' | 'design' | 'code' | 'test' | 'integrate' | 'verify' | 'review';
 
 /**
- * Main CODEX task
+ * Main RUBIX task
  */
 export interface CodexTask {
   id: string;
@@ -160,7 +160,7 @@ export interface DecisionOption {
 }
 
 /**
- * Assumption made by CODEX
+ * Assumption made by RUBIX
  */
 export interface Assumption {
   id: string;
@@ -260,7 +260,7 @@ export interface StatusReport {
 }
 
 /**
- * CODEX configuration
+ * RUBIX configuration
  */
 export interface CodexConfig {
   maxAttemptsBeforeEscalate: number;
@@ -275,9 +275,9 @@ export interface CodexConfig {
 }
 
 /**
- * Default CODEX configuration
+ * Default RUBIX configuration
  */
-export const DEFAULT_CODEX_CONFIG: CodexConfig = {
+export const DEFAULT_RUBIX_CONFIG: CodexConfig = {
   maxAttemptsBeforeEscalate: 3,
   batchDecisions: true,
   notifyOnProgress: false,

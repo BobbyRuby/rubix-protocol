@@ -1,7 +1,7 @@
 /**
  * ContainmentManager
  *
- * Path-based permission system for CODEX autonomous operations.
+ * Path-based permission system for RUBIX autonomous operations.
  * Ensures the agent operates within defined boundaries.
  *
  * Default behavior:

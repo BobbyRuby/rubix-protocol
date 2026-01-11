@@ -1,7 +1,7 @@
 /**
  * VerificationService
  *
- * Coordinates verification workflows for CODEX tasks.
+ * Coordinates verification workflows for RUBIX tasks.
  * Executes verification steps, stores results in memory, and provides
  * integration with the self-healing loop.
  */

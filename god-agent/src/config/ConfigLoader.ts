@@ -181,14 +181,14 @@ export class ConfigLoader {
    * Generate YAML content from configuration
    */
   generateYaml(config: CodexConfiguration): string {
-    let yaml = `# CODEX Configuration
+    let yaml = `# RUBIX Configuration
 # Version: ${config.version}
 # Generated: ${new Date().toISOString()}
 
 version: "${config.version}"
 
 # Escalation Settings
-# Controls when CODEX asks for human help
+# Controls when RUBIX asks for human help
 escalation:
   maxAttemptsBeforeEscalate: ${config.escalation.maxAttemptsBeforeEscalate}
   autonomousDecisions:

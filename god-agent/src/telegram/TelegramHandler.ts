@@ -373,7 +373,7 @@ When ready, use /execute to run the plan.
       // Clear the planning session
       this.planningSession = null;
 
-      await bot.sendMessage(chatId, '🚀 Starting CODEX execution...');
+      await bot.sendMessage(chatId, '🚀 Starting RUBIX execution...');
 
       // Execute the task
       const result = await this.taskExecutor.execute(taskSubmission);
@@ -477,7 +477,7 @@ When ready, use /execute to run the plan.
     }
 
     if (!this.taskExecutor) {
-      await bot.sendMessage(chatId, 'TaskExecutor not configured. Please set up CODEX first.');
+      await bot.sendMessage(chatId, 'TaskExecutor not configured. Please set up RUBIX first.');
       return;
     }
 
@@ -540,11 +540,11 @@ When ready, use /execute to run the plan.
     }
 
     if (userTasks.length === 0) {
-      // Also check CODEX status if available
+      // Also check RUBIX status if available
       if (this.taskExecutor) {
         const status = this.taskExecutor.getStatus();
         if (status.currentTask) {
-          const progressMsg = `Current CODEX task: ${status.currentTask.description}\nProgress: ${status.estimatedProgress}%\nSubtasks: ${status.subtasksComplete}/${status.subtasksComplete + status.subtasksRemaining}`;
+          const progressMsg = `Current RUBIX task: ${status.currentTask.description}\nProgress: ${status.estimatedProgress}%\nSubtasks: ${status.subtasksComplete}/${status.subtasksComplete + status.subtasksRemaining}`;
           await bot.sendMessage(chatId, progressMsg);
           return;
         }
@@ -565,7 +565,7 @@ When ready, use /execute to run the plan.
     const text = msg.text || '';
 
     // Check if CommunicationManager has pending escalation requests
-    // If so, forward ANY message as the response (not just replies to [CODEX])
+    // If so, forward ANY message as the response (not just replies to [RUBIX])
     if (this.comms) {
       const telegramChannel = (this.comms as any).channels?.get('telegram');
       if (telegramChannel?.hasPendingRequests?.()) {
@@ -576,9 +576,9 @@ When ready, use /execute to run the plan.
       }
     }
 
-    // Legacy check: Reply to [CODEX] message
+    // Legacy check: Reply to [RUBIX] message
     const replyTo = (msg as any).reply_to_message;
-    if (this.comms && replyTo?.text?.includes('[CODEX]')) {
+    if (this.comms && replyTo?.text?.includes('[RUBIX]')) {
       // Forward to CommunicationManager as escalation response
       console.log('[TelegramHandler] Forwarding escalation reply:', text.slice(0, 50));
       await this.comms.handleTelegramResponse({
@@ -590,7 +590,7 @@ When ready, use /execute to run the plan.
     }
 
     if (!this.taskExecutor) {
-      await bot.sendMessage(chatId, 'TaskExecutor not configured. Use /task command or set up CODEX first.');
+      await bot.sendMessage(chatId, 'TaskExecutor not configured. Use /task command or set up RUBIX first.');
       return;
     }
 

@@ -107,7 +107,7 @@ export function mergeConfig(
 }
 
 /**
- * Get CODEX LLM configuration for code generation
+ * Get RUBIX LLM configuration for code generation
  *
  * Environment variables:
  * - ANTHROPIC_API_KEY: Required API key for Claude
@@ -139,13 +139,13 @@ export function getCodexLLMConfig(): CodexLLMConfig {
 }
 
 /**
- * Validate CODEX LLM configuration
+ * Validate RUBIX LLM configuration
  */
 export function validateCodexConfig(config: CodexLLMConfig): string[] {
   const errors: string[] = [];
 
   if (!config.apiKey) {
-    errors.push('ANTHROPIC_API_KEY environment variable is required for CODEX code generation');
+    errors.push('ANTHROPIC_API_KEY environment variable is required for RUBIX code generation');
   }
 
   return errors;

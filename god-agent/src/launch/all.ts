@@ -3,7 +3,7 @@
  * Full Stack Launcher
  *
  * Starts all God-Agent services:
- * - MemoryEngine + CODEX
+ * - MemoryEngine + RUBIX
  * - Telegram bot (if TELEGRAM_BOT_TOKEN set)
  * - Scheduler daemon
  * - Webhook server

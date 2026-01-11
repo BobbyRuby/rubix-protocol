@@ -358,7 +358,7 @@ export class PlanningAgent {
           try {
             const response = await fetch(url, {
               headers: {
-                'User-Agent': 'Rubix-PlanningAgent/1.0'
+                'User-Agent': 'RUBIX-PlanningAgent/1.0'
               }
             });
 
@@ -467,11 +467,10 @@ export class PlanningAgent {
         messages
       });
 
-      // Handle tool use loop
+      // Handle tool use loop - unlimited iterations for collaborative planning
       let iterations = 0;
-      const maxIterations = 10; // Prevent infinite loops
 
-      while (response.stop_reason === 'tool_use' && iterations < maxIterations) {
+      while (response.stop_reason === 'tool_use') {
         iterations++;
         console.log(`[PlanningAgent] Tool use iteration ${iterations}`);
 
@@ -506,8 +505,8 @@ export class PlanningAgent {
         });
       }
 
-      if (iterations >= maxIterations) {
-        console.warn('[PlanningAgent] Max tool iterations reached');
+      if (iterations > 0) {
+        console.log(`[PlanningAgent] Completed ${iterations} tool iterations`);
       }
 
       // Extract final text response

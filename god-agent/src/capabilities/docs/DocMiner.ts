@@ -65,7 +65,7 @@ export class DocMiner {
       // Fetch the page
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'CODEX-DocMiner/1.0',
+          'User-Agent': 'RUBIX-DocMiner/1.0',
           'Accept': 'text/html,application/xhtml+xml'
         }
       });

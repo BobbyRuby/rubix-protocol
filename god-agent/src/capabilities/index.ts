@@ -1,7 +1,7 @@
 /**
  * Capabilities Module
  *
- * CODEX Advanced Coding Capabilities - 10 IDE-like tools for code understanding
+ * RUBIX Advanced Coding Capabilities - 10 IDE-like tools for code understanding
  * and manipulation.
  *
  * Phase A (Foundation):

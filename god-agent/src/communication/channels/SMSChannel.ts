@@ -54,7 +54,7 @@ export class SMSChannel extends BaseChannel {
   }
 
   private formatForSMS(request: EscalationRequest): string {
-    let message = `[CODEX] ${request.title}\n\n${request.message}`;
+    let message = `[RUBIX] ${request.title}\n\n${request.message}`;
 
     if (request.options?.length) {
       message += '\n\nReply with:';

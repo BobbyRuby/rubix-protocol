@@ -1,7 +1,7 @@
 /**
  * Notification Module
  *
- * CODEX notification system for console, Slack, Discord, and webhooks.
+ * RUBIX notification system for console, Slack, Discord, and webhooks.
  */
 
 export { NotificationService } from './NotificationService.js';

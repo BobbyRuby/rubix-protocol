@@ -230,7 +230,7 @@ const TaskIdInputSchema = z.object({
 });
 
 // ==========================================
-// Playwright Tool Input Schemas (CODEX)
+// Playwright Tool Input Schemas (RUBIX)
 // ==========================================
 
 const PlaywrightLaunchInputSchema = z.object({
@@ -295,11 +295,11 @@ const PlaywrightVerifyInputSchema = z.object({
 });
 
 // ==========================================
-// CODEX Tool Input Schemas
+// RUBIX Tool Input Schemas
 // ==========================================
 
 const CodexDoInputSchema = z.object({
-  description: z.string().describe('Task description - what you want CODEX to do'),
+  description: z.string().describe('Task description - what you want RUBIX to do'),
   specification: z.string().optional().describe('Detailed specification or requirements'),
   codebase: z.string().describe('Path to the codebase or project name'),
   constraints: z.array(z.string()).optional().describe('Constraints or requirements to follow'),
@@ -1423,7 +1423,7 @@ const TOOLS: Tool[] = [
     }
   },
   // ==========================================
-  // Playwright Tools (CODEX)
+  // Playwright Tools (RUBIX)
   // ==========================================
   {
     name: 'god_pw_launch',
@@ -1612,12 +1612,12 @@ const TOOLS: Tool[] = [
       required: ['url']
     }
   },
-  // CODEX Tools (Autonomous Developer)
+  // RUBIX Tools (Autonomous Developer)
   {
     name: 'god_codex_do',
-    description: `Submit a task to CODEX - the autonomous developer agent.
+    description: `Submit a task to RUBIX - the autonomous developer agent.
 
-    CODEX will:
+    RUBIX will:
     1. Decompose the task into subtasks
     2. Execute each subtask with verification
     3. Self-heal when things fail (up to 3 attempts)
@@ -1633,7 +1633,7 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        description: { type: 'string', description: 'What you want CODEX to do' },
+        description: { type: 'string', description: 'What you want RUBIX to do' },
         specification: { type: 'string', description: 'Detailed requirements' },
         codebase: { type: 'string', description: 'Path to codebase' },
         constraints: {
@@ -1649,7 +1649,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_codex_status',
-    description: `Get current CODEX execution status.
+    description: `Get current RUBIX execution status.
 
     Shows:
     - Current task and progress
@@ -1658,7 +1658,7 @@ const TOOLS: Tool[] = [
     - Any blockers or pending decisions
     - Recent work log entries
 
-    Use to check on CODEX without interrupting.`,
+    Use to check on RUBIX without interrupting.`,
     inputSchema: {
       type: 'object',
       properties: {},
@@ -1667,9 +1667,9 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_codex_answer',
-    description: `Answer a pending CODEX escalation.
+    description: `Answer a pending RUBIX escalation.
 
-    When CODEX is blocked and needs help, use this to provide:
+    When RUBIX is blocked and needs help, use this to provide:
     - Clarification for ambiguous specs
     - Resolution for blockers
     - Approval for irreversible actions
@@ -1687,9 +1687,9 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_codex_decision',
-    description: `Answer a pending CODEX decision.
+    description: `Answer a pending RUBIX decision.
 
-    When CODEX needs a business decision, use this to provide your choice.
+    When RUBIX needs a business decision, use this to provide your choice.
     Get decision ID from god_codex_status.`,
     inputSchema: {
       type: 'object',
@@ -1703,7 +1703,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_codex_cancel',
-    description: `Cancel the current CODEX task.
+    description: `Cancel the current RUBIX task.
 
     Stops execution immediately. Any completed subtasks remain complete.
     Use when you need to abort or change direction.`,
@@ -1715,7 +1715,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_codex_log',
-    description: `Get the full work log from CODEX.
+    description: `Get the full work log from RUBIX.
 
     Shows chronological log of all actions taken:
     - Task start/complete
@@ -1723,7 +1723,7 @@ const TOOLS: Tool[] = [
     - Successes and failures
     - Decisions and escalations
 
-    Useful for understanding what CODEX did.`,
+    Useful for understanding what RUBIX did.`,
     inputSchema: {
       type: 'object',
       properties: {},
@@ -1837,7 +1837,7 @@ const TOOLS: Tool[] = [
     name: 'god_containment_config',
     description: `Configure containment settings.
 
-    Containment controls which paths CODEX can access:
+    Containment controls which paths RUBIX can access:
     - projectRoot: Always allowed for read-write
     - defaultPermission: Permission for unmatched paths
     - enabled: Enable/disable containment entirely`,
@@ -2854,7 +2854,7 @@ const TOOLS: Tool[] = [
   // =========================================================================
   {
     name: 'god_config_get',
-    description: `Get current CODEX configuration.
+    description: `Get current RUBIX configuration.
 
     Returns all configuration settings or a specific section:
     - escalation: Escalation behavior settings
@@ -2880,7 +2880,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_config_set',
-    description: `Update CODEX configuration.
+    description: `Update RUBIX configuration.
 
     Modify specific configuration values without affecting others.
     Changes take effect immediately.
@@ -3030,7 +3030,7 @@ const TOOLS: Tool[] = [
   // =========================================================================
   {
     name: 'god_failure_record',
-    description: `Record a failure in CODEX failure memory.
+    description: `Record a failure in RUBIX failure memory.
 
     Stores failure with semantic tags for later retrieval.
     Automatically provides low-quality feedback to Sona learning.
@@ -3131,13 +3131,13 @@ const TOOLS: Tool[] = [
   // =========================================================================
   {
     name: 'god_comms_setup',
-    description: `Configure CODEX escalation communication channels.
+    description: `Configure RUBIX escalation communication channels.
 
     Setup multi-channel escalation with fallback chain:
     Phone -> SMS -> Slack -> Discord -> Email
 
     Each channel has a 5-minute timeout before trying the next.
-    CODEX will try each channel until you respond.
+    RUBIX will try each channel until you respond.
 
     Modes:
     - "wizard": Show setup instructions (default)
@@ -3439,7 +3439,7 @@ class GodAgentMCPServer {
             return await this.handleCancel(args);
           case 'god_scheduler_stats':
             return await this.handleSchedulerStats();
-          // Playwright tools (CODEX)
+          // Playwright tools (RUBIX)
           case 'god_pw_launch':
             return await this.handlePlaywrightLaunch(args);
           case 'god_pw_close':
@@ -3456,7 +3456,7 @@ class GodAgentMCPServer {
             return await this.handlePlaywrightConsole(args);
           case 'god_pw_verify':
             return await this.handlePlaywrightVerify(args);
-          // CODEX tools (Autonomous Developer)
+          // RUBIX tools (Autonomous Developer)
           case 'god_codex_do':
             return await this.handleCodexDo(args);
           case 'god_codex_status':
@@ -4840,7 +4840,7 @@ class GodAgentMCPServer {
   }
 
   // ==========================================
-  // Playwright Handlers (CODEX)
+  // Playwright Handlers (RUBIX)
   // ==========================================
 
   private async handlePlaywrightLaunch(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
@@ -5070,7 +5070,7 @@ class GodAgentMCPServer {
   }
 
   // ==========================================
-  // CODEX Handlers
+  // RUBIX Handlers
   // ==========================================
 
   private getTaskExecutor(): TaskExecutor {
@@ -5130,7 +5130,7 @@ class GodAgentMCPServer {
             const wolfram = this.getWolfram();
             this.taskExecutor.setWolfram(wolfram);  // For pre-enhancement
             codeGenerator.setWolfram(wolfram);       // For active tool use during generation
-            console.log('[MCP Server] Wolfram Alpha integrated - CODEX can verify math on-demand');
+            console.log('[MCP Server] Wolfram Alpha integrated - RUBIX can verify math on-demand');
           }
 
           // Wire CodeReviewer for self-review after code generation
@@ -5147,14 +5147,14 @@ class GodAgentMCPServer {
             );
           }
           this.taskExecutor.setCodeReviewer(this.reviewer);
-          console.log('[MCP Server] CodeReviewer wired - CODEX will self-review generated code');
+          console.log('[MCP Server] CodeReviewer wired - RUBIX will self-review generated code');
 
-          console.log('[MCP Server] CodeGenerator initialized - CODEX can now write real code');
+          console.log('[MCP Server] CodeGenerator initialized - RUBIX can now write real code');
         } catch (error) {
           console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
         }
       } else {
-        console.warn('[MCP Server] ANTHROPIC_API_KEY not set - CODEX will run in simulation mode');
+        console.warn('[MCP Server] ANTHROPIC_API_KEY not set - RUBIX will run in simulation mode');
       }
     }
     return this.taskExecutor;
@@ -5213,7 +5213,7 @@ class GodAgentMCPServer {
     // In production, this would run in background
     const task = executor.getCurrentTask();
     executor.execute(submission).catch(err => {
-      console.error('CODEX execution error:', err);
+      console.error('RUBIX execution error:', err);
     });
 
     const status = executor.getStatus();
@@ -5223,7 +5223,7 @@ class GodAgentMCPServer {
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: 'Task submitted to CODEX. Check status with god_codex_status.',
+          message: 'Task submitted to RUBIX. Check status with god_codex_status.',
           taskId: task?.id || 'pending',
           description: input.description,
           subtasksPlanned: status.subtasksComplete + status.subtasksRemaining,
@@ -5317,7 +5317,7 @@ class GodAgentMCPServer {
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: 'Escalation resolved. CODEX will continue.',
+          message: 'Escalation resolved. RUBIX will continue.',
           escalation: {
             id: resolved.id,
             type: resolved.type,
@@ -5352,7 +5352,7 @@ class GodAgentMCPServer {
         type: 'text',
         text: JSON.stringify({
           success: true,
-          message: 'Decision recorded. CODEX will continue.',
+          message: 'Decision recorded. RUBIX will continue.',
           decisionId: input.decisionId,
           answer: input.answer
         }, null, 2)
@@ -8279,11 +8279,11 @@ class GodAgentMCPServer {
               type: 'text',
               text: JSON.stringify({
                 success: true,
-                message: 'CODEX Communication Setup Wizard',
+                message: 'RUBIX Communication Setup Wizard',
                 instructions: `
 ## Multi-Channel Escalation Setup
 
-CODEX uses a fallback chain to reach you when it needs input:
+RUBIX uses a fallback chain to reach you when it needs input:
 Telegram → Phone → SMS → Slack → Discord → Email
 
 Each channel has a 5-minute timeout before trying the next.

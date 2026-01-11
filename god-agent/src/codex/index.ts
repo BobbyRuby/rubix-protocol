@@ -1,5 +1,5 @@
 /**
- * CODEX - Autonomous Developer Agent
+ * RUBIX - Autonomous Developer Agent
  *
  * "Give it a task. It does the work. Bothers you only when necessary."
  *
@@ -105,4 +105,4 @@ export type {
 } from './types.js';
 
 // Default config
-export { DEFAULT_CODEX_CONFIG } from './types.js';
+export { DEFAULT_RUBIX_CONFIG } from './types.js';

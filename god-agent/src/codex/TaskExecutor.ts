@@ -1,7 +1,7 @@
 /**
  * TaskExecutor
  *
- * The main CODEX execution engine. Orchestrates:
+ * The main RUBIX execution engine. Orchestrates:
  * - Task decomposition into subtasks
  * - Sequential execution with dependency resolution
  * - Self-healing when failures occur
@@ -45,7 +45,7 @@ import {
   type CodexConfig,
   type ExecutionContext,
   type VerificationPlan,
-  DEFAULT_CODEX_CONFIG
+  DEFAULT_RUBIX_CONFIG
 } from './types.js';
 import type { VerificationResult } from '../playwright/types.js';
 import type { WorkflowResult } from '../playwright/VerificationService.js';
@@ -76,7 +76,7 @@ export interface ExecutionOptions {
 }
 
 /**
- * TaskExecutor - The CODEX brain
+ * TaskExecutor - The RUBIX brain
  */
 export class TaskExecutor {
   private engine: MemoryEngine;
@@ -137,7 +137,7 @@ export class TaskExecutor {
     this.playwrightManager = playwright;
     this.verifier = verifier;
     this.capabilities = capabilities;
-    this.config = { ...DEFAULT_CODEX_CONFIG, ...config };
+    this.config = { ...DEFAULT_RUBIX_CONFIG, ...config };
 
     this.decomposer = new TaskDecomposer(engine);
     this.healer = new SelfHealer(engine, capabilities);
@@ -1817,7 +1817,7 @@ export class TaskExecutor {
    */
   private async storeTaskCompletion(task: CodexTask, result: TaskResult): Promise<void> {
     try {
-      const content = `CODEX Task Completion:
+      const content = `RUBIX Task Completion:
 Task: ${task.description}
 Status: ${result.success ? 'SUCCESS' : 'FAILED'}
 Duration: ${result.duration}ms

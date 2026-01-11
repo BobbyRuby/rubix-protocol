@@ -3,7 +3,7 @@
  *
  * Type definitions for the failure memory system.
  * Tracks failures, patterns, and successful resolutions
- * to help CODEX avoid repeating the same mistakes.
+ * to help RUBIX avoid repeating the same mistakes.
  */
 
 /**

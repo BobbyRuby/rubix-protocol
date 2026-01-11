@@ -1,7 +1,7 @@
 /**
  * Deep Work Mode Types
  *
- * Type definitions for CODEX deep work sessions. Enables focused,
+ * Type definitions for RUBIX deep work sessions. Enables focused,
  * uninterrupted work with smart notification batching and checkpoint
  * management.
  */

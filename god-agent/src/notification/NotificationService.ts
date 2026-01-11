@@ -1,7 +1,7 @@
 /**
  * NotificationService
  *
- * Main notification service for CODEX.
+ * Main notification service for RUBIX.
  * Handles sending notifications to console, Slack, Discord, and webhooks.
  */
 
@@ -655,7 +655,7 @@ Channels: ${result.channelResults.map(r => `${r.channel}:${r.status}`).join(', '
       type: 'info',
       urgency: 'low',
       title: 'Test Notification',
-      message: 'This is a test notification from CODEX.',
+      message: 'This is a test notification from RUBIX.',
       summary: 'Test notification'
     });
   }

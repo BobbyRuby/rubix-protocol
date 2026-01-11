@@ -1,7 +1,7 @@
 /**
  * WorkingMemoryManager
  *
- * Manages task-scoped memory during CODEX execution.
+ * Manages task-scoped memory during RUBIX execution.
  * Enables active memory engagement:
  * - Store working context (decisions, findings, failures)
  * - Query memory for relevant past learnings
@@ -53,7 +53,7 @@ export interface SessionStats {
 }
 
 /**
- * WorkingMemoryManager - Active memory for CODEX tasks
+ * WorkingMemoryManager - Active memory for RUBIX tasks
  */
 export class WorkingMemoryManager {
   private engine: MemoryEngine;

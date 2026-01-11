@@ -2,7 +2,7 @@
  * CodeGenerator
  *
  * Generates code using Claude API and manages file operations.
- * This is the execution engine that makes CODEX actually write code.
+ * This is the execution engine that makes RUBIX actually write code.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -391,7 +391,7 @@ export class CodeGenerator {
    * Get system prompt for code generation
    */
   private getSystemPrompt(): string {
-    return `You are CODEX, an autonomous code generation agent. Your job is to write production-quality code based on the task specification.
+    return `You are RUBIX, an autonomous code generation agent. Your job is to write production-quality code based on the task specification.
 
 CRITICAL RULES:
 1. Write COMPLETE, WORKING code - no placeholders, no TODOs, no "implement this"

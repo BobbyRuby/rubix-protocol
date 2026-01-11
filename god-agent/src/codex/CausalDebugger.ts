@@ -3,7 +3,7 @@
  *
  * Tracks failure chains using god-agent's causal links.
  * Connects: failure → root cause → attempted fix → outcome
- * Helps CODEX understand WHY things failed, not just WHAT failed.
+ * Helps RUBIX understand WHY things failed, not just WHAT failed.
  */
 
 import type { MemoryEngine } from '../core/MemoryEngine.js';

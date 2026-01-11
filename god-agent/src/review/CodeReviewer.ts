@@ -1,7 +1,7 @@
 /**
  * CodeReviewer
  *
- * Main code review engine for CODEX.
+ * Main code review engine for RUBIX.
  * Performs automated code review with:
  * - Security vulnerability scanning
  * - Style/lint checking

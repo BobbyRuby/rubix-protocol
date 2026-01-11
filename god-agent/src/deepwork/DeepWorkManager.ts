@@ -1,7 +1,7 @@
 /**
  * DeepWorkManager
  *
- * Manages deep work sessions for CODEX. Provides:
+ * Manages deep work sessions for RUBIX. Provides:
  * - Session lifecycle (start, pause, resume, end)
  * - Work logging and checkpointing
  * - Smart notification filtering based on focus level

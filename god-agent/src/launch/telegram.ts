@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Telegram + CODEX Launcher
+ * Telegram + RUBIX Launcher
  *
  * Starts:
- * - MemoryEngine + CODEX (via bootstrap)
+ * - MemoryEngine + RUBIX (via bootstrap)
  * - Telegram bot
  * - CommunicationManager (for escalations)
  *
- * Users can send /task to trigger CODEX code generation.
+ * Users can send /task to trigger RUBIX code generation.
  * Escalation responses are handled by the Telegram bot to avoid polling conflicts.
  */
 
@@ -17,7 +17,7 @@ import { TelegramBot } from '../telegram/TelegramBot.js';
 import { CommunicationManager } from '../communication/CommunicationManager.js';
 
 async function main(): Promise<void> {
-  printBanner('Telegram + CODEX');
+  printBanner('Telegram + RUBIX');
 
   // Validate environment
   requireEnv(ENV_REQUIREMENTS.telegram, 'Telegram');

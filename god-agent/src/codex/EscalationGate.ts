@@ -16,7 +16,7 @@ import {
   type DecisionOption,
   type CodexConfig,
   type ChallengeContext,
-  DEFAULT_CODEX_CONFIG
+  DEFAULT_RUBIX_CONFIG
 } from './types.js';
 
 /**
@@ -60,7 +60,7 @@ export class EscalationGate {
 
   constructor(engine: MemoryEngine, config: Partial<CodexConfig> = {}) {
     this.engine = engine;
-    this.config = { ...DEFAULT_CODEX_CONFIG, ...config };
+    this.config = { ...DEFAULT_RUBIX_CONFIG, ...config };
   }
 
   /**
@@ -371,15 +371,15 @@ export class EscalationGate {
   private getEscalationTitle(situation: Situation): string {
     switch (situation.type) {
       case 'spec_ambiguity':
-        return 'CODEX needs clarification';
+        return 'RUBIX needs clarification';
       case 'decision_needed':
-        return 'CODEX needs a decision';
+        return 'RUBIX needs a decision';
       case 'blocked':
-        return 'CODEX is stuck';
+        return 'RUBIX is stuck';
       case 'irreversible_action':
-        return 'CODEX needs approval';
+        return 'RUBIX needs approval';
       default:
-        return 'CODEX needs help';
+        return 'RUBIX needs help';
     }
   }
 
@@ -476,7 +476,7 @@ Duration: ${escalation.resolvedAt!.getTime() - escalation.createdAt.getTime()}ms
       id: randomUUID(),
       taskId: task.id,
       type: 'clarification',
-      title: `CODEX: ${criticalAmbiguities.length} decision(s) needed before starting`,
+      title: `RUBIX: ${criticalAmbiguities.length} decision(s) needed before starting`,
       context: 'Before I begin, I need a few decisions:',
       questions: criticalAmbiguities.map(a => a.description),
       options: criticalAmbiguities.flatMap(a => a.options || []),

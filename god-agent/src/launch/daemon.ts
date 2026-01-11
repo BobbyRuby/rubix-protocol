@@ -7,7 +7,7 @@
  * - SchedulerDaemon
  *
  * Runs scheduled/cron tasks in the background.
- * Note: CODEX code generation requires ANTHROPIC_API_KEY.
+ * Note: RUBIX code generation requires ANTHROPIC_API_KEY.
  */
 
 import { bootstrap, setupShutdown, printBanner } from './bootstrap.js';

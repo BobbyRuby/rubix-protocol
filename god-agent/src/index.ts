@@ -148,7 +148,7 @@ export type {
   TaskContext
 } from './scheduler/types.js';
 
-// Playwright exports (CODEX)
+// Playwright exports (RUBIX)
 export { PlaywrightManager } from './playwright/PlaywrightManager.js';
 export { VerificationService } from './playwright/VerificationService.js';
 export { ConsoleCapture } from './playwright/ConsoleCapture.js';
@@ -177,12 +177,12 @@ export type {
   ConsoleSummary
 } from './playwright/types.js';
 
-// CODEX exports (Autonomous Developer)
+// RUBIX exports (Autonomous Developer)
 export { TaskExecutor, type TaskSubmission, type ExecutionOptions } from './codex/TaskExecutor.js';
 export { TaskDecomposer } from './codex/TaskDecomposer.js';
 export { SelfHealer } from './codex/SelfHealer.js';
 export { EscalationGate, type Situation, type SituationType } from './codex/EscalationGate.js';
-export { TaskStatus as CodexTaskStatus, SubtaskStatus, DEFAULT_CODEX_CONFIG } from './codex/types.js';
+export { TaskStatus as CodexTaskStatus, SubtaskStatus, DEFAULT_RUBIX_CONFIG } from './codex/types.js';
 export type {
   SubtaskType,
   CodexTask,
@@ -211,7 +211,7 @@ export type {
   ExecuteSubtaskResult
 } from './codex/types.js';
 
-// CODEX Intelligence Layer
+// RUBIX Intelligence Layer
 export {
   LearningIntegration,
   type CodexPatternType,

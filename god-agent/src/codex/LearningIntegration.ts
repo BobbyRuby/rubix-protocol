@@ -1,7 +1,7 @@
 /**
  * LearningIntegration
  *
- * Connects CODEX with the Sona learning engine to:
+ * Connects RUBIX with the Sona learning engine to:
  * - Track successful/failed patterns
  * - Learn from execution outcomes
  * - Adjust pattern weights based on results
@@ -19,7 +19,7 @@ import type {
 } from './types.js';
 
 /**
- * Pattern type for CODEX learning
+ * Pattern type for RUBIX learning
  */
 export type CodexPatternType =
   | 'approach'        // How a subtask was approached
@@ -65,7 +65,7 @@ export interface LearningSuggestion {
 }
 
 /**
- * LearningIntegration - Bridge between CODEX and Sona
+ * LearningIntegration - Bridge between RUBIX and Sona
  */
 export class LearningIntegration {
   private engine: MemoryEngine;
@@ -397,7 +397,7 @@ Success: ${success}`;
     subtask: Subtask,
     attempt: SubtaskAttempt
   ): string {
-    return `CODEX Attempt:
+    return `RUBIX Attempt:
 Task: ${task.description}
 Subtask: ${subtask.description}
 Type: ${subtask.type}

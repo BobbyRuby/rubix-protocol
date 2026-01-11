@@ -157,7 +157,7 @@ export class SlackNotifier {
       color,
       title: notification.title,
       text: notification.message,
-      footer: `CODEX | ${notification.type}`,
+      footer: `RUBIX | ${notification.type}`,
       ts: Math.floor(notification.timestamp.getTime() / 1000)
     };
 
@@ -182,7 +182,7 @@ export class SlackNotifier {
     return {
       text: `${emoji} ${notification.title}: ${notification.message}`,
       channel: this.config.channel,
-      username: this.config.username || 'CODEX',
+      username: this.config.username || 'RUBIX',
       icon_emoji: this.config.iconEmoji || ':robot_face:',
       blocks,
       attachments: [attachment]
@@ -219,7 +219,7 @@ export class SlackNotifier {
         type: 'info',
         urgency: 'low',
         title: 'Test Notification',
-        message: 'This is a test notification from CODEX.',
+        message: 'This is a test notification from RUBIX.',
         timestamp: new Date()
       });
       return result.status === 'sent';

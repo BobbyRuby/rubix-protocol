@@ -1,7 +1,7 @@
 /**
  * Playwright Integration Module
  *
- * Browser automation, verification, and console capture for CODEX.
+ * Browser automation, verification, and console capture for RUBIX.
  */
 
 export { PlaywrightManager } from './PlaywrightManager.js';

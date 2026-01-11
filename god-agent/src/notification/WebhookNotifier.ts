@@ -197,7 +197,7 @@ export class WebhookNotifier {
         type: 'info',
         urgency: 'low',
         title: 'Test Notification',
-        message: 'This is a test notification from CODEX.',
+        message: 'This is a test notification from RUBIX.',
         timestamp: new Date()
       });
       return true;

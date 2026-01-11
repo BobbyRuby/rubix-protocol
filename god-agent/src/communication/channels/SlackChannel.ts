@@ -61,7 +61,7 @@ export class SlackChannel extends BaseChannel {
         type: 'header',
         text: {
           type: 'plain_text',
-          text: `${urgencyEmoji} [CODEX] ${request.title}`,
+          text: `${urgencyEmoji} [RUBIX] ${request.title}`,
           emoji: true
         }
       },
@@ -102,7 +102,7 @@ export class SlackChannel extends BaseChannel {
     });
 
     return {
-      text: `[CODEX] ${request.title}`,
+      text: `[RUBIX] ${request.title}`,
       blocks,
       unfurl_links: false,
       unfurl_media: false
@@ -163,7 +163,7 @@ export class SlackChannel extends BaseChannel {
       const response = await fetch(this.config.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: 'CODEX connection test' })
+        body: JSON.stringify({ text: 'RUBIX connection test' })
       });
       return response.ok;
     } catch {

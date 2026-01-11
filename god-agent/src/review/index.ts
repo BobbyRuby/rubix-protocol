@@ -1,7 +1,7 @@
 /**
  * Review Module
  *
- * CODEX automated code review system.
+ * RUBIX automated code review system.
  */
 
 export { CodeReviewer } from './CodeReviewer.js';

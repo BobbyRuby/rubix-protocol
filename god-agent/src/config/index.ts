@@ -1,7 +1,7 @@
 /**
  * Configuration Module
  *
- * Exports configuration management for CODEX.
+ * Exports configuration management for RUBIX.
  * Provides YAML-based configuration with live reloading support.
  */
 

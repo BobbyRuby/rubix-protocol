@@ -69,7 +69,7 @@ export class DiscordNotifier {
       color,
       timestamp: notification.timestamp.toISOString(),
       footer: {
-        text: `CODEX | ${notification.type.toUpperCase()}`
+        text: `RUBIX | ${notification.type.toUpperCase()}`
       }
     };
 
@@ -122,7 +122,7 @@ export class DiscordNotifier {
     embed.fields = fields;
 
     return {
-      username: this.config.username || 'CODEX',
+      username: this.config.username || 'RUBIX',
       avatar_url: this.config.avatarUrl,
       embeds: [embed]
     };
@@ -163,7 +163,7 @@ export class DiscordNotifier {
         type: 'info',
         urgency: 'low',
         title: 'Test Notification',
-        message: 'This is a test notification from CODEX.',
+        message: 'This is a test notification from RUBIX.',
         timestamp: new Date()
       });
       return result.status === 'sent';

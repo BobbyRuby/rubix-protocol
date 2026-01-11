@@ -1,7 +1,7 @@
 /**
  * Notification Types
  *
- * Type definitions for the CODEX notification system.
+ * Type definitions for the RUBIX notification system.
  * Supports console, Slack, Discord, and webhook notifications.
  */
 
@@ -162,7 +162,7 @@ export type NotificationType =
   | 'review_ready'  // Code review ready
   | 'progress'      // Progress milestone
   | 'error'         // Error occurred
-  | 'escalation'    // Escalation from CODEX
+  | 'escalation'    // Escalation from RUBIX
   | 'approval'      // Approval request
   | 'info';         // General information
 

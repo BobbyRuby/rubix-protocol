@@ -52,7 +52,7 @@ export class EmailChannel extends BaseChannel {
   }
 
   private buildEmail(request: EscalationRequest): { subject: string; html: string; text: string } {
-    const subject = `[CODEX] ${request.title} [REF:${this.getShortRef(request.id)}]`;
+    const subject = `[RUBIX] ${request.title} [REF:${this.getShortRef(request.id)}]`;
 
     let html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -84,7 +84,7 @@ export class EmailChannel extends BaseChannel {
       </div>
     `;
 
-    const text = `[CODEX] ${request.title}\n\n${request.message}\n\n` +
+    const text = `[RUBIX] ${request.title}\n\n${request.message}\n\n` +
       (request.options?.length
         ? 'Options:\n' + request.options.map((o, i) => `${i + 1}. ${o.label}: ${o.value}`).join('\n') + '\n\n'
         : '') +

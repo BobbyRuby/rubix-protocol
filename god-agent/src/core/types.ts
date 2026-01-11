@@ -246,7 +246,7 @@ export interface CodexLLMConfig {
 }
 
 /**
- * Configuration for CODEX ultrathink - extended thinking that escalates on failures
+ * Configuration for RUBIX ultrathink - extended thinking that escalates on failures
  */
 export interface ExtendedThinkingConfig {
   /** Enable extended thinking (default: true) */

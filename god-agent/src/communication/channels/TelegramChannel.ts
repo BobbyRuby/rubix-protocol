@@ -103,7 +103,7 @@ export class TelegramChannel extends BaseChannel {
     const urgencyEmoji = request.urgency === 'critical' ? '🚨' :
                          request.urgency === 'high' ? '⚠️' : 'ℹ️';
 
-    let message = `${urgencyEmoji} *[CODEX] ${this.escapeMarkdown(request.title)}*\n\n`;
+    let message = `${urgencyEmoji} *[RUBIX] ${this.escapeMarkdown(request.title)}*\n\n`;
     message += this.escapeMarkdown(request.message);
     message += `\n\n_Type: ${request.type} | Ref: ${this.getShortRef(request.id)}_`;
 
@@ -243,7 +243,7 @@ export class TelegramChannel extends BaseChannel {
 
       // Try to match to a pending request
       // Check if it's a reply to our message
-      if (update.message.reply_to_message?.text?.includes('[CODEX]')) {
+      if (update.message.reply_to_message?.text?.includes('[RUBIX]')) {
         // Extract ref from the original message
         const refMatch = update.message.reply_to_message.text.match(/Ref: ([a-f0-9]+)/i);
         const requestId = this.findRequestByRef(refMatch?.[1]);
@@ -301,7 +301,7 @@ export class TelegramChannel extends BaseChannel {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chat_id: this.config.chatId,
-          text: '✅ *CODEX Connection Test*\n\nTelegram channel is working!',
+          text: '✅ *RUBIX Connection Test*\n\nTelegram channel is working!',
           parse_mode: 'Markdown'
         })
       });
@@ -366,7 +366,7 @@ export class TelegramChannel extends BaseChannel {
     // Handle text reply
     if (message.text && !message.text.startsWith('/')) {
       // Try to match via reply-to reference
-      if (message.replyToText?.includes('[CODEX]')) {
+      if (message.replyToText?.includes('[RUBIX]')) {
         const refMatch = message.replyToText.match(/Ref: ([a-f0-9]+)/i);
         const requestId = this.findRequestByRef(refMatch?.[1]);
 

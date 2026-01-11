@@ -91,7 +91,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
       console.log(`[Bootstrap] CodeGenerator initialized (model: ${llmConfig.model})`);
       console.log(`[Bootstrap] Codebase root: ${codebaseRoot}`);
     } else {
-      console.warn('[Bootstrap] ANTHROPIC_API_KEY not set - CODEX in simulation mode');
+      console.warn('[Bootstrap] ANTHROPIC_API_KEY not set - RUBIX in simulation mode');
       console.warn('[Bootstrap] Set ANTHROPIC_API_KEY to enable code generation');
     }
   }

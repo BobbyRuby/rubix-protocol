@@ -64,7 +64,7 @@ export class DiscordChannel extends BaseChannel {
       footer: { text: string };
       timestamp: string;
     } = {
-      title: `[CODEX] ${request.title}`,
+      title: `[RUBIX] ${request.title}`,
       description: request.message.slice(0, 4096),
       color,
       fields: [
@@ -86,7 +86,7 @@ export class DiscordChannel extends BaseChannel {
     }
 
     return {
-      content: `**CODEX needs your input** - Reply to this message with your response`,
+      content: `**RUBIX needs your input** - Reply to this message with your response`,
       embeds: [embed],
       allowed_mentions: { parse: [] }
     };
@@ -129,7 +129,7 @@ export class DiscordChannel extends BaseChannel {
       const response = await fetch(this.config.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: 'CODEX connection test' })
+        body: JSON.stringify({ content: 'RUBIX connection test' })
       });
       return response.ok;
     } catch {

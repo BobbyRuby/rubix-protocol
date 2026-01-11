@@ -1,7 +1,7 @@
 /**
  * Code Review Types
  *
- * Type definitions for the CODEX code review system.
+ * Type definitions for the RUBIX code review system.
  * Supports self-review, security checking, and automated review workflows.
  */
 

@@ -1,7 +1,7 @@
 /**
  * Communication Channels
  *
- * Export all available channel implementations for the CODEX communication layer.
+ * Export all available channel implementations for the RUBIX communication layer.
  */
 
 export { BaseChannel } from './BaseChannel.js';
