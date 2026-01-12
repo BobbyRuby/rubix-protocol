@@ -40,7 +40,14 @@ import { ConfigurationManager } from './config/index.js';
 import type { CodexConfiguration, PartialCodexConfiguration } from './config/index.js';
 import { CommunicationManager } from './communication/index.js';
 import type { ChannelType, CommunicationConfig, EscalationResponse } from './communication/index.js';
-import { getCodexLLMConfig } from './core/config.js';
+import { getCodexLLMConfig, getCuriosityConfig } from './core/config.js';
+import { CuriosityTracker } from './curiosity/CuriosityTracker.js';
+import { TokenBudgetManager } from './curiosity/TokenBudgetManager.js';
+import { AutonomousDiscoveryEngine } from './curiosity/AutonomousDiscoveryEngine.js';
+import type { ProbeStatus } from './curiosity/types.js';
+import { memoryCompressor } from './memory/MemoryCompressor.js';
+import type { MemoryType } from './memory/types.js';
+import { SelfKnowledgeBootstrap } from './bootstrap/SelfKnowledgeBootstrap.js';
 
 // ==========================================
 // Tool Input Schemas (Zod)
@@ -3210,6 +3217,200 @@ const TOOLS: Tool[] = [
       },
       required: ['title', 'message']
     }
+  },
+
+  // ==========================================
+  // Curiosity Tools
+  // ==========================================
+
+  {
+    name: 'god_curiosity_list',
+    description: `List current curiosity probes.
+
+    Shows pending, exploring, and resolved probes with priority scores.
+    Probes are ranked by origin: failure(1.0) > low_confidence(0.7) > knowledge_gap(0.5) > success_confirmation(0.2)`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['pending', 'exploring', 'resolved', 'all'],
+          description: 'Filter by status (default: pending)'
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results (default: 10)'
+        }
+      }
+    }
+  },
+  {
+    name: 'god_curiosity_explore',
+    description: `Manually trigger exploration of a curiosity probe.
+
+    Executes the top-priority probe or a specific probe by ID.
+    Uses up to 100K tokens from the exploration budget.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        probeId: {
+          type: 'string',
+          description: 'Specific probe ID to explore (optional, otherwise picks top priority)'
+        }
+      }
+    }
+  },
+  {
+    name: 'god_budget_status',
+    description: `Check curiosity token budget status.
+
+    Shows:
+    - Probes remaining this week
+    - Current cycle position (3:1 pattern)
+    - Next probe type (high or moderate priority)
+    - Weekly reset date`,
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'god_budget_history',
+    description: `Get curiosity exploration history.
+
+    Shows past explorations with tokens used, probe types, and outcomes.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        weeks: {
+          type: 'number',
+          description: 'Number of weeks to look back (default: 4)'
+        }
+      }
+    }
+  },
+  // ==========================================
+  // Memory Compression Tools
+  // ==========================================
+  {
+    name: 'god_store_compressed',
+    description: `Store memory with automatic compression.
+
+    Compresses human-readable content to pure tokens for efficient storage.
+    Different schemas for: component, department, mcp_tool, capability, workflow, config, error_pattern, success_pattern.
+
+    Returns compression stats including tokens saved.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: {
+          type: 'string',
+          description: 'Human-readable content to compress and store'
+        },
+        type: {
+          type: 'string',
+          enum: ['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'generic'],
+          description: 'Memory type for schema selection'
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags for categorization'
+        },
+        importance: {
+          type: 'number',
+          description: 'Importance score 0-1'
+        }
+      },
+      required: ['content', 'type']
+    }
+  },
+  {
+    name: 'god_query_expanded',
+    description: `Query memory with automatic expansion.
+
+    Searches for memories and expands compressed entries to human-readable format.
+    Use when you want readable results from compressed storage.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query'
+        },
+        expand: {
+          type: 'boolean',
+          description: 'Whether to expand compressed entries (default: true)'
+        },
+        topK: {
+          type: 'number',
+          description: 'Number of results (default: 10)'
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter by tags'
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'god_self_query',
+    description: `Query RUBIX self-knowledge.
+
+    Ask questions about RUBIX's own architecture and capabilities.
+    Examples:
+    - "What is TaskExecutor?"
+    - "What departments does RUBIX have?"
+    - "How does the memory system work?"
+    - "What MCP tools are available?"
+
+    Returns expanded human-readable responses from bootstrapped self-knowledge.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: {
+          type: 'string',
+          description: 'Question about RUBIX architecture or capabilities'
+        },
+        topK: {
+          type: 'number',
+          description: 'Number of relevant entries to return (default: 5)'
+        }
+      },
+      required: ['question']
+    }
+  },
+  {
+    name: 'god_compression_stats',
+    description: `Get memory compression statistics.
+
+    Shows:
+    - Total compressed entries
+    - Average compression ratio
+    - Estimated tokens saved
+    - Breakdown by memory type`,
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'god_bootstrap_status',
+    description: `Check self-knowledge bootstrap status.
+
+    Shows whether RUBIX has embedded its own architecture as memories.
+    If not bootstrapped, can trigger bootstrap.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        runBootstrap: {
+          type: 'boolean',
+          description: 'If true and not bootstrapped, run bootstrap now'
+        }
+      }
+    }
   }
 ];
 
@@ -3259,6 +3460,10 @@ class GodAgentMCPServer {
   private communications: CommunicationManager | null = null;
   private wolfram: WolframManager | null = null;
   private dataDir: string;
+  // Curiosity system
+  private curiosityTracker: CuriosityTracker | null = null;
+  private tokenBudget: TokenBudgetManager | null = null;
+  private discoveryEngine: AutonomousDiscoveryEngine | null = null;
 
   constructor() {
     this.dataDir = process.env.GOD_AGENT_DATA_DIR || './data';
@@ -3364,6 +3569,43 @@ class GodAgentMCPServer {
       this.failureService = new FailureMemoryService(engine);
     }
     return this.failureService;
+  }
+
+  private async getCuriosityTracker(): Promise<CuriosityTracker> {
+    if (!this.curiosityTracker) {
+      const engine = await this.getEngine();
+      this.curiosityTracker = new CuriosityTracker(engine);
+    }
+    return this.curiosityTracker;
+  }
+
+  private async getTokenBudget(): Promise<TokenBudgetManager> {
+    if (!this.tokenBudget) {
+      const engine = await this.getEngine();
+      const config = getCuriosityConfig();
+      this.tokenBudget = new TokenBudgetManager(
+        engine,
+        config.tokensPerProbe,
+        config.probesPerWeek,
+        config.highPriorityRatio
+      );
+    }
+    return this.tokenBudget;
+  }
+
+  private async getDiscoveryEngine(): Promise<AutonomousDiscoveryEngine> {
+    if (!this.discoveryEngine) {
+      const curiosity = await this.getCuriosityTracker();
+      const budget = await this.getTokenBudget();
+      const llmConfig = getCodexLLMConfig();
+      this.discoveryEngine = new AutonomousDiscoveryEngine({
+        curiosity,
+        budget,
+        apiKey: llmConfig.apiKey || '',
+        model: llmConfig.model,
+      });
+    }
+    return this.discoveryEngine;
   }
 
   private setupHandlers(): void {
@@ -3646,6 +3888,28 @@ class GodAgentMCPServer {
             return await this.handleCommsSetup(args);
           case 'god_comms_escalate':
             return await this.handleCommsEscalate(args);
+
+          // Curiosity Tools
+          case 'god_curiosity_list':
+            return await this.handleCuriosityList(args);
+          case 'god_curiosity_explore':
+            return await this.handleCuriosityExplore(args);
+          case 'god_budget_status':
+            return await this.handleBudgetStatus();
+          case 'god_budget_history':
+            return await this.handleBudgetHistory(args);
+
+          // Memory Compression Tools
+          case 'god_store_compressed':
+            return await this.handleStoreCompressed(args);
+          case 'god_query_expanded':
+            return await this.handleQueryExpanded(args);
+          case 'god_self_query':
+            return await this.handleSelfQuery(args);
+          case 'god_compression_stats':
+            return await this.handleCompressionStats();
+          case 'god_bootstrap_status':
+            return await this.handleBootstrapStatus(args);
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -8620,6 +8884,342 @@ god_comms_setup mode="set" channel="email" config={
     const checkpoint = this.getTaskExecutor().createDeepWorkCheckpoint(input.summary);
     if (!checkpoint) return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No active deep work session or task' }) }] };
     return { content: [{ type: 'text', text: JSON.stringify({ success: true, checkpointId: checkpoint.id, timestamp: checkpoint.timestamp.toISOString(), subtasksComplete: checkpoint.subtasksComplete, subtasksRemaining: checkpoint.subtasksRemaining, summary: checkpoint.summary, message: `Checkpoint created: ${checkpoint.summary}` }, null, 2) }] };
+  }
+
+  // ==========================================
+  // Curiosity Handlers
+  // ==========================================
+
+  private async handleCuriosityList(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      status: z.enum(['pending', 'exploring', 'resolved', 'all']).optional(),
+      limit: z.number().optional()
+    }).parse(args);
+
+    const tracker = await this.getCuriosityTracker();
+    const status = input.status || 'pending';
+    const limit = input.limit || 10;
+
+    let probes;
+    if (status === 'all') {
+      probes = await tracker.getExplorationOpportunities(limit);
+    } else {
+      probes = await tracker.getProbesByStatus(status as ProbeStatus, limit);
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          probes: probes.map(p => ({
+            id: p.id,
+            domain: p.domain,
+            question: p.question,
+            origin: p.origin,
+            priority: p.priority,
+            status: p.status,
+            estimatedTokens: p.estimatedTokens
+          })),
+          count: probes.length
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCuriosityExplore(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      probeId: z.string().optional()
+    }).parse(args);
+
+    const discovery = await this.getDiscoveryEngine();
+    const budget = await this.getTokenBudget();
+
+    // Check if we can explore
+    if (!budget.canExplore()) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            reason: 'weekly_limit_reached',
+            remainingProbes: budget.getRemainingProbes()
+          }, null, 2)
+        }]
+      };
+    }
+
+    // Run exploration - specific probe or discovery cycle
+    let result;
+    if (input.probeId) {
+      result = await discovery.exploreProbe(input.probeId);
+      if (!result) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              reason: 'probe_not_found_or_not_pending',
+              probeId: input.probeId
+            }, null, 2)
+          }]
+        };
+      }
+    } else {
+      result = await discovery.discoveryCycle();
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify(result, null, 2)
+      }]
+    };
+  }
+
+  private async handleBudgetStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const budget = await this.getTokenBudget();
+    const config = getCuriosityConfig();
+
+    const status = {
+      canExplore: budget.canExplore(),
+      remainingProbes: budget.getRemainingProbes(),
+      cyclePosition: budget.getCyclePosition(),
+      nextProbeType: budget.getNextProbeType(),
+      config: {
+        tokensPerProbe: config.tokensPerProbe,
+        probesPerWeek: config.probesPerWeek,
+        highPriorityRatio: config.highPriorityRatio,
+        pattern: `${config.highPriorityRatio} high-priority, then 1 moderate`
+      }
+    };
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify(status, null, 2)
+      }]
+    };
+  }
+
+  private async handleBudgetHistory(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      weeks: z.number().optional()
+    }).parse(args);
+
+    const tracker = await this.getCuriosityTracker();
+    const weeks = input.weeks || 4;
+    const since = new Date();
+    since.setDate(since.getDate() - (weeks * 7));
+
+    const history = await tracker.getExplorationHistory(since);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          explorations: history.map(h => ({
+            probeId: h.probeId,
+            domain: h.domain,
+            tokensUsed: h.tokensUsed,
+            success: h.success,
+            exploredAt: h.exploredAt
+          })),
+          count: history.length,
+          periodWeeks: weeks
+        }, null, 2)
+      }]
+    };
+  }
+
+  // ==========================================
+  // Memory Compression Handlers
+  // ==========================================
+
+  private async handleStoreCompressed(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      content: z.string(),
+      type: z.enum(['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'generic']),
+      tags: z.array(z.string()).optional(),
+      importance: z.number().min(0).max(1).optional()
+    }).parse(args);
+
+    const engine = await this.getEngine();
+
+    // Compress the content
+    const compressionResult = memoryCompressor.encode(input.content, input.type as MemoryType);
+
+    // Store the compressed content
+    const entry = await engine.store(compressionResult.compressed, {
+      tags: [...(input.tags || []), 'compressed', `type:${input.type}`],
+      source: MemorySource.AGENT_INFERENCE,
+      importance: input.importance || 0.5,
+      context: {
+        compressed: true,
+        originalType: input.type,
+        compressionRatio: compressionResult.ratio,
+        tokensSaved: compressionResult.tokensSaved
+      }
+    });
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          id: entry.id,
+          compressed: compressionResult.compressed,
+          originalLength: compressionResult.originalLength,
+          compressedLength: compressionResult.compressedLength,
+          ratio: Math.round(compressionResult.ratio * 100) + '%',
+          tokensSaved: compressionResult.tokensSaved
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleQueryExpanded(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      query: z.string(),
+      expand: z.boolean().optional(),
+      topK: z.number().optional(),
+      tags: z.array(z.string()).optional()
+    }).parse(args);
+
+    const engine = await this.getEngine();
+    const shouldExpand = input.expand !== false;
+
+    const results = await engine.query(input.query, {
+      topK: input.topK || 10,
+      filters: { tags: input.tags }
+    });
+
+    const expandedResults = results.map(r => {
+      const context = r.entry.metadata.context as Record<string, unknown> | undefined;
+      let content = r.entry.content;
+
+      // Expand if compressed and expansion requested
+      if (shouldExpand && context?.compressed) {
+        content = memoryCompressor.autoDecode(r.entry.content);
+      }
+
+      return {
+        id: r.entry.id,
+        content,
+        score: r.score,
+        tags: r.entry.metadata.tags,
+        compressed: context?.compressed || false,
+        type: context?.originalType
+      };
+    });
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          results: expandedResults,
+          count: expandedResults.length,
+          expanded: shouldExpand
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleSelfQuery(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      question: z.string(),
+      topK: z.number().optional()
+    }).parse(args);
+
+    const engine = await this.getEngine();
+    const bootstrap = new SelfKnowledgeBootstrap(engine);
+
+    // Ensure bootstrapped
+    const status = await bootstrap.getStatus();
+    if (!status.bootstrapped) {
+      await bootstrap.bootstrap();
+    }
+
+    // Query self-knowledge
+    const answers = await bootstrap.querySelf(input.question, input.topK || 5);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          question: input.question,
+          answers,
+          count: answers.length
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCompressionStats(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const engine = await this.getEngine();
+
+    // Query all compressed entries
+    const results = await engine.query('compressed memory', {
+      filters: { tags: ['compressed'] },
+      topK: 1000
+    });
+
+    // Calculate stats
+    const typeBreakdown: Record<string, number> = {};
+    let totalTokensSaved = 0;
+    let totalRatio = 0;
+
+    for (const r of results) {
+      const context = r.entry.metadata.context as Record<string, unknown> | undefined;
+      const type = (context?.originalType as string) || 'generic';
+      typeBreakdown[type] = (typeBreakdown[type] || 0) + 1;
+      totalTokensSaved += (context?.tokensSaved as number) || 0;
+      totalRatio += (context?.compressionRatio as number) || 0;
+    }
+
+    const avgRatio = results.length > 0 ? totalRatio / results.length : 0;
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          totalCompressedEntries: results.length,
+          averageCompressionRatio: Math.round(avgRatio * 100) + '%',
+          estimatedTokensSaved: totalTokensSaved,
+          byType: typeBreakdown,
+          registeredSchemas: memoryCompressor.getSchemaStats()
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleBootstrapStatus(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      runBootstrap: z.boolean().optional()
+    }).parse(args);
+
+    const engine = await this.getEngine();
+    const bootstrap = new SelfKnowledgeBootstrap(engine);
+
+    let status = await bootstrap.getStatus();
+    let bootstrapResult = null;
+
+    // Run bootstrap if requested and not already done
+    if (input.runBootstrap && !status.bootstrapped) {
+      bootstrapResult = await bootstrap.bootstrap();
+      status = await bootstrap.getStatus();
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          bootstrapped: status.bootstrapped,
+          entriesCount: status.entriesCount,
+          categories: status.categories,
+          bootstrapRan: bootstrapResult !== null,
+          bootstrapStats: bootstrapResult
+        }, null, 2)
+      }]
+    };
   }
 
   async run(): Promise<void> {
