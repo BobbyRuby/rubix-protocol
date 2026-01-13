@@ -130,6 +130,41 @@ DEPTS:researcher,architect,engineer,validator,guardian`;
   static getShortIdentity(subsystem: RubixSubsystem): string {
     return `[RUBIX:${subsystem}]`;
   }
+
+  /**
+   * Generate token-compressed CLAUDE.md for spawned CLI instances.
+   * Uses KEY:value format for max token efficiency.
+   */
+  static generateInstanceClaudeMd(options: {
+    subsystem: RubixSubsystem;
+    codebase: string;
+    model?: string;
+  }): string {
+    const identity = SUBSYSTEM_IDENTITIES[options.subsystem];
+    const caps = identity.capabilities.join(',');
+    const flow = identity.flow?.join('→') || 'execute→validate';
+    const subsys = options.subsystem;
+    const cwd = options.codebase;
+    const model = options.model || 'opus';
+
+    return `# RUBIX Instance Context
+
+IDENT:RUBIX|${subsys}
+CWD:${cwd}
+MODEL:${model}
+
+CAP:${caps},mcp_tools(50+),lsp,git,ast,profiler,playwright,wolfram
+FLOW:${flow}
+RULES:no_placeholders,complete_code,no_todos,full_files,strict_types
+
+HOUSE:tmpclaude-*-cwd|clean:npm_run_clean:temp|gitignore:tmpclaude-*-cwd/
+ESCAL:blocked→comms_chain(telegram→phone→slack→discord)
+LEARN:god_failure_*|record_on_fail,query_before_retry
+
+MCP:god_store,god_query,god_trace,god_causal,god_learn
+VERIFY:god_pw_verify,god_review,god_security_review`;
+  }
+
 }
 
 // Shorthand

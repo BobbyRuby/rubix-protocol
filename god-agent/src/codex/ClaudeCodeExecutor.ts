@@ -8,10 +8,11 @@
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
 import { writeFile, unlink, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
+import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
 
 const execAsync = promisify(exec);
 
@@ -321,6 +322,24 @@ export class ClaudeCodeExecutor {
       console.log(`[ClaudeCodeExecutor] Running: claude ${args.slice(0, 4).join(' ')} ...`);
       console.log(`[ClaudeCodeExecutor] Working directory: ${this.config.cwd}`);
       console.log(`[ClaudeCodeExecutor] Prompt length: ${fullPrompt.length} chars`);
+
+      // Create RUBIX CLAUDE.md for instance context
+      try {
+        const claudeMdPath = existsSync(join(this.config.cwd, 'CLAUDE.md'))
+          ? join(this.config.cwd, 'RUBIX-CLAUDE.md')
+          : join(this.config.cwd, 'CLAUDE.md');
+        
+        const claudeMdContent = SelfKnowledgeInjector.generateInstanceClaudeMd({
+          subsystem: 'code_generator',
+          codebase: this.config.cwd,
+          model: this.config.model
+        });
+        
+        writeFileSync(claudeMdPath, claudeMdContent, 'utf-8');
+        console.log(`[ClaudeCodeExecutor] Created instance context: ${claudeMdPath}`);
+      } catch (e) {
+        console.error('[ClaudeCodeExecutor] Failed to create CLAUDE.md:', e);
+      }
 
       let stdout = '';
       let stderr = '';
