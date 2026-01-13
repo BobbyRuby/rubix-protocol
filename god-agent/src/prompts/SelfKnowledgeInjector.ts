@@ -157,7 +157,10 @@ CAP:${caps},mcp_tools(50+),lsp,git,ast,profiler,playwright,wolfram
 FLOW:${flow}
 RULES:no_placeholders,complete_code,no_todos,full_files,strict_types
 
-HOUSE:tmpclaude-*-cwd|clean:npm_run_clean:temp|gitignore:tmpclaude-*-cwd/
+HOUSE:tmpclaude-*-cwd|gitignore:tmpclaude-*-cwd/
+CLEAN:npm_run_clean:temp|run_at:session_start,before_commit
+ACTION:Run cleanup proactively. Do not wait to be asked.
+
 ESCAL:blocked→comms_chain(telegram→phone→slack→discord)
 LEARN:god_failure_*|record_on_fail,query_before_retry
 

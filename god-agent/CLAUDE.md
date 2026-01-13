@@ -521,7 +521,9 @@ The cleanup script is at `scripts/clean-temp.cjs` and scans:
 
 These directories are already in `.gitignore` so they won't be committed, but they can accumulate and waste disk space.
 
-**When to clean:**
-- After multiple crashed sessions
-- When git status shows many `tmpclaude-*` entries
-- Periodically as maintenance
+**When to clean (PROACTIVE - do automatically):**
+- **At session start** - Run cleanup before beginning work
+- **Before git commits** - Always clean before committing changes
+- **When git status shows `tmpclaude-*` entries** - Clean immediately
+
+**CLAUDE: Run `npm run clean:temp` proactively. Don't wait to be asked.**
