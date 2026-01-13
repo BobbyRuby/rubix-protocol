@@ -1,0 +1,560 @@
+# RUBIX PATTERNS: DATABASE_SCHEMA_DESIGN
+# COVERAGE: Relational|NoSQL|Schema_Patterns
+# PHILOSOPHY: data_integrity|query_efficiency|scalability
+
+==============================================================================
+RELATIONAL_FUNDAMENTALS
+==============================================================================
+NORMALIZATION
+1NF:atomic_values|no_repeating_groups
+2NF:1NF+no_partial_dependencies
+3NF:2NF+no_transitive_dependencies
+BCNF:3NF+every_determinant_is_candidate_key
+
+WHEN_NORMALIZE
++data_integrity_critical
++write_heavy_workloads
++storage_efficiency
++avoid_update_anomalies
+
+WHEN_DENORMALIZE
++read_heavy_workloads
++complex_joins_slow
++reporting_tables
++caching_layer
+
+PRIMARY_KEYS
+AUTO_INCREMENT
+id SERIAL PRIMARY KEY                    -- Postgres
+id INT AUTO_INCREMENT PRIMARY KEY        -- MySQL
+
+UUID
+id UUID PRIMARY KEY DEFAULT gen_random_uuid()  -- Postgres
++globally_unique
++no_sequential_guessing
+-larger_storage
+-index_fragmentation
+
+ULID|KSUID
++sortable
++URL_safe
++better_index_performance_than_UUIDv4
+
+COMPOSITE_KEYS
+PRIMARY KEY (user_id, role_id)
++junction_tables
++natural_relationships
+
+FOREIGN_KEYS
+user_id INTEGER REFERENCES users(id)
+user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
+user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT
+
+ON_DELETE_OPTIONS
+CASCADE:delete_children
+SET_NULL:nullify_reference
+SET_DEFAULT:set_default_value
+RESTRICT:prevent_if_children_exist
+NO_ACTION:defer_check_to_transaction_end
+
+==============================================================================
+COMMON_SCHEMA_PATTERNS
+==============================================================================
+ONE_TO_MANY
+-- User has many Posts
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE posts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  title VARCHAR(255) NOT NULL,
+  content TEXT
+);
+
+CREATE INDEX idx_posts_user_id ON posts(user_id);
+
+MANY_TO_MANY
+-- Users have many Roles, Roles have many Users
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE roles (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE user_roles (
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+  assigned_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (user_id, role_id)
+);
+
+ONE_TO_ONE
+-- User has one Profile
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE
+);
+
+CREATE TABLE profiles (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  bio TEXT,
+  avatar_url VARCHAR(500)
+);
+
+SELF_REFERENCING
+-- Categories with parent/child
+CREATE TABLE categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  parent_id INTEGER REFERENCES categories(id)
+);
+
+-- Employees with manager
+CREATE TABLE employees (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  manager_id INTEGER REFERENCES employees(id)
+);
+
+POLYMORPHIC_ASSOCIATION
+-- Comments on Posts, Videos, Photos
+-- OPTION 1: Separate FKs (recommended)
+CREATE TABLE comments (
+  id SERIAL PRIMARY KEY,
+  body TEXT NOT NULL,
+  post_id INTEGER REFERENCES posts(id),
+  video_id INTEGER REFERENCES videos(id),
+  photo_id INTEGER REFERENCES photos(id),
+  CHECK (
+    (post_id IS NOT NULL)::int +
+    (video_id IS NOT NULL)::int +
+    (photo_id IS NOT NULL)::int = 1
+  )
+);
+
+-- OPTION 2: Type + ID (less safe)
+CREATE TABLE comments (
+  id SERIAL PRIMARY KEY,
+  body TEXT NOT NULL,
+  commentable_type VARCHAR(50) NOT NULL,
+  commentable_id INTEGER NOT NULL
+);
+!no_FK_enforcement
+!use_separate_FKs_when_possible
+
+==============================================================================
+AUDIT_PATTERNS
+==============================================================================
+TIMESTAMPS
+CREATE TABLE posts (
+  id SERIAL PRIMARY KEY,
+  -- ...
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Auto-update trigger (Postgres)
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER posts_updated_at
+  BEFORE UPDATE ON posts
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+SOFT_DELETE
+CREATE TABLE posts (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  deleted_at TIMESTAMP NULL
+);
+
+-- Query active records
+SELECT * FROM posts WHERE deleted_at IS NULL;
+
+-- Partial index for performance
+CREATE INDEX idx_posts_active ON posts(id) WHERE deleted_at IS NULL;
+
+AUDIT_LOG_TABLE
+CREATE TABLE audit_logs (
+  id SERIAL PRIMARY KEY,
+  table_name VARCHAR(100) NOT NULL,
+  record_id INTEGER NOT NULL,
+  action VARCHAR(10) NOT NULL,  -- INSERT, UPDATE, DELETE
+  old_data JSONB,
+  new_data JSONB,
+  changed_by INTEGER REFERENCES users(id),
+  changed_at TIMESTAMP DEFAULT NOW()
+);
+
+VERSIONING_PATTERN
+CREATE TABLE documents (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  current_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE document_versions (
+  id SERIAL PRIMARY KEY,
+  document_id INTEGER REFERENCES documents(id),
+  version INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  created_by INTEGER REFERENCES users(id),
+  UNIQUE (document_id, version)
+);
+
+==============================================================================
+HIERARCHY_PATTERNS
+==============================================================================
+ADJACENCY_LIST
+CREATE TABLE categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  parent_id INTEGER REFERENCES categories(id)
+);
++simple
++easy_updates
+-recursive_queries_for_tree
+
+MATERIALIZED_PATH
+CREATE TABLE categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  path VARCHAR(500) NOT NULL  -- e.g., '/1/5/12/'
+);
+
+CREATE INDEX idx_categories_path ON categories USING GIST (path);
+
+-- Find descendants
+SELECT * FROM categories WHERE path LIKE '/1/5/%';
++fast_reads
+-complex_updates
+
+NESTED_SET
+CREATE TABLE categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  lft INTEGER NOT NULL,
+  rgt INTEGER NOT NULL
+);
+
+-- Find descendants
+SELECT * FROM categories WHERE lft > 5 AND rgt < 20;
++very_fast_reads
+-slow_writes:rebalancing
+
+CLOSURE_TABLE
+CREATE TABLE categories (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE category_tree (
+  ancestor_id INTEGER REFERENCES categories(id),
+  descendant_id INTEGER REFERENCES categories(id),
+  depth INTEGER NOT NULL,
+  PRIMARY KEY (ancestor_id, descendant_id)
+);
++fast_reads_and_writes
++easy_queries
+-extra_storage
+
+==============================================================================
+ENUM_PATTERNS
+==============================================================================
+DATABASE_ENUM
+-- Postgres
+CREATE TYPE order_status AS ENUM ('pending', 'processing', 'shipped', 'delivered');
+
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  status order_status NOT NULL DEFAULT 'pending'
+);
++type_safety
+-hard_to_modify
+
+LOOKUP_TABLE
+CREATE TABLE order_statuses (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  display_name VARCHAR(100),
+  sort_order INTEGER
+);
+
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  status_id INTEGER REFERENCES order_statuses(id)
+);
++flexible
++additional_metadata
+-extra_join
+
+CHECK_CONSTRAINT
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'processing', 'shipped', 'delivered'))
+);
++simple
++no_extra_table
+-no_metadata
+
+APPLICATION_ENUM
+-- Store as string, validate in app
+status VARCHAR(50) NOT NULL
++simplest
++ORM_friendly
+-no_DB_enforcement
+
+==============================================================================
+JSON_PATTERNS
+==============================================================================
+WHEN_USE_JSON
++variable_schema
++configuration_storage
++event_payload
++API_response_caching
+
+WHEN_AVOID_JSON
+-queryable_data:normalize
+-frequently_updated_fields
+-referential_integrity_needed
+
+POSTGRES_JSONB
+CREATE TABLE products (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  attributes JSONB NOT NULL DEFAULT '{}'
+);
+
+-- Index for queries
+CREATE INDEX idx_products_attributes ON products USING GIN (attributes);
+
+-- Query
+SELECT * FROM products WHERE attributes->>'color' = 'red';
+SELECT * FROM products WHERE attributes @> '{"size": "large"}';
+
+MYSQL_JSON
+CREATE TABLE products (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  attributes JSON
+);
+
+-- Virtual column for indexing
+ALTER TABLE products ADD COLUMN color VARCHAR(50) 
+  GENERATED ALWAYS AS (JSON_UNQUOTE(attributes->>'$.color')) STORED;
+CREATE INDEX idx_products_color ON products(color);
+
+==============================================================================
+MULTI_TENANT_PATTERNS
+==============================================================================
+SHARED_DATABASE_SHARED_SCHEMA
+-- Tenant ID on every table
+CREATE TABLE posts (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  title VARCHAR(255) NOT NULL
+);
+
+CREATE INDEX idx_posts_tenant ON posts(tenant_id);
+
+-- ALWAYS filter by tenant
+SELECT * FROM posts WHERE tenant_id = :tenant_id;
++simple
++cost_effective
+-noisy_neighbor
+-complex_queries
+
+ROW_LEVEL_SECURITY_POSTGRES
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON posts
+  USING (tenant_id = current_setting('app.current_tenant')::int);
+
+-- Set tenant in session
+SET app.current_tenant = '123';
+SELECT * FROM posts;  -- automatically filtered
++enforced_at_DB_level
++simpler_application_code
+
+SHARED_DATABASE_SEPARATE_SCHEMA
+-- Schema per tenant
+CREATE SCHEMA tenant_123;
+CREATE TABLE tenant_123.posts (...);
+
+-- Application sets search_path
+SET search_path TO tenant_123;
++better_isolation
+-schema_management_complexity
+
+SEPARATE_DATABASE
+-- Database per tenant
++full_isolation
++easy_backup_restore
+-operational_overhead
+-connection_management
+
+==============================================================================
+INDEXING_PATTERNS
+==============================================================================
+INDEX_TYPES
+B-TREE:default|equality|range|sorting
+HASH:equality_only|Postgres
+GIN:arrays|JSONB|full_text
+GIST:geometric|range|full_text
+BRIN:large_sequential_data
+
+COMMON_INDEXES
+-- Foreign keys (often forgotten!)
+CREATE INDEX idx_posts_user_id ON posts(user_id);
+
+-- Frequently filtered columns
+CREATE INDEX idx_posts_status ON posts(status);
+
+-- Composite for multi-column queries
+CREATE INDEX idx_posts_user_status ON posts(user_id, status);
+
+-- Partial index
+CREATE INDEX idx_posts_pending ON posts(created_at) WHERE status = 'pending';
+
+-- Covering index (index-only scan)
+CREATE INDEX idx_posts_list ON posts(user_id, created_at) INCLUDE (title);
+
+WHEN_TO_INDEX
++foreign_keys
++WHERE_clause_columns
++ORDER_BY_columns
++JOIN_columns
++unique_constraints
+
+WHEN_NOT_TO_INDEX
+-small_tables
+-frequently_updated_columns
+-low_cardinality_columns
+-write_heavy_tables
+
+==============================================================================
+MIGRATION_PATTERNS
+==============================================================================
+MIGRATION_TOOLS
+Prisma_Migrate:Prisma
+Drizzle_Kit:Drizzle
+Flyway:Java
+Liquibase:Java
+Alembic:Python
+ActiveRecord_Migrations:Rails
+Knex:Node.js
+
+SAFE_MIGRATIONS
++add_column:safe
++add_index_concurrently:safe
++drop_column:requires_deploy_coordination
++rename_column:dangerous
++change_type:dangerous
+
+ADD_COLUMN_WITH_DEFAULT
+-- Postgres 11+: instant
+ALTER TABLE posts ADD COLUMN published BOOLEAN NOT NULL DEFAULT false;
+
+-- Older: backfill separately
+ALTER TABLE posts ADD COLUMN published BOOLEAN;
+UPDATE posts SET published = false WHERE published IS NULL;
+ALTER TABLE posts ALTER COLUMN published SET NOT NULL;
+
+ZERO_DOWNTIME_COLUMN_RENAME
+-- 1. Add new column
+ALTER TABLE users ADD COLUMN full_name VARCHAR(255);
+
+-- 2. Backfill (batched)
+UPDATE users SET full_name = name WHERE full_name IS NULL;
+
+-- 3. Deploy code reading both columns
+-- 4. Deploy code writing to both columns
+-- 5. Deploy code reading only new column
+-- 6. Drop old column
+ALTER TABLE users DROP COLUMN name;
+
+INDEX_CONCURRENTLY
+-- Postgres: don't lock table
+CREATE INDEX CONCURRENTLY idx_posts_title ON posts(title);
++no_blocking
+-slower
+-can_fail
+
+==============================================================================
+NOSQL_PATTERNS
+==============================================================================
+MONGODB_DOCUMENT_DESIGN
+EMBED_WHEN
++data_accessed_together
++one_to_few_relationship
++data_doesn't_change_often
+
+// Embedded
+{
+  _id: ObjectId,
+  title: "Post",
+  comments: [
+    { author: "John", body: "Great!" },
+    { author: "Jane", body: "Thanks!" }
+  ]
+}
+
+REFERENCE_WHEN
++many_to_many
++frequently_updated
++large_subdocuments
++accessed_independently
+
+// Referenced
+// posts collection
+{ _id: ObjectId, title: "Post" }
+
+// comments collection
+{ _id: ObjectId, post_id: ObjectId, author: "John", body: "Great!" }
+
+REDIS_PATTERNS
+STRING:simple_cache|counters
+HASH:object_storage
+LIST:queues|recent_items
+SET:unique_items|tags
+SORTED_SET:leaderboards|time_series
+
+// User session
+SET user:123:session {json}
+EXPIRE user:123:session 3600
+
+// Leaderboard
+ZADD leaderboard 1000 "user:123"
+ZREVRANGE leaderboard 0 9 WITHSCORES
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+No_Foreign_Keys         | orphaned_records                 | add_FKs
+Missing_Indexes         | slow_queries|full_scans          | add_indexes
+No_FK_Indexes           | slow_joins                       | index_FK_columns
+God_Table               | 50+_columns                      | normalize|split
+No_Timestamps           | can't_audit                      | add_created_updated
+String_IDs              | inconsistent_format              | proper_ID_type
+No_Constraints          | invalid_data                     | add_constraints
+Over_Normalization      | too_many_joins                   | strategic_denormalize
+Under_Normalization     | data_duplication                 | normalize
+No_Soft_Delete          | can't_recover                    | add_deleted_at
+EAV_Antipattern         | entity_attribute_value           | proper_schema|JSONB

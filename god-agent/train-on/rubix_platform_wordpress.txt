@@ -1,0 +1,370 @@
+# RUBIX PLATFORM: WORDPRESS
+# VERSION: 6.x
+# FOUNDATION: PHP|MySQL|GPL_license
+# PHILOSOPHY: democratize_publishing|decisions_not_options
+
+==============================================================================
+HISTORY
+==============================================================================
+2003:Matt_Mullenweg+Mike_Little>forked_b2/cafelog
+2004:v1.2>plugin_architecture
+2005:v1.5>theme_system|Pages
+2007:v2.1>autosave|spell_check
+2010:v3.0>custom_post_types|multisite
+2013:v3.6>post_formats|mp3_embed
+2015:v4.4>REST_API_infrastructure
+2018:v5.0>Gutenberg_block_editor
+2022:v6.0>full_site_editing|block_patterns
+2023:v6.3>command_palette|improved_patterns
+2024:v6.5>font_library|interactivity_api
+
+CORE_MAINTAINERS
+Matt_Mullenweg:co-founder|Automattic_CEO
+Mike_Little:co-founder
+Helen_Hou-Sandi:lead_developer
+Andrew_Nacin:core_contributor
+Josepha_Haden:executive_director
+
+MARKET_SHARE:43%_of_web
+
+==============================================================================
+HOOK_SYSTEM_PATTERNS
+==============================================================================
+ACTIONS
+def:execute_at_specific_points|no_return_value
+*add_action('hook_name','callback',priority,args)
+*do_action('hook_name',$arg1,$arg2)
+*remove_action('hook_name','callback',priority)
+
+CRITICAL_ACTIONS
+init:after_WP_loads|register_CPT_taxonomy
+wp_enqueue_scripts:frontend_assets
+admin_enqueue_scripts:admin_assets
+wp_head:output_to_<head>
+wp_footer:output_before_</body>
+save_post:after_post_save
+pre_get_posts:modify_main_query
+rest_api_init:register_REST_routes
+
+FILTERS
+def:modify_data|must_return_value
+*add_filter('hook_name','callback',priority,args)
+*apply_filters('hook_name',$value,$arg1)
+!MUST_return_value|forgetting_breaks_site
+
+CRITICAL_FILTERS
+the_content:modify_post_content
+the_title:modify_post_title
+wp_nav_menu_items:modify_menu_output
+body_class:add_body_classes
+query_vars:add_query_variables
+posts_where:modify_SQL_WHERE
+
+ANTI_PATTERNS
+-echoing_in_filter:must_return
+-wrong_priority:check_execution_order
+-not_removing_hooks:memory_leak_in_loops
+-hardcoding_instead_of_filter:inflexible
+
+==============================================================================
+PLUGIN_ARCHITECTURE
+==============================================================================
+GOOD_PATTERNS
++main_plugin_file:header_comment
+*Plugin_Name|Description|Version|Author|License
+
++singleton_for_main_class:prevent_double_init
+class MyPlugin{
+    private static $instance=null;
+    public static function instance(){
+        if(null===self::$instance)self::$instance=new self();
+        return self::$instance;
+    }
+}
+
++autoloading:Composer_PSR-4
++namespacing:avoid_collisions
++dependency_injection:testability
++activation_deactivation_hooks
+*register_activation_hook(__FILE__,'callback')
+*register_deactivation_hook(__FILE__,'callback')
+
+PLUGIN_STRUCTURE
+plugin-name/
+    plugin-name.php:main_file
+    includes/:PHP_classes
+    admin/:admin_specific
+    public/:frontend_specific
+    templates/:template_files
+    assets/css|js|images
+    languages/:i18n
+    vendor/:composer_deps
+
+ANTI_PATTERNS
+-no_prefix:function_collisions
+*bad:get_user()|good:myplugin_get_user()
+-global_vars_everywhere:encapsulate
+-direct_DB_queries:use_WP_functions
+-not_sanitizing_escaping
+-loading_all_assets_all_pages:conditional_enqueue
+
+==============================================================================
+THEME_PATTERNS
+==============================================================================
+CLASSIC_THEME_STRUCTURE
+theme-name/
+    style.css:theme_header
+    functions.php:setup
+    index.php:fallback
+    single.php:single_posts
+    page.php:pages
+    archive.php:archives
+    header.php|footer.php|sidebar.php
+    template-parts/:partials
+
+BLOCK_THEME_STRUCTURE
+theme-name/
+    theme.json:global_styles_settings
+    templates/:block_templates
+    parts/:template_parts
+    patterns/:block_patterns
+    styles/:style_variations
+
+TEMPLATE_HIERARCHY
+single-{post_type}-{slug}.php
+single-{post_type}.php
+single.php
+singular.php
+index.php
+
+GOOD_PATTERNS
++theme.json:define_styles_settings_centrally
++block_patterns:reusable_layouts
++template_parts:get_template_part()
++starter_content:theme_customize_previews
++theme_supports:declare_features
+*add_theme_support('post-thumbnails')
+*add_theme_support('title-tag')
+*add_theme_support('html5',['search-form','gallery'])
+
+ANTI_PATTERNS
+-hardcoded_text:use_i18n__()
+-inline_styles:use_theme.json|wp_add_inline_style
+-plugin_territory:CPT_in_theme>plugin
+-not_escaping_output
+
+==============================================================================
+CUSTOM_POST_TYPES_TAXONOMIES
+==============================================================================
+REGISTER_CPT
+*register_post_type('book',array(
+    'public'=>true,
+    'label'=>'Books',
+    'supports'=>['title','editor','thumbnail'],
+    'has_archive'=>true,
+    'rewrite'=>['slug'=>'books'],
+    'show_in_rest'=>true
+))
+!call_on_init_hook
+!flush_rewrite_on_activation
+
+REGISTER_TAXONOMY
+*register_taxonomy('genre','book',array(
+    'hierarchical'=>true,
+    'show_in_rest'=>true,
+    'rewrite'=>['slug'=>'genre']
+))
+
+ANTI_PATTERNS
+-registering_late:use_init_priority_10
+-forgetting_show_in_rest:blocks_need_it
+-rewrite_conflicts:check_slug_uniqueness
+
+==============================================================================
+WP_QUERY_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++WP_Query:custom_loops
+$query=new WP_Query([
+    'post_type'=>'book',
+    'posts_per_page'=>10,
+    'meta_query'=>[...]
+]);
+while($query->have_posts()):$query->the_post();
+endwhile;wp_reset_postdata();
+
++pre_get_posts:modify_main_query
+add_action('pre_get_posts',function($q){
+    if(!is_admin()&&$q->is_main_query()&&is_post_type_archive('book')){
+        $q->set('posts_per_page',12);
+    }
+});
+
++get_posts:simple_retrieval
+$posts=get_posts(['numberposts'=>5,'category'=>3]);
+
+ANTI_PATTERNS
+-query_posts():breaks_main_query|never_use
+-not_resetting:wp_reset_postdata()_always
+-meta_query_without_index:slow
+-querying_in_loop:N+1_equivalent
+
+PERFORMANCE
++transient_caching:set_transient()
++object_caching:wp_cache_set()
++efficient_meta_queries:index_meta_keys
++posts_per_page_limit:reasonable_numbers
+
+==============================================================================
+REST_API_PATTERNS
+==============================================================================
+REGISTER_ROUTES
+register_rest_route('myplugin/v1','/items',array(
+    'methods'=>'GET',
+    'callback'=>'get_items_callback',
+    'permission_callback'=>'__return_true'|function
+));
+
+CUSTOM_ENDPOINTS
++namespace_version:myplugin/v1
++permission_callback:required_since_5.5
++schema:define_response_structure
++sanitize_callback:input_cleaning
++validate_callback:input_validation
+
+EXTENDING_EXISTING
+register_rest_field('post','custom_field',array(
+    'get_callback'=>'get_custom_field',
+    'update_callback'=>'update_custom_field',
+    'schema'=>array('type'=>'string')
+));
+
+ANTI_PATTERNS
+-no_permission_callback:security_risk
+-returning_raw_data:sanitize_escape
+-no_nonce_check_when_needed
+-exposing_sensitive_data
+
+==============================================================================
+GUTENBERG_BLOCK_PATTERNS
+==============================================================================
+BLOCK_REGISTRATION
+register_block_type('myplugin/custom-block',array(
+    'editor_script'=>'handle',
+    'render_callback'=>'render_function'
+));
+
+BLOCK.JSON
+{
+    "name":"myplugin/custom-block",
+    "title":"Custom Block",
+    "category":"widgets",
+    "attributes":{...},
+    "supports":{"html":false}
+}
+
+DYNAMIC_VS_STATIC
+dynamic:render_callback|server_side
+static:save_function|stored_in_content
+
+ANTI_PATTERNS
+-not_using_block.json:modern_standard
+-inline_styles_in_blocks:use_useBlockProps
+-no_block_supports:reinventing
+
+==============================================================================
+SECURITY_PATTERNS
+==============================================================================
+NONCES
+*wp_nonce_field('action','nonce_name')
+*wp_verify_nonce($_POST['nonce_name'],'action')
+*check_admin_referer('action')
+
+CAPABILITY_CHECKS
+*current_user_can('edit_posts')
+*current_user_can('edit_post',$post_id)
+
+DATA_SANITIZATION_INPUT
+sanitize_text_field():strings
+sanitize_email():emails
+sanitize_title():slugs
+absint():positive_integers
+wp_kses():allowed_HTML
+wp_kses_post():post_content_safe
+
+DATA_ESCAPING_OUTPUT
+esc_html():HTML_context
+esc_attr():attribute_context
+esc_url():URL_context
+esc_js():JS_context
+wp_kses():selective_HTML
+
+ANTI_PATTERNS
+-trusting_$_GET_$_POST:always_sanitize
+-echoing_unsanitized:always_escape
+-no_nonce_on_forms:CSRF_risk
+-no_capability_check:privilege_escalation
+-direct_SQL:use_$wpdb->prepare()
+
+SQL_SAFETY
+*$wpdb->prepare("SELECT * FROM $wpdb->posts WHERE ID=%d",$id)
+*$wpdb->insert($table,$data,$format)
+!never_concatenate_user_input
+
+==============================================================================
+PERFORMANCE_PATTERNS
+==============================================================================
+GOOD
++transient_API:expensive_query_caching
+*set_transient('key',$data,HOUR_IN_SECONDS)
+*get_transient('key')
++object_cache:persistent_caching
+*wp_cache_set('key',$data,'group')
++lazy_loading:images|iframes
++async_defer:scripts
++conditional_loading:is_page()|is_single()
+
+DATABASE
++index_meta_keys:custom_tables_for_heavy_meta
++efficient_queries:limit_fields_selected
++autoload_options:set_false_for_large
+
+CACHING_PLUGINS
+WP_Super_Cache|W3_Total_Cache|WP_Rocket
+Redis|Memcached:object_cache_backend
+
+ANTI_PATTERNS
+-autoload_large_options:slows_every_request
+-not_caching_expensive_queries
+-enqueue_all_assets_everywhere
+-remote_requests_on_every_load:cache_results
+
+==============================================================================
+WHEN_NOT_WORDPRESS
+==============================================================================
+CONSIDER_ALTERNATIVES_IF
+-complex_business_logic:Laravel|custom
+-high_traffic_API:headless_approach
+-real_time_features:Node.js
+-complex_data_relationships:proper_ORM
+-enterprise_security_requirements
+
+HEADLESS_WORDPRESS
++WPGraphQL:GraphQL_API
++REST_API:JSON_endpoints
++frontend:Next.js|Nuxt|Gatsby
++keeps_content_editing_UX
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+No_Prefix               | generic_function_names           | prefix_everything
+Echo_In_Filter          | filter_returns_nothing           | return_value
+Query_Posts             | query_posts()_usage              | WP_Query|pre_get_posts
+No_Escape               | echo_$_GET_direct                | esc_*_functions
+No_Nonce                | form_without_nonce               | wp_nonce_field
+Plugin_In_Theme         | CPT_in_functions.php             | move_to_plugin
+Direct_SQL              | string_concat_in_query           | $wpdb->prepare
+N+1_Meta                | get_post_meta_in_loop            | single_query_cache

@@ -720,6 +720,198 @@ const SYSTEM_SCHEMA: CompressionSchema = {
 };
 
 /**
+ * Bug fix schema - for discovered and fixed bugs
+ */
+const BUG_FIX_SCHEMA: CompressionSchema = {
+  encode: (text: string) => {
+    // Extract bug identifier
+    const bugMatch = text.match(/\b(bug|issue|problem)[:\s]+(\w+)/i);
+    const bugId = bugMatch ? bugMatch[2] : text.match(/\b(\w+_\w+)\b/)?.[1] || 'unknown';
+
+    // Extract status
+    const statusMatch = text.match(/\b(fixed|resolved|closed|open|wip)\b/i);
+    const status = statusMatch ? statusMatch[1].toLowerCase() : 'fixed';
+
+    // Extract date
+    const dateMatch = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+    const date = dateMatch ? dateMatch[1] : '';
+
+    // Extract symptom
+    const symptomMatch = text.match(/symptom[s]?[:\s]+([^.]+)/i);
+    const symptom = symptomMatch
+      ? symptomMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    // Extract root cause
+    const rootMatch = text.match(/root[:\s]+([^.]+)|cause[:\s]+([^.]+)/i);
+    const root = rootMatch
+      ? (rootMatch[1] || rootMatch[2]).replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    // Extract fix description
+    const fixMatch = text.match(/fix[:\s]+([^.]+)/i);
+    const fix = fixMatch
+      ? fixMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    // Extract files
+    const files: string[] = [];
+    const fileMatches = text.matchAll(/\b(src\/[\w/.-]+\.ts)\b/g);
+    for (const match of fileMatches) {
+      if (!files.includes(match[1])) files.push(match[1]);
+    }
+
+    // Extract lesson
+    const lessonMatch = text.match(/lesson[:\s]+([^.]+)/i);
+    const lesson = lessonMatch
+      ? lessonMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    let result = `BUG:${bugId}\nSTATUS:${status}`;
+    if (date) result += `\nDATE:${date}`;
+    if (symptom) result += `\nSYMPTOM:${symptom}`;
+    if (root) result += `\nROOT:${root}`;
+    if (fix) result += `\nFIX:${fix}`;
+    if (files.length > 0) result += `\nFILES:${files.slice(0, 5).join(',')}`;
+    if (lesson) result += `\nLESSON:${lesson}`;
+
+    return result;
+  },
+
+  decode: (compressed: string) => {
+    const kv = parseKV(compressed);
+    let result = `Bug: ${kv['BUG'] || 'Unknown'}`;
+    result += `\nStatus: ${kv['STATUS'] || 'unknown'}`;
+    if (kv['DATE']) result += `\nDate: ${kv['DATE']}`;
+    if (kv['SYMPTOM']) result += `\nSymptom: ${kv['SYMPTOM'].replace(/_/g, ' ')}`;
+    if (kv['ROOT']) result += `\nRoot Cause: ${kv['ROOT'].replace(/_/g, ' ')}`;
+    if (kv['FIX']) result += `\nFix: ${kv['FIX'].replace(/_/g, ' ')}`;
+    if (kv['FILES']) result += `\nFiles Modified: ${kv['FILES']}`;
+    if (kv['LESSON']) result += `\nLesson: ${kv['LESSON'].replace(/_/g, ' ')}`;
+    return result;
+  },
+};
+
+/**
+ * Development feature schema - for new modules/features
+ */
+const DEV_FEATURE_SCHEMA: CompressionSchema = {
+  encode: (text: string) => {
+    // Extract feature name
+    const nameMatch = text.match(/\b(DEV|FEATURE)[:\s]+(\w+)/i) || text.match(/\b([A-Z][a-zA-Z]+(?:[A-Z][a-zA-Z]+)*)\b/);
+    const name = nameMatch ? (nameMatch[2] || nameMatch[1]) : 'unknown';
+
+    // Extract type
+    const typeMatch = text.match(/\bTYPE[:\s]+(\w+)/i) || text.match(/\b(new_module|enhancement|refactor)\b/i);
+    const type = typeMatch ? (typeMatch[1] || typeMatch[0]).toLowerCase() : 'feature';
+
+    // Extract purpose
+    const purposeMatch = text.match(/purpose[:\s]+([^.]+)/i);
+    const purpose = purposeMatch
+      ? purposeMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    // Extract files created
+    const files: string[] = [];
+    const fileMatches = text.matchAll(/\b(src\/[\w/.-]+\.ts)\b/g);
+    for (const match of fileMatches) {
+      if (!files.includes(match[1])) files.push(match[1]);
+    }
+
+    // Extract interface/exports
+    const exports: string[] = [];
+    const exportMatches = text.matchAll(/\b(export\s+)?(?:interface|class|function|const)\s+(\w+)/g);
+    for (const match of exportMatches) {
+      if (!exports.includes(match[2])) exports.push(match[2]);
+    }
+
+    // Extract wiring/integration points
+    const wiringMatch = text.match(/wir(?:ing|ed?)[:\s]+([^.]+)/i);
+    const wiring = wiringMatch
+      ? wiringMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    let result = `DEV:${name}\nTYPE:${type}`;
+    if (purpose) result += `\nPURPOSE:${purpose}`;
+    if (files.length > 0) result += `\nPATH:${files.slice(0, 5).join(',')}`;
+    if (exports.length > 0) result += `\nEXPORTS:${exports.slice(0, 8).join(',')}`;
+    if (wiring) result += `\nWIRING:${wiring}`;
+
+    return result;
+  },
+
+  decode: (compressed: string) => {
+    const kv = parseKV(compressed);
+    let result = `Feature: ${kv['DEV'] || 'Unknown'}`;
+    result += `\nType: ${kv['TYPE'] || 'feature'}`;
+    if (kv['PURPOSE']) result += `\nPurpose: ${kv['PURPOSE'].replace(/_/g, ' ')}`;
+    if (kv['PATH']) result += `\nFiles: ${kv['PATH']}`;
+    if (kv['EXPORTS']) result += `\nExports: ${kv['EXPORTS']}`;
+    if (kv['WIRING']) result += `\nIntegration: ${kv['WIRING'].replace(/_/g, ' ')}`;
+    return result;
+  },
+};
+
+/**
+ * Architecture insight schema - lessons learned about system design
+ */
+const ARCH_INSIGHT_SCHEMA: CompressionSchema = {
+  encode: (text: string) => {
+    // Extract insight name
+    const nameMatch = text.match(/\bARCH[:\s]+(\w+)/i) || text.match(/\b([a-z_]+)\b/);
+    const name = nameMatch ? nameMatch[1] : 'insight';
+
+    // Extract type
+    const typeMatch = text.match(/\bTYPE[:\s]+(\w+)/i);
+    const type = typeMatch ? typeMatch[1].toLowerCase() : 'lesson_learned';
+
+    // Extract key insight
+    const insightMatch = text.match(/insight[:\s]+([^.]+)|lesson[:\s]+([^.]+)/i);
+    const insight = insightMatch
+      ? (insightMatch[1] || insightMatch[2]).replace(/\s+/g, '_').toLowerCase().slice(0, 80)
+      : '';
+
+    // Extract pattern
+    const patternMatch = text.match(/pattern[:\s]+([^.]+)/i);
+    const pattern = patternMatch
+      ? patternMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    // Extract rule
+    const ruleMatch = text.match(/rule[:\s]+([^.]+)/i);
+    const rule = ruleMatch
+      ? ruleMatch[1].replace(/\s+/g, '_').toLowerCase().slice(0, 60)
+      : '';
+
+    // Extract components involved
+    const components: string[] = [];
+    const compMatches = text.matchAll(/\b([A-Z][a-zA-Z]+(?:[A-Z][a-zA-Z]+)+)\b/g);
+    for (const match of compMatches) {
+      if (!components.includes(match[1])) components.push(match[1]);
+    }
+
+    let result = `ARCH:${name}\nTYPE:${type}`;
+    if (insight) result += `\nINSIGHT:${insight}`;
+    if (pattern) result += `\nPATTERN:${pattern}`;
+    if (rule) result += `\nRULE:${rule}`;
+    if (components.length > 0) result += `\nCOMPS:${components.slice(0, 6).join(',')}`;
+
+    return result;
+  },
+
+  decode: (compressed: string) => {
+    const kv = parseKV(compressed);
+    let result = `Architecture: ${kv['ARCH'] || 'Unknown'}`;
+    result += `\nType: ${kv['TYPE'] || 'insight'}`;
+    if (kv['INSIGHT']) result += `\nKey Insight: ${kv['INSIGHT'].replace(/_/g, ' ')}`;
+    if (kv['PATTERN']) result += `\nPattern: ${kv['PATTERN'].replace(/_/g, ' ')}`;
+    if (kv['RULE']) result += `\nRule: ${kv['RULE'].replace(/_/g, ' ')}`;
+    if (kv['COMPS']) result += `\nComponents: ${kv['COMPS']}`;
+    return result;
+  },
+};
+
+/**
  * Generic schema (fallback)
  */
 const GENERIC_SCHEMA: CompressionSchema = {
@@ -764,5 +956,8 @@ export const COMPRESSION_SCHEMAS: Record<MemoryType, CompressionSchema> = {
   error_pattern: ERROR_PATTERN_SCHEMA,
   success_pattern: SUCCESS_PATTERN_SCHEMA,
   system: SYSTEM_SCHEMA,
+  bug_fix: BUG_FIX_SCHEMA,
+  dev_feature: DEV_FEATURE_SCHEMA,
+  arch_insight: ARCH_INSIGHT_SCHEMA,
   generic: GENERIC_SCHEMA,
 };

@@ -25,6 +25,7 @@ import {
   validateConfig,
   SetupConfig
 } from './setup.js';
+import { discoverAndImportLegacy } from './legacy-import.js';
 
 export const assimilateCommand = new Command('assimilate')
   .description('Full RUBIX setup wizard + assimilation')
@@ -119,6 +120,21 @@ export const assimilateCommand = new Command('assimilate')
       }
     }
 
+    // Step 6.5: Legacy Database Discovery & Import
+    console.log(chalk.cyan('\n[6.5/7] LEGACY DATABASE DISCOVERY'));
+    console.log(chalk.gray('─'.repeat(30)));
+
+    const memoryConfig = getDefaultConfig(options.dataDir);
+    const engine = new MemoryEngine(memoryConfig);
+    await engine.initialize();
+
+    const currentDbPath = join(options.dataDir, 'memory.db');
+    const legacyResults = await discoverAndImportLegacy(currentDbPath, engine, options.yes);
+
+    if (legacyResults.databasesProcessed > 0) {
+      console.log(chalk.green(`Legacy import complete: ${legacyResults.totalImported} entries imported from ${legacyResults.databasesProcessed} database(s)`));
+    }
+
     // Step 7: Memory assimilation
     console.log(chalk.cyan('\n[7/7] MEMORY ASSIMILATION'));
     console.log(chalk.gray('─'.repeat(30)));
@@ -126,6 +142,9 @@ export const assimilateCommand = new Command('assimilate')
     console.log(chalk.yellow('This will:'));
     console.log(chalk.yellow('  • Delete all project-specific memory'));
     console.log(chalk.yellow('  • Preserve RUBIX system knowledge'));
+    if (legacyResults.totalImported > 0) {
+      console.log(chalk.yellow(`  • Keep ${legacyResults.totalImported} imported legacy entries`));
+    }
     console.log('');
     console.log(chalk.gray(`Preserved tags: ${SYSTEM_TAGS.join(', ')}`));
 
@@ -135,13 +154,9 @@ export const assimilateCommand = new Command('assimilate')
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
-    const spinner = ora('Initializing memory engine...').start();
+    const spinner = ora('Assimilating memory...').start();
 
     try {
-      const memoryConfig = getDefaultConfig(options.dataDir);
-      const engine = new MemoryEngine(memoryConfig);
-      await engine.initialize();
-
       // Get stats before
       const statsBefore = await engine.getStats();
       spinner.text = `Found ${statsBefore.totalEntries} entries in memory`;

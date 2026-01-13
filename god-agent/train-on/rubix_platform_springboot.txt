@@ -1,0 +1,458 @@
+# RUBIX PLATFORM: SPRING_BOOT
+# VERSION: 3.x
+# FOUNDATION: Java|Spring_Framework|Apache_License
+# PHILOSOPHY: convention_over_configuration|production_ready|opinionated
+
+==============================================================================
+HISTORY
+==============================================================================
+2002:Rod_Johnson>J2EE_Development_without_EJB>Spring_origins
+2004:Spring_Framework_1.0
+2013:Phil_Webb>Spring_Boot_project_started
+2014:Spring_Boot_1.0>auto_configuration|starter_POMs
+2017:Spring_Boot_2.0>Spring_5|reactive|Kotlin_support
+2018:v2.1>Java_11_support
+2022:Spring_Boot_3.0>Java_17_baseline|Jakarta_EE|native_compilation
+2023:v3.1>Docker_Compose_support|testcontainers
+2024:v3.3>CDS_support|virtual_threads
+
+CORE_MAINTAINERS
+Rod_Johnson:Spring_creator
+Phil_Webb:Boot_creator
+Juergen_Hoeller:Spring_Framework_lead
+Stephane_Nicoll:core_committer
+Brian_Clozel:core_committer
+
+ARCHITECTURE:layered|DI_centric
+
+==============================================================================
+DEPENDENCY_INJECTION_PATTERNS
+==============================================================================
+CONSTRUCTOR_INJECTION_PREFERRED
+@Service
+public class OrderService {
+    private final OrderRepository orderRepo;
+    private final PaymentService paymentService;
+    
+    public OrderService(OrderRepository orderRepo, PaymentService paymentService) {
+        this.orderRepo = orderRepo;
+        this.paymentService = paymentService;
+    }
+}
+
+!Lombok @RequiredArgsConstructor:shorthand
+
+INJECTION_TYPES
++constructor:preferred|immutable|required_deps
+-field_@Autowired:hidden_deps|testing_harder
+~setter:optional_deps|circular_deps_workaround
+
+BEAN_SCOPES
+singleton:default|one_per_context
+prototype:new_per_injection
+request:per_HTTP_request
+session:per_HTTP_session
+
+ANTI_PATTERNS
+-field_injection:use_constructor
+-circular_dependencies:redesign|@Lazy_workaround
+-too_many_deps:class_doing_too_much
+
+==============================================================================
+CONTROLLER_PATTERNS
+==============================================================================
+REST_CONTROLLER
+@RestController
+@RequestMapping("/api/v1/orders")
+public class OrderController {
+    private final OrderService orderService;
+    
+    @GetMapping
+    public List<OrderDto> getOrders() {
+        return orderService.findAll();
+    }
+    
+    @GetMapping("/{id}")
+    public OrderDto getOrder(@PathVariable Long id) {
+        return orderService.findById(id);
+    }
+    
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public OrderDto createOrder(@Valid @RequestBody CreateOrderDto dto) {
+        return orderService.create(dto);
+    }
+}
+
+REQUEST_MAPPING_VARIANTS
+@GetMapping|@PostMapping|@PutMapping|@PatchMapping|@DeleteMapping
+
+PARAMETER_BINDING
+@PathVariable:URL_path_segment
+@RequestParam:query_parameter
+@RequestBody:JSON_body
+@RequestHeader:HTTP_header
+@Valid:trigger_validation
+
+RESPONSE_ENTITY
+@GetMapping("/{id}")
+public ResponseEntity<OrderDto> getOrder(@PathVariable Long id) {
+    return orderService.findById(id)
+        .map(ResponseEntity::ok)
+        .orElse(ResponseEntity.notFound().build());
+}
+
+ANTI_PATTERNS
+-business_logic_in_controller:move_to_service
+-returning_entities:use_DTOs
+-no_validation:@Valid
+-hardcoded_URLs:use_constants
+
+==============================================================================
+SERVICE_PATTERNS
+==============================================================================
+SERVICE_LAYER
+@Service
+@Transactional
+public class OrderService {
+    private final OrderRepository orderRepo;
+    
+    public OrderDto create(CreateOrderDto dto) {
+        Order order = mapper.toEntity(dto);
+        order = orderRepo.save(order);
+        eventPublisher.publish(new OrderCreatedEvent(order));
+        return mapper.toDto(order);
+    }
+}
+
+TRANSACTION_MANAGEMENT
+@Transactional:class_or_method_level
+@Transactional(readOnly=true):optimize_reads
+@Transactional(propagation=REQUIRES_NEW):new_transaction
+@Transactional(rollbackFor=Exception.class):rollback_on_checked
+
+ANTI_PATTERNS
+-transaction_on_controller:service_layer
+-catching_exception_in_transaction:breaks_rollback
+-long_transactions:keep_short
+-no_transaction_for_writes:data_integrity
+
+==============================================================================
+REPOSITORY_PATTERNS
+==============================================================================
+SPRING_DATA_JPA
+public interface OrderRepository extends JpaRepository<Order, Long> {
+    List<Order> findByStatus(OrderStatus status);
+    
+    @Query("SELECT o FROM Order o WHERE o.customer.id = :customerId")
+    List<Order> findByCustomerId(@Param("customerId") Long customerId);
+    
+    @Query(value = "SELECT * FROM orders WHERE created_at > :date", nativeQuery = true)
+    List<Order> findRecentOrders(@Param("date") LocalDateTime date);
+}
+
+QUERY_METHODS
+findBy*:equality
+findBy*And*:multiple_conditions
+findBy*OrderBy*Asc|Desc:sorting
+findBy*In:IN_clause
+findBy*Between:range
+
+SPECIFICATIONS_PATTERN
++complex_dynamic_queries
+public class OrderSpecs {
+    public static Specification<Order> hasStatus(OrderStatus status) {
+        return (root, query, cb) -> cb.equal(root.get("status"), status);
+    }
+}
+*orderRepo.findAll(hasStatus(PENDING).and(createdAfter(date)))
+
+PROJECTION_PATTERN
++select_specific_fields
+public interface OrderSummary {
+    Long getId();
+    String getStatus();
+    BigDecimal getTotal();
+}
+*List<OrderSummary> findByStatus(OrderStatus status)
+
+ANTI_PATTERNS
+-N+1_queries:@EntityGraph|JOIN_FETCH
+-no_pagination:Pageable_parameter
+-returning_entities_to_controller:DTO_projection
+
+==============================================================================
+ENTITY_PATTERNS
+==============================================================================
+JPA_ENTITY
+@Entity
+@Table(name = "orders")
+public class Order {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private Customer customer;
+    
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> items = new ArrayList<>();
+}
+
+FETCH_TYPES
+FetchType.LAZY:load_on_access|preferred
+FetchType.EAGER:load_immediately|N+1_risk
+
+ENTITY_GRAPH
+@EntityGraph(attributePaths = {"items", "customer"})
+List<Order> findByStatus(OrderStatus status);
+
+ANTI_PATTERNS
+-EAGER_fetch:use_LAZY
+-bidirectional_without_mappedBy:duplicate_FK
+-entity_equals_on_mutable:use_ID|business_key
+-no_cascade_strategy:data_orphans
+
+==============================================================================
+DTO_PATTERNS
+==============================================================================
+RECORD_DTOS_JAVA17+
+public record CreateOrderDto(
+    @NotNull Long customerId,
+    @NotEmpty List<OrderItemDto> items
+) {}
+
+public record OrderDto(
+    Long id,
+    String status,
+    BigDecimal total,
+    CustomerDto customer
+) {}
+
+MAPSTRUCT_MAPPING
+@Mapper(componentModel = "spring")
+public interface OrderMapper {
+    OrderDto toDto(Order order);
+    Order toEntity(CreateOrderDto dto);
+    
+    @Mapping(target = "id", ignore = true)
+    void updateEntity(@MappingTarget Order order, UpdateOrderDto dto);
+}
+
+ANTI_PATTERNS
+-entity_in_API:use_DTO
+-manual_mapping:use_MapStruct|ModelMapper
+-DTO_with_logic:pure_data_carrier
+
+==============================================================================
+EXCEPTION_HANDLING
+==============================================================================
+CONTROLLER_ADVICE
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    
+    @ExceptionHandler(ResourceNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ErrorResponse handleNotFound(ResourceNotFoundException ex) {
+        return new ErrorResponse(ex.getMessage());
+    }
+    
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ErrorResponse handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> errors = ex.getBindingResult()
+            .getFieldErrors().stream()
+            .collect(Collectors.toMap(
+                FieldError::getField,
+                FieldError::getDefaultMessage
+            ));
+        return new ErrorResponse("Validation failed", errors);
+    }
+}
+
+PROBLEM_DETAILS_RFC7807
++Spring_6+_native_support
++application/problem+json
+
+ANTI_PATTERNS
+-generic_Exception_catch:specific_types
+-exposing_stack_traces:log_internally
+-no_error_response_structure:consistent_format
+
+==============================================================================
+VALIDATION_PATTERNS
+==============================================================================
+BEAN_VALIDATION
+public record CreateOrderDto(
+    @NotNull(message = "Customer ID required")
+    Long customerId,
+    
+    @NotEmpty(message = "At least one item required")
+    @Size(max = 100)
+    List<@Valid OrderItemDto> items,
+    
+    @Email
+    String email
+) {}
+
+CUSTOM_VALIDATOR
+@Constraint(validatedBy = UniqueEmailValidator.class)
+public @interface UniqueEmail {
+    String message() default "Email already exists";
+    Class<?>[] groups() default {};
+    Class<? extends Payload>[] payload() default {};
+}
+
+VALIDATION_GROUPS
++different_rules_per_operation
+public interface OnCreate {}
+public interface OnUpdate {}
+@NotNull(groups = OnCreate.class)
+
+==============================================================================
+SECURITY_PATTERNS
+==============================================================================
+SPRING_SECURITY_CONFIG
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        return http
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/public/**").permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .anyRequest().authenticated()
+            )
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+            .build();
+    }
+}
+
+METHOD_SECURITY
+@PreAuthorize("hasRole('ADMIN')")
+@PreAuthorize("@orderService.isOwner(#orderId, authentication.principal)")
+@PostAuthorize("returnObject.owner == authentication.principal.username")
+
+JWT_PATTERN
++stateless_authentication
++OAuth2_Resource_Server
++custom_JwtAuthenticationConverter
+
+ANTI_PATTERNS
+-security_in_controller_only:method_security
+-storing_passwords_plain:BCrypt
+-permissive_CORS:restrict_origins
+-disabled_CSRF_without_reason:stateless_only
+
+==============================================================================
+TESTING_PATTERNS
+==============================================================================
+UNIT_TESTS
+@ExtendWith(MockitoExtension.class)
+class OrderServiceTest {
+    @Mock OrderRepository orderRepo;
+    @Mock PaymentService paymentService;
+    @InjectMocks OrderService orderService;
+    
+    @Test
+    void createOrder_shouldSaveOrder() {
+        when(orderRepo.save(any())).thenReturn(testOrder);
+        var result = orderService.create(createDto);
+        assertThat(result.id()).isNotNull();
+        verify(orderRepo).save(any());
+    }
+}
+
+INTEGRATION_TESTS
+@SpringBootTest
+@AutoConfigureMockMvc
+class OrderControllerIT {
+    @Autowired MockMvc mockMvc;
+    @Autowired OrderRepository orderRepo;
+    
+    @Test
+    void getOrder_shouldReturnOrder() throws Exception {
+        var order = orderRepo.save(testOrder);
+        mockMvc.perform(get("/api/v1/orders/{id}", order.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(order.getId()));
+    }
+}
+
+SLICED_TESTS
+@WebMvcTest(OrderController.class):controller_only
+@DataJpaTest:repository_only
+@JsonTest:JSON_serialization
+
+TESTCONTAINERS
+@Testcontainers
+@SpringBootTest
+class OrderRepositoryIT {
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15");
+}
+
+ANTI_PATTERNS
+-@SpringBootTest_everywhere:slow|use_slices
+-no_mocking:unit_tests_need_isolation
+-testing_framework_not_app
+
+==============================================================================
+PROJECT_STRUCTURE
+==============================================================================
+LAYERED
+src/main/java/com/example/
+    config/
+    controller/
+    service/
+    repository/
+    entity/
+    dto/
+    exception/
+    mapper/
+
+PACKAGE_BY_FEATURE
+src/main/java/com/example/
+    order/
+        OrderController|OrderService|OrderRepository|Order
+    customer/
+        CustomerController|CustomerService|...
+    common/
+        exception|config
+
+HEXAGONAL
+domain/:entities|services|ports
+application/:use_cases
+infrastructure/:adapters|repositories|controllers
+
+==============================================================================
+DEPENDENCIES_ESSENTIAL
+==============================================================================
+spring-boot-starter-web:REST
+spring-boot-starter-data-jpa:ORM
+spring-boot-starter-security:auth
+spring-boot-starter-validation:bean_validation
+spring-boot-starter-test:testing
+lombok:boilerplate_reduction
+mapstruct:DTO_mapping
+flyway|liquibase:DB_migrations
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Field_Injection         | @Autowired_on_field              | constructor_injection
+Fat_Controller          | business_logic_in_controller     | service_layer
+Entity_As_DTO           | returning_@Entity_from_API       | DTO_layer
+N+1_Queries             | LAZY_fetch_in_loop               | @EntityGraph|JOIN_FETCH
+No_Transaction          | write_without_@Transactional     | add_annotation
+God_Service             | service_with_many_concerns       | split_by_domain
+No_Validation           | @RequestBody_without_@Valid      | add_@Valid
+Catching_Exception      | catch_in_@Transactional          | let_propagate|rethrow
+EAGER_Fetch             | FetchType.EAGER_everywhere       | use_LAZY

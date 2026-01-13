@@ -1,0 +1,624 @@
+# RUBIX PATTERNS: AUTHENTICATION
+# COVERAGE: JWT|Session|OAuth|Passkeys
+# PHILOSOPHY: security_first|user_experience|standards_compliance
+
+==============================================================================
+AUTH_FUNDAMENTALS
+==============================================================================
+AUTHENTICATION_VS_AUTHORIZATION
+authentication:who_are_you|identity
+authorization:what_can_you_do|permissions
+
+AUTH_FACTORS
+something_you_know:password|PIN
+something_you_have:phone|hardware_key
+something_you_are:biometrics
+
+MFA:multi_factor_authentication
+2FA:two_factor_authentication
+
+==============================================================================
+PASSWORD_PATTERNS
+==============================================================================
+HASHING_ALGORITHMS
+bcrypt:recommended|adaptive_cost
+scrypt:memory_hard|good
+Argon2:modern|winner_PHC|best
+PBKDF2:older|NIST_approved|acceptable
+
+!NEVER:MD5|SHA1|SHA256_alone|plain_text
+
+BCRYPT_EXAMPLE
+// Node.js
+import bcrypt from 'bcrypt'
+const SALT_ROUNDS = 12
+
+const hash = await bcrypt.hash(password, SALT_ROUNDS)
+const isValid = await bcrypt.compare(password, hash)
+
+// Python
+from passlib.hash import bcrypt
+hash = bcrypt.hash(password, rounds=12)
+is_valid = bcrypt.verify(password, hash)
+
+ARGON2_EXAMPLE
+// Node.js
+import argon2 from 'argon2'
+
+const hash = await argon2.hash(password, {
+  type: argon2.argon2id,
+  memoryCost: 65536,
+  timeCost: 3,
+  parallelism: 4
+})
+const isValid = await argon2.verify(hash, password)
+
+PASSWORD_REQUIREMENTS
++minimum_12_characters
++check_against_breached_passwords
++no_complexity_rules:users_pick_bad_patterns
++allow_paste:password_managers
++show_password_toggle
+
+BREACHED_PASSWORD_CHECK
+// Using HaveIBeenPwned API
+// k-anonymity: only send first 5 chars of SHA1
+const sha1 = crypto.createHash('sha1').update(password).digest('hex')
+const prefix = sha1.substring(0, 5)
+const suffix = sha1.substring(5).toUpperCase()
+
+const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`)
+const breached = response.text().includes(suffix)
+
+==============================================================================
+SESSION_AUTHENTICATION
+==============================================================================
+HOW_IT_WORKS
+1:user_submits_credentials
+2:server_validates>creates_session
+3:session_ID_stored_server_side
+4:session_ID_sent_to_client_in_cookie
+5:subsequent_requests_include_cookie
+6:server_looks_up_session
+
+SESSION_STORAGE
+memory:development_only|lost_on_restart
+redis:recommended|fast|distributed
+database:simple|queryable|slower
+file:single_server_only
+
+EXPRESS_SESSION_EXAMPLE
+import session from 'express-session'
+import RedisStore from 'connect-redis'
+import { createClient } from 'redis'
+
+const redisClient = createClient()
+await redisClient.connect()
+
+app.use(session({
+  store: new RedisStore({ client: redisClient }),
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: true,        // HTTPS only
+    httpOnly: true,      // no JS access
+    sameSite: 'strict',  // CSRF protection
+    maxAge: 24 * 60 * 60 * 1000  // 24 hours
+  }
+}))
+
+SESSION_COOKIE_SETTINGS
+secure:true:HTTPS_only
+httpOnly:true:no_JavaScript_access
+sameSite:strict|lax:CSRF_protection
+maxAge:expiration_time
+domain:cookie_scope
+path:URL_scope
+
+PROS_CONS
++simple_to_implement
++easy_revocation
++server_controlled
+-requires_server_state
+-scaling_needs_shared_store
+-not_great_for_APIs
+
+==============================================================================
+JWT_AUTHENTICATION
+==============================================================================
+HOW_IT_WORKS
+1:user_submits_credentials
+2:server_validates>creates_JWT
+3:JWT_sent_to_client
+4:client_stores_JWT
+5:subsequent_requests_include_JWT
+6:server_validates_signature
+
+JWT_STRUCTURE
+header.payload.signature
+
+HEADER:{"alg":"HS256","typ":"JWT"}
+PAYLOAD:{"sub":"123","email":"user@example.com","exp":1234567890}
+SIGNATURE:HMACSHA256(base64(header)+"."+base64(payload),secret)
+
+CLAIMS
+sub:subject|user_ID
+iat:issued_at
+exp:expiration
+iss:issuer
+aud:audience
+jti:JWT_ID|for_revocation
+
+ALGORITHM_CHOICES
+HS256:symmetric|shared_secret|simple
+RS256:asymmetric|public/private_key|recommended
+ES256:asymmetric|elliptic_curve|smaller
+
+!NEVER:alg:none
+
+JWT_CREATION_NODE
+import jwt from 'jsonwebtoken'
+
+const token = jwt.sign(
+  { sub: user.id, email: user.email },
+  process.env.JWT_SECRET,
+  { expiresIn: '15m', algorithm: 'HS256' }
+)
+
+const decoded = jwt.verify(token, process.env.JWT_SECRET)
+
+JWT_CREATION_PYTHON
+import jwt
+from datetime import datetime, timedelta
+
+token = jwt.encode(
+    {
+        'sub': user.id,
+        'email': user.email,
+        'exp': datetime.utcnow() + timedelta(minutes=15)
+    },
+    SECRET_KEY,
+    algorithm='HS256'
+)
+
+decoded = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+
+TOKEN_STORAGE_CLIENT
+httpOnly_cookie:recommended|CSRF_protection_needed
+memory:safest|lost_on_refresh
+localStorage:XSS_vulnerable|avoid
+sessionStorage:XSS_vulnerable|tab_only
+
+ACCESS_REFRESH_PATTERN
+access_token:short_lived|15_minutes
+refresh_token:long_lived|7_days|stored_securely
+
+// Login response
+{
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "expires_in": 900
+}
+
+// Refresh endpoint
+POST /auth/refresh
+{ "refresh_token": "eyJ..." }
+
+// Response
+{
+  "access_token": "new_eyJ...",
+  "expires_in": 900
+}
+
+TOKEN_REFRESH_FLOW
+1:access_token_expires
+2:client_calls_/refresh_with_refresh_token
+3:server_validates_refresh_token
+4:server_issues_new_access_token
+5:optionally_rotate_refresh_token
+
+REFRESH_TOKEN_ROTATION
++issue_new_refresh_token_on_each_refresh
++invalidate_old_refresh_token
++detect_reuse:possible_theft
++store_token_family_for_revocation
+
+REVOCATION_STRATEGIES
+short_expiry:simplest|15_min_access
+token_blacklist:check_on_each_request
+token_versioning:user.token_version_in_DB
+refresh_token_db:only_refresh_tokens_stored
+
+PROS_CONS
++stateless_server
++good_for_APIs
++cross_domain_friendly
++mobile_friendly
+-can't_easily_revoke
+-token_size_larger
+-complexity_refresh_flow
+
+==============================================================================
+OAUTH2_PATTERNS
+==============================================================================
+OAUTH2_FLOWS
+authorization_code:server_apps|most_secure
+authorization_code_PKCE:SPAs|mobile|recommended
+client_credentials:machine_to_machine
+implicit:deprecated|don't_use
+password:deprecated|don't_use
+
+AUTHORIZATION_CODE_FLOW
+1:redirect_to_provider
+GET https://provider.com/oauth/authorize?
+  response_type=code&
+  client_id=CLIENT_ID&
+  redirect_uri=https://myapp.com/callback&
+  scope=openid profile email&
+  state=random_state
+
+2:user_authenticates_with_provider
+3:provider_redirects_back_with_code
+GET https://myapp.com/callback?code=AUTH_CODE&state=random_state
+
+4:exchange_code_for_tokens
+POST https://provider.com/oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&
+code=AUTH_CODE&
+redirect_uri=https://myapp.com/callback&
+client_id=CLIENT_ID&
+client_secret=CLIENT_SECRET
+
+5:receive_tokens
+{
+  "access_token": "...",
+  "refresh_token": "...",
+  "id_token": "...",
+  "expires_in": 3600,
+  "token_type": "Bearer"
+}
+
+PKCE_FLOW
++Proof_Key_for_Code_Exchange
++no_client_secret_needed
++protects_against_interception
+
+1:generate_code_verifier
+code_verifier = random_string(43-128_chars)
+
+2:create_code_challenge
+code_challenge = base64url(sha256(code_verifier))
+
+3:authorize_request_includes_challenge
+GET /authorize?...&code_challenge=CHALLENGE&code_challenge_method=S256
+
+4:token_request_includes_verifier
+POST /token
+grant_type=authorization_code&
+code=AUTH_CODE&
+code_verifier=VERIFIER
+
+OPENID_CONNECT
++layer_on_OAuth2
++standardized_user_info
++ID_token:JWT_with_user_claims
+
+ID_TOKEN_CLAIMS
+sub:user_identifier
+iss:issuer
+aud:client_id
+exp:expiration
+iat:issued_at
+name:full_name
+email:email_address
+picture:avatar_URL
+
+NEXT-AUTH_EXAMPLE
+// app/api/auth/[...nextauth]/route.ts
+import NextAuth from 'next-auth'
+import GoogleProvider from 'next-auth/providers/google'
+import GitHubProvider from 'next-auth/providers/github'
+
+export const authOptions = {
+  providers: [
+    GoogleProvider({
+      clientId: process.env.GOOGLE_ID,
+      clientSecret: process.env.GOOGLE_SECRET,
+    }),
+    GitHubProvider({
+      clientId: process.env.GITHUB_ID,
+      clientSecret: process.env.GITHUB_SECRET,
+    }),
+  ],
+  callbacks: {
+    async jwt({ token, user, account }) {
+      if (account && user) {
+        token.accessToken = account.access_token
+        token.id = user.id
+      }
+      return token
+    },
+    async session({ session, token }) {
+      session.user.id = token.id
+      session.accessToken = token.accessToken
+      return session
+    },
+  },
+}
+
+const handler = NextAuth(authOptions)
+export { handler as GET, handler as POST }
+
+==============================================================================
+PASSKEYS_WEBAUTHN
+==============================================================================
+WHAT_ARE_PASSKEYS
++passwordless_authentication
++phishing_resistant
++device_bound_or_synced
++WebAuthn_standard
+
+HOW_IT_WORKS
+1:registration
+  -server_sends_challenge
+  -device_creates_key_pair
+  -public_key_sent_to_server
+  -private_key_stays_on_device
+
+2:authentication
+  -server_sends_challenge
+  -device_signs_challenge_with_private_key
+  -server_verifies_with_stored_public_key
+
+SIMPLEWEBAUTHN_EXAMPLE
+// Registration
+import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server'
+
+// Generate options
+const options = await generateRegistrationOptions({
+  rpName: 'My App',
+  rpID: 'myapp.com',
+  userID: user.id,
+  userName: user.email,
+  attestationType: 'none',
+  authenticatorSelection: {
+    residentKey: 'preferred',
+    userVerification: 'preferred',
+  },
+})
+
+// Client calls navigator.credentials.create(options)
+// Verify response
+const verification = await verifyRegistrationResponse({
+  response: clientResponse,
+  expectedChallenge: options.challenge,
+  expectedOrigin: 'https://myapp.com',
+  expectedRPID: 'myapp.com',
+})
+
+// Store credential
+await saveCredential({
+  credentialID: verification.registrationInfo.credentialID,
+  credentialPublicKey: verification.registrationInfo.credentialPublicKey,
+  counter: verification.registrationInfo.counter,
+})
+
+// Authentication
+import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server'
+
+const options = await generateAuthenticationOptions({
+  rpID: 'myapp.com',
+  allowCredentials: userCredentials.map(c => ({
+    id: c.credentialID,
+    type: 'public-key',
+  })),
+})
+
+// Client calls navigator.credentials.get(options)
+// Verify response
+const verification = await verifyAuthenticationResponse({
+  response: clientResponse,
+  expectedChallenge: options.challenge,
+  expectedOrigin: 'https://myapp.com',
+  expectedRPID: 'myapp.com',
+  authenticator: storedCredential,
+})
+
+PROS_CONS
++most_secure
++phishing_proof
++great_UX
++no_passwords_to_manage
+-browser_support_varies
+-recovery_complexity
+-newer_standard
+
+==============================================================================
+MAGIC_LINK_PATTERN
+==============================================================================
+HOW_IT_WORKS
+1:user_enters_email
+2:server_generates_token
+3:server_sends_email_with_link
+4:user_clicks_link
+5:server_validates_token
+6:user_authenticated
+
+IMPLEMENTATION
+// Generate token
+const token = crypto.randomBytes(32).toString('hex')
+const expiry = Date.now() + 15 * 60 * 1000  // 15 minutes
+
+await db.magicLinks.create({
+  email,
+  token: await bcrypt.hash(token, 10),
+  expiresAt: expiry
+})
+
+const link = `https://myapp.com/auth/verify?token=${token}&email=${email}`
+await sendEmail(email, link)
+
+// Verify token
+const record = await db.magicLinks.findOne({ email })
+if (!record || record.expiresAt < Date.now()) {
+  throw new Error('Invalid or expired link')
+}
+if (!await bcrypt.compare(token, record.token)) {
+  throw new Error('Invalid token')
+}
+await db.magicLinks.delete({ email })
+// Create session or JWT
+
+PROS_CONS
++passwordless
++simple_to_implement
++email_as_second_factor
+-email_delivery_dependency
+-slower_than_password
+-email_account_compromise
+
+==============================================================================
+AUTHORIZATION_PATTERNS
+==============================================================================
+RBAC_ROLE_BASED
+CREATE TABLE roles (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) UNIQUE NOT NULL
+);
+
+CREATE TABLE permissions (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) UNIQUE NOT NULL
+);
+
+CREATE TABLE role_permissions (
+  role_id INTEGER REFERENCES roles(id),
+  permission_id INTEGER REFERENCES permissions(id),
+  PRIMARY KEY (role_id, permission_id)
+);
+
+CREATE TABLE user_roles (
+  user_id INTEGER REFERENCES users(id),
+  role_id INTEGER REFERENCES roles(id),
+  PRIMARY KEY (user_id, role_id)
+);
+
+// Check permission
+const hasPermission = await db.query(`
+  SELECT 1 FROM user_roles ur
+  JOIN role_permissions rp ON ur.role_id = rp.role_id
+  JOIN permissions p ON rp.permission_id = p.id
+  WHERE ur.user_id = $1 AND p.name = $2
+`, [userId, 'posts:delete'])
+
+ABAC_ATTRIBUTE_BASED
++fine_grained_control
++context_aware
+
+// Policy: User can edit post if owner or admin
+function canEditPost(user, post) {
+  if (user.role === 'admin') return true
+  if (post.authorId === user.id) return true
+  return false
+}
+
+CASL_EXAMPLE
+import { AbilityBuilder, createMongoAbility } from '@casl/ability'
+
+function defineAbilitiesFor(user) {
+  const { can, cannot, build } = new AbilityBuilder(createMongoAbility)
+
+  if (user.role === 'admin') {
+    can('manage', 'all')
+  } else {
+    can('read', 'Post')
+    can('create', 'Post')
+    can('update', 'Post', { authorId: user.id })
+    can('delete', 'Post', { authorId: user.id })
+  }
+
+  return build()
+}
+
+// Usage
+const ability = defineAbilitiesFor(user)
+if (ability.can('update', post)) {
+  // allow update
+}
+
+==============================================================================
+SECURITY_BEST_PRACTICES
+==============================================================================
+RATE_LIMITING
++login_attempts:5_per_minute
++password_reset:3_per_hour
++API_endpoints:1000_per_hour
+
+ACCOUNT_LOCKOUT
++temporary_lockout_after_failures
++exponential_backoff
++CAPTCHA_after_failures
+
+SECURE_HEADERS
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'
+
+SESSION_SECURITY
++regenerate_ID_after_login
++invalidate_on_logout
++idle_timeout
++absolute_timeout
+
+CSRF_PROTECTION
++SameSite_cookies:strict|lax
++CSRF_tokens:forms
++double_submit_cookie
+
+==============================================================================
+AUTH_SELECTION_GUIDE
+==============================================================================
+USE_SESSION_WHEN
++traditional_web_app
++same_domain
++server_rendering
++simple_revocation_needed
+
+USE_JWT_WHEN
++API_authentication
++microservices
++mobile_apps
++cross_domain
+
+USE_OAUTH_WHEN
++social_login
++third_party_integration
++delegated_authorization
++enterprise_SSO
+
+USE_PASSKEYS_WHEN
++highest_security_needed
++modern_browsers_only
++good_UX_priority
++phishing_concern
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Plain_Passwords         | storing_unhashed                 | bcrypt|argon2
+Weak_Hashing            | MD5|SHA1                         | bcrypt|argon2
+JWT_In_LocalStorage     | XSS_vulnerable                   | httpOnly_cookie
+No_Token_Expiry         | tokens_live_forever              | short_expiry+refresh
+No_Rate_Limiting        | brute_force_possible             | rate_limit
+No_HTTPS                | credentials_exposed              | TLS_everywhere
+Secrets_In_Code         | hardcoded_keys                   | env_vars|secrets_manager
+No_CSRF_Protection      | CSRF_vulnerable                  | SameSite|tokens
+Long_Sessions           | week+_sessions                   | reasonable_timeout
+No_Logout               | can't_end_session                | implement_logout
+Predictable_Tokens      | sequential|timestamp             | crypto_random

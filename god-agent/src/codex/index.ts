@@ -16,6 +16,9 @@ export { TaskExecutor, type TaskSubmission, type ExecutionOptions } from './Task
 // Code generation
 export { CodeGenerator, type CodeGenRequest, type CodeGenResult, type CodeGeneratorConfig } from './CodeGenerator.js';
 
+// Claude Code CLI executor (for Max subscription integration)
+export { ClaudeCodeExecutor, type ClaudeCodeResult, type ClaudeCodeExecutorConfig } from './ClaudeCodeExecutor.js';
+
 // Task decomposition
 export { TaskDecomposer } from './TaskDecomposer.js';
 
@@ -49,6 +52,12 @@ export {
   type PlanComponent,
   type PlanningExchange
 } from './PlanningAgent.js';
+
+// Conversation Mode (Lightweight chat before planning)
+export {
+  ConversationSession,
+  type ConversationExchange
+} from './ConversationSession.js';
 
 // Intelligence Layer
 export {

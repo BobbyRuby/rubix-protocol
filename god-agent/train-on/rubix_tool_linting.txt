@@ -1,0 +1,510 @@
+# RUBIX TOOL: LINTING_FORMATTING
+# COVERAGE: ESLint|Prettier|Ruff|RuboCop|Clippy
+# PHILOSOPHY: consistent_code|catch_bugs_early|automate
+
+==============================================================================
+WHY_LINT_FORMAT
+==============================================================================
+LINTING
++catch_bugs_before_runtime
++enforce_best_practices
++prevent_common_mistakes
++code_review_efficiency
+
+FORMATTING
++consistent_style
++no_style_debates
++readable_diffs
++onboarding_ease
+
+LINT_VS_FORMAT
+lint:code_quality|logic_errors|best_practices
+format:code_style|whitespace|semicolons
+
+==============================================================================
+ESLINT_PATTERNS
+==============================================================================
+SETUP
+npm install -D eslint @eslint/js typescript-eslint
+
+// eslint.config.js (flat config - ESLint 9+)
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+
+export default [
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    rules: {
+      'no-unused-vars': 'error',
+      'no-console': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
+    },
+  },
+  {
+    ignores: ['dist/', 'node_modules/'],
+  },
+]
+
+LEGACY_CONFIG_.eslintrc
+// .eslintrc.json (legacy, ESLint 8 and below)
+{
+  "env": { "browser": true, "es2022": true, "node": true },
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:react/recommended",
+    "plugin:react-hooks/recommended"
+  ],
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint", "react"],
+  "rules": {
+    "no-unused-vars": "off",
+    "@typescript-eslint/no-unused-vars": "error",
+    "react/react-in-jsx-scope": "off"
+  }
+}
+
+POPULAR_PLUGINS
+@typescript-eslint:TypeScript_support
+eslint-plugin-react:React_rules
+eslint-plugin-react-hooks:hooks_rules
+eslint-plugin-import:import_ordering
+eslint-plugin-jsx-a11y:accessibility
+
+RULE_LEVELS
+"off"|0:disable
+"warn"|1:warning
+"error"|2:error
+
+COMMON_RULES
+no-unused-vars:catch_dead_code
+no-console:prevent_debug_logs
+eqeqeq:force_===
+no-var:use_let_const
+prefer-const:immutability
+no-implicit-globals:prevent_leaks
+
+COMMANDS
+npx eslint src
+npx eslint src --fix
+npx eslint src --ext .ts,.tsx
+npx eslint --cache
+
+==============================================================================
+PRETTIER_PATTERNS
+==============================================================================
+SETUP
+npm install -D prettier eslint-config-prettier
+
+// .prettierrc
+{
+  "semi": false,
+  "singleQuote": true,
+  "tabWidth": 2,
+  "trailingComma": "es5",
+  "printWidth": 100,
+  "bracketSpacing": true,
+  "arrowParens": "avoid"
+}
+
+// .prettierignore
+dist
+node_modules
+coverage
+*.min.js
+
+ESLINT_INTEGRATION
+// eslint.config.js
+import prettier from 'eslint-config-prettier'
+
+export default [
+  // ... other configs
+  prettier,  // must be last to override conflicting rules
+]
+
+COMMON_OPTIONS
+semi:true|false
+singleQuote:true|false
+tabWidth:2|4
+trailingComma:none|es5|all
+printWidth:80|100|120
+useTabs:true|false
+bracketSpacing:true|false
+jsxSingleQuote:true|false
+arrowParens:always|avoid
+endOfLine:lf|crlf|cr|auto
+
+COMMANDS
+npx prettier --write src
+npx prettier --check src
+npx prettier --write "**/*.{ts,tsx,json,css,md}"
+
+==============================================================================
+ESLINT+PRETTIER_COMBO
+==============================================================================
+RECOMMENDED_SETUP
+npm install -D eslint prettier eslint-config-prettier
+
+// eslint.config.js
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+import prettier from 'eslint-config-prettier'
+
+export default [
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  prettier,  // disables conflicting rules
+  {
+    rules: {
+      // code quality rules (not formatting)
+    },
+  },
+]
+
+PACKAGE_JSON_SCRIPTS
+{
+  "scripts": {
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src"
+  }
+}
+
+PRE_COMMIT_HOOK
+npm install -D husky lint-staged
+
+// package.json
+{
+  "lint-staged": {
+    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
+    "*.{json,css,md}": ["prettier --write"]
+  }
+}
+
+npx husky init
+echo "npx lint-staged" > .husky/pre-commit
+
+==============================================================================
+BIOME_PATTERNS
+==============================================================================
+WHY_BIOME
++single_tool:lint+format
++fast:Rust_based
++zero_config
++replaces:ESLint+Prettier
+
+SETUP
+npm install -D @biomejs/biome
+
+// biome.json
+{
+  "$schema": "https://biomejs.dev/schemas/1.0.0/schema.json",
+  "organizeImports": { "enabled": true },
+  "linter": {
+    "enabled": true,
+    "rules": { "recommended": true }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2
+  }
+}
+
+COMMANDS
+npx biome check src
+npx biome check src --apply
+npx biome format src --write
+npx biome lint src
+
+==============================================================================
+RUFF_PATTERNS_PYTHON
+==============================================================================
+WHY_RUFF
++extremely_fast:Rust
++replaces:Flake8|isort|pyupgrade|many_more
++drop_in_replacement
+
+SETUP
+pip install ruff
+
+# pyproject.toml
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "UP",   # pyupgrade
+  "SIM",  # flake8-simplify
+]
+ignore = ["E501"]  # line too long (handled by formatter)
+
+[tool.ruff.isort]
+known-first-party = ["myapp"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+COMMANDS
+ruff check .
+ruff check . --fix
+ruff format .
+ruff format . --check
+
+REPLACES
+Flake8:linting
+isort:import_sorting
+Black:formatting
+pyupgrade:syntax_upgrades
+autoflake:unused_import_removal
++100x_faster_than_alternatives
+
+==============================================================================
+BLACK_PATTERNS_PYTHON
+==============================================================================
+SETUP
+pip install black
+
+# pyproject.toml
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+include = '\.pyi?$'
+exclude = '''
+/(
+  \.git
+  | \.venv
+  | dist
+  | build
+)/
+'''
+
+COMMANDS
+black .
+black . --check
+black . --diff
+
+PHILOSOPHY
++opinionated:no_config_debates
++deterministic:same_output_always
++minimal_options:by_design
+
+!consider_Ruff_format_instead:faster
+
+==============================================================================
+RUBOCOP_PATTERNS_RUBY
+==============================================================================
+SETUP
+# Gemfile
+gem 'rubocop', require: false
+gem 'rubocop-rails', require: false
+gem 'rubocop-rspec', require: false
+gem 'rubocop-performance', require: false
+
+# .rubocop.yml
+require:
+  - rubocop-rails
+  - rubocop-rspec
+  - rubocop-performance
+
+AllCops:
+  NewCops: enable
+  TargetRubyVersion: 3.2
+  Exclude:
+    - 'db/schema.rb'
+    - 'vendor/**/*'
+    - 'node_modules/**/*'
+
+Style/Documentation:
+  Enabled: false
+
+Metrics/BlockLength:
+  Exclude:
+    - 'spec/**/*'
+
+Layout/LineLength:
+  Max: 120
+
+COMMANDS
+rubocop
+rubocop -a            # safe auto-correct
+rubocop -A            # all auto-correct
+rubocop --only Style/StringLiterals
+
+COMMON_CONFIG
+Style/StringLiterals:
+  EnforcedStyle: double_quotes|single_quotes
+
+Style/HashSyntax:
+  EnforcedStyle: ruby19|hash_rockets
+
+Layout/IndentationWidth:
+  Width: 2
+
+==============================================================================
+CLIPPY_PATTERNS_RUST
+==============================================================================
+SETUP
+# included with rustup
+rustup component add clippy
+
+COMMANDS
+cargo clippy
+cargo clippy --fix
+cargo clippy -- -D warnings  # treat warnings as errors
+
+COMMON_LINTS
+#![warn(clippy::all)]
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
+
+#[allow(clippy::too_many_arguments)]
+fn complex_function(...) {}
+
+RUSTFMT
+# rustfmt.toml
+edition = "2021"
+tab_spaces = 4
+max_width = 100
+use_small_heuristics = "Default"
+
+cargo fmt
+cargo fmt -- --check
+
+==============================================================================
+GO_PATTERNS
+==============================================================================
+GOFMT
+go fmt ./...
+gofmt -w .
+
+GOLANGCI-LINT
+# .golangci.yml
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+golangci-lint run
+
+==============================================================================
+EDITOR_INTEGRATION
+==============================================================================
+VSCODE_SETTINGS
+// .vscode/settings.json
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": true,
+      "source.organizeImports.ruff": true
+    }
+  },
+  "eslint.validate": ["typescript", "typescriptreact"],
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": true
+  }
+}
+
+VSCODE_EXTENSIONS
+dbaeumer.vscode-eslint
+esbenp.prettier-vscode
+charliermarsh.ruff
+biomejs.biome
+
+==============================================================================
+CI_INTEGRATION
+==============================================================================
+GITHUB_ACTIONS_JS
+name: Lint
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+
+GITHUB_ACTIONS_PYTHON
+name: Lint
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+==============================================================================
+MIGRATION_PATHS
+==============================================================================
+TSLint>ESLint:TSLint_deprecated_2019
+ESLint+Prettier>Biome:single_fast_tool
+Flake8+Black+isort>Ruff:single_fast_tool
+
+==============================================================================
+PACKAGE_JSON_COMPLETE
+==============================================================================
+{
+  "scripts": {
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "@eslint/js": "^9.0.0",
+    "typescript-eslint": "^8.0.0",
+    "prettier": "^3.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": ["eslint --fix", "prettier --write"],
+    "*.{json,css,md}": ["prettier --write"]
+  }
+}
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+No_Linting              | no_eslint_config                 | add_eslint
+No_Formatting           | inconsistent_style               | add_prettier
+Conflicting_Rules       | eslint_vs_prettier               | eslint-config-prettier
+No_Pre_Commit           | lint_errors_in_PR                | husky+lint-staged
+Ignored_Warnings        | many_eslint-disable              | fix_or_adjust_rules
+Outdated_Config         | deprecated_eslint_extends        | flat_config
+Too_Strict              | disable_comments_everywhere      | adjust_rules
+Not_In_CI               | lint_only_local                  | add_CI_job
+Slow_Lint               | minutes_to_lint                  | cache|Biome|Ruff

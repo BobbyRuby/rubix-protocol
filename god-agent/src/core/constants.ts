@@ -16,7 +16,8 @@ export const SYSTEM_TAGS = [
   'rubix:learning',   // Sona learning patterns
   'rubix:failure',    // Failure recovery patterns (system-level)
   'rubix:capability', // Capability patterns
-  'rubix:meta'        // Meta-knowledge about RUBIX itself
+  'rubix:meta',       // Meta-knowledge about RUBIX itself
+  'rubix:self'        // Self-knowledge (token format architecture)
 ] as const;
 
 export type SystemTag = typeof SYSTEM_TAGS[number];

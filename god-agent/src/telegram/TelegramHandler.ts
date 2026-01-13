@@ -5,6 +5,8 @@ import type { CommunicationManager } from '../communication/CommunicationManager
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import type { ContainmentManager } from '../codex/ContainmentManager.js';
 import { PlanningSession } from '../codex/PlanningSession.js';
+import { ConversationSession } from '../codex/ConversationSession.js';
+import { InputCompressor } from '../prompts/InputCompressor.js';
 
 export class TelegramHandler {
   private taskExecutor: TaskExecutor | undefined;
@@ -16,6 +18,9 @@ export class TelegramHandler {
 
   /** Active planning session */
   private planningSession: PlanningSession | null = null;
+
+  /** Active conversation session */
+  private conversationSession: ConversationSession | null = null;
 
   /** Awaiting confirmation for /execute */
   private awaitingExecuteConfirmation: boolean = false;
@@ -113,6 +118,8 @@ export class TelegramHandler {
       await this.showPlanStatus(msg, bot);
     } else if (text === '/execute') {
       await this.executePlan(msg, bot);
+    } else if (text === '/rubixallize') {
+      await this.handleRubixallizeCommand(msg, bot);
     } else if (text === '/cancel') {
       await this.cancelPlanningSession(msg, bot);
     } else if (text.startsWith('/task')) {
@@ -127,8 +134,10 @@ export class TelegramHandler {
       await this.handlePathAddCommand(msg, bot);
     } else if (text.startsWith('/path-remove')) {
       await this.handlePathRemoveCommand(msg, bot);
+    } else if (text === '/wait' || text.startsWith('/wait ')) {
+      await this.handleWaitCommand(msg, bot);
     } else {
-      await this.handleTextMessage(msg, bot);
+      await this.handleConversationalMessage(msg, bot);
     }
   }
 
@@ -187,6 +196,11 @@ Just send me a message describing what you need!
     const helpMessage = `
 Rubix Help
 
+**Conversation Mode:**
+Just chat normally - I remember everything!
+/rubixallize - Crystallize conversation into a plan
+Then use /execute to run the plan
+
 **Task Commands:**
 - /task <description> - Execute a task immediately
 - /status - Show active task status
@@ -204,6 +218,9 @@ Rubix Help
 - /paths - List allowed paths
 - /path-add <path> [rw|read] - Add allowed path
 - /path-remove <pattern> - Remove allowed path
+
+**Escalation Commands:**
+- /wait [minutes] - Extend timeout by 10 min (stackable)
 
 **Examples:**
 - /task Fix the API endpoint for user authentication
@@ -545,6 +562,134 @@ When ready, use /execute to run the plan.
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /**
+   * Handle conversational messages (non-command text)
+   * Messages are stored in conversation session for later crystallization
+   */
+  private async handleConversationalMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text?.trim();
+
+    if (!text) return;
+
+    // Check if CommunicationManager has pending escalation requests
+    // If so, forward ANY message as the response (not just replies to [RUBIX])
+    if (this.comms) {
+      const telegramChannel = (this.comms as any).channels?.get('telegram');
+      if (telegramChannel?.hasPendingRequests?.()) {
+        console.log('[TelegramHandler] Forwarding message to pending escalation:', text.slice(0, 50));
+        await this.comms.handleTelegramResponse({ text });
+        await bot.sendMessage(chatId, '✓ Response received');
+        return;
+      }
+    }
+
+    // Legacy check: Reply to [RUBIX] message
+    const replyTo = (msg as any).reply_to_message;
+    if (this.comms && replyTo?.text?.includes('[RUBIX]')) {
+      // Forward to CommunicationManager as escalation response
+      console.log('[TelegramHandler] Forwarding escalation reply:', text.slice(0, 50));
+      await this.comms.handleTelegramResponse({
+        text,
+        replyToText: replyTo.text
+      });
+      await bot.sendMessage(chatId, '✓ Response received');
+      return;
+    }
+
+    // Initialize conversation session if needed
+    if (!this.conversationSession && this.engine) {
+      this.conversationSession = new ConversationSession(
+        this.engine,
+        chatId,
+        this.defaultCodebase || process.cwd()
+      );
+      console.log('[TelegramHandler] Started new conversation session');
+    }
+
+    if (!this.conversationSession) {
+      await bot.sendMessage(chatId, '❌ Conversation mode requires MemoryEngine. Use /task for direct execution.');
+      return;
+    }
+
+    try {
+      // Send typing indicator
+      await bot.sendChatAction(chatId, 'typing');
+
+      // Get response from Claude
+      const response = await this.conversationSession.chat(text);
+
+      // Send response (may need chunking for long responses)
+      if (response.length > 4000) {
+        const chunks = response.match(/.{1,4000}/gs) || [];
+        for (const chunk of chunks) {
+          await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+        }
+      } else {
+        await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+      }
+    } catch (error) {
+      console.error('[TelegramHandler] Conversation error:', error);
+      await bot.sendMessage(chatId, '❌ Error in conversation. Try again or use /task for direct execution.');
+    }
+  }
+
+  /**
+   * Handle /rubixallize command - crystallize conversation into a plan
+   */
+  private async handleRubixallizeCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+
+    // Check if there's a conversation to crystallize
+    if (!this.conversationSession || this.conversationSession.isEmpty()) {
+      await bot.sendMessage(chatId,
+        '❌ No conversation to crystallize.\n\n' +
+        'Chat with me first to discuss what you want to build, then use /rubixallize to create a plan.'
+      );
+      return;
+    }
+
+    try {
+      await bot.sendMessage(chatId, '🔮 Crystallizing conversation into a plan...');
+      await bot.sendChatAction(chatId, 'typing');
+
+      // Convert conversation to planning session
+      const summary = this.conversationSession.getSummary();
+      this.planningSession = await this.conversationSession.toPlanningSession();
+
+      // Clear conversation session
+      this.conversationSession = null;
+
+      // Get plan preview
+      const plan = await this.planningSession.previewPlan();
+
+      if (!plan) {
+        await bot.sendMessage(chatId,
+          '❌ Could not generate plan from conversation. Try adding more context about what you want to build.',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // Build component list for display
+      const componentList = plan.components
+        .map((c, i) => `${i + 1}. *${c.name}*: ${c.description}`)
+        .join('\n');
+
+      // Send plan preview
+      await bot.sendMessage(chatId,
+        `✨ *Crystallized from ${summary}*\n\n` +
+        `*${plan.title}*\n${plan.description}\n\n` +
+        `*Components:*\n${componentList}\n\n` +
+        `Use /execute to run this plan, or /cancel to discard.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      console.error('[TelegramHandler] Rubixallize error:', error);
+      await bot.sendMessage(chatId, '❌ Failed to crystallize conversation: ' + (error as Error).message);
+    }
+  }
+
   // ===========================================================================
   // CONFIGURATION HANDLERS
   // ===========================================================================
@@ -673,6 +818,52 @@ When ready, use /execute to run the plan.
     }
   }
 
+  private async handleWaitCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+
+    // Parse optional minutes argument (default 10)
+    const match = text.match(/\/wait\s*(\d+)?/);
+    const minutes = match?.[1] ? parseInt(match[1], 10) : 10;
+
+    if (!this.comms) {
+      await bot.sendMessage(chatId, '⚠️ No communication manager configured');
+      return;
+    }
+
+    const result = this.comms.extendTimeout(minutes);
+
+    if (result.extended) {
+      const timeStr = result.newTimeout
+        ? result.newTimeout.toLocaleTimeString()
+        : 'extended';
+      await bot.sendMessage(
+        chatId,
+        `⏰ Extended timeout by ${minutes} minutes\n` +
+        `New deadline: ${timeStr}\n\n` +
+        `Use /wait again to add more time.`,
+        { parse_mode: 'Markdown' }
+      );
+    } else {
+      // No pending escalations - check if there's an active task
+      if (this.taskExecutor) {
+        const status = this.taskExecutor.getStatus();
+        if (status.currentTask) {
+          await bot.sendMessage(
+            chatId,
+            '⚠️ No pending escalation to extend.\n\n' +
+            `Task status: ${status.currentTask.status}\n` +
+            'Use /status for more details.'
+          );
+        } else {
+          await bot.sendMessage(chatId, '⚠️ No pending escalation or active task to extend.');
+        }
+      } else {
+        await bot.sendMessage(chatId, '⚠️ No pending escalation or active task to extend.');
+      }
+    }
+  }
+
   // ===========================================================================
   // TASK HANDLERS
   // ===========================================================================
@@ -692,10 +883,16 @@ When ready, use /execute to run the plan.
       return;
     }
 
+    // Compress the task description
+    const compressed = InputCompressor.compress(taskDescription);
+    const compressionMsg = compressed.ratio > 0.05
+      ? `\n📦 Compressed: ${Math.round(compressed.ratio * 100)}% (~${compressed.tokensSaved} tokens saved)`
+      : '';
+
     const taskId = this.generateTaskId();
     const taskRequest: TaskRequest = {
       id: taskId,
-      description: taskDescription,
+      description: compressed.compressed,
       userId: msg.from?.id || 0,
       chatId: chatId,
       timestamp: Date.now()
@@ -703,12 +900,12 @@ When ready, use /execute to run the plan.
 
     this.activeTasks.set(taskId, taskRequest);
 
-    await bot.sendMessage(chatId, `Task started: ${taskDescription}\nTask ID: ${taskId}`);
+    await bot.sendMessage(chatId, `Task started: ${compressed.compressed}\nTask ID: ${taskId}${compressionMsg}`);
 
     try {
-      // Use the correct TaskExecutor API
+      // Use the correct TaskExecutor API (with compressed description)
       const result = await this.taskExecutor.execute({
-        description: taskDescription,
+        description: compressed.compressed,
         specification: 'IMPORTANT: Before starting, please escalate and ask any clarifying questions about requirements, target location, technology choices, or concerns you have. Do not assume - ask first.',
         codebase: this.defaultCodebase
       });
@@ -769,57 +966,6 @@ When ready, use /execute to run the plan.
     ).join('\n');
 
     await bot.sendMessage(chatId, `Active tasks:\n\n${statusMessage}`);
-  }
-
-  private async handleTextMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
-    const chatId = msg.chat.id;
-    const text = msg.text || '';
-
-    // Check if CommunicationManager has pending escalation requests
-    // If so, forward ANY message as the response (not just replies to [RUBIX])
-    if (this.comms) {
-      const telegramChannel = (this.comms as any).channels?.get('telegram');
-      if (telegramChannel?.hasPendingRequests?.()) {
-        console.log('[TelegramHandler] Forwarding message to pending escalation:', text.slice(0, 50));
-        await this.comms.handleTelegramResponse({ text });
-        await bot.sendMessage(chatId, '✓ Response received');
-        return;
-      }
-    }
-
-    // Legacy check: Reply to [RUBIX] message
-    const replyTo = (msg as any).reply_to_message;
-    if (this.comms && replyTo?.text?.includes('[RUBIX]')) {
-      // Forward to CommunicationManager as escalation response
-      console.log('[TelegramHandler] Forwarding escalation reply:', text.slice(0, 50));
-      await this.comms.handleTelegramResponse({
-        text,
-        replyToText: replyTo.text
-      });
-      await bot.sendMessage(chatId, '✓ Response received');
-      return;
-    }
-
-    if (!this.taskExecutor) {
-      await bot.sendMessage(chatId, 'TaskExecutor not configured. Use /task command or set up RUBIX first.');
-      return;
-    }
-
-    await bot.sendMessage(chatId, `Processing: ${text}`);
-
-    try {
-      const result = await this.taskExecutor.execute({
-        description: text,
-        specification: 'IMPORTANT: Before starting, please escalate and ask any clarifying questions about requirements, target location, technology choices, or concerns you have. Do not assume - ask first.',
-        codebase: this.defaultCodebase
-      });
-
-      const summary = result.summary || (result.success ? 'Completed' : 'Failed');
-      await bot.sendMessage(chatId, `Result:\n${summary}`);
-    } catch (error) {
-      console.error('Message processing error:', error);
-      await bot.sendMessage(chatId, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
   }
 
   private async handleTaskAction(taskId: string, chatId: number, bot: TelegramBotAPI): Promise<void> {

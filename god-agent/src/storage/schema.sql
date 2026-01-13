@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS memory_entries (
     session_id TEXT,
     agent_id TEXT,
     context TEXT, -- JSON
+    pending_embedding INTEGER DEFAULT 0, -- 1 = awaiting batch embedding
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

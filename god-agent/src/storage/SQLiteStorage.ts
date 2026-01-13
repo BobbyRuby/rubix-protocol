@@ -65,6 +65,11 @@ export class SQLiteStorage {
       { name: 'last_accessed_at', type: 'TEXT' },
       { name: 'compression_tier', type: "TEXT DEFAULT 'hot'" }
     ]);
+
+    // Migrate memory_entries for deferred embedding
+    this.migrateTable('memory_entries', [
+      { name: 'pending_embedding', type: 'INTEGER DEFAULT 0' }
+    ]);
   }
 
   /**
@@ -835,6 +840,52 @@ export class SQLiteStorage {
       priority: row.priority,
       createdAt: new Date(row.created_at)
     };
+  }
+
+  // ==========================================
+  // PENDING EMBEDDING OPERATIONS
+  // ==========================================
+
+  /**
+   * Mark an entry as pending embedding (awaiting batch processing)
+   */
+  setPendingEmbedding(entryId: string, pending: boolean): void {
+    this.db.prepare(`
+      UPDATE memory_entries SET pending_embedding = ? WHERE id = ?
+    `).run(pending ? 1 : 0, entryId);
+  }
+
+  /**
+   * Get all entries that are pending embedding
+   */
+  getPendingEntries(): Array<{ id: string; content: string; label: number }> {
+    return this.db.prepare(`
+      SELECT m.id, m.content, v.label
+      FROM memory_entries m
+      JOIN vector_mappings v ON m.id = v.entry_id
+      WHERE m.pending_embedding = 1
+    `).all() as Array<{ id: string; content: string; label: number }>;
+  }
+
+  /**
+   * Clear pending embedding flag for multiple entries
+   */
+  clearPendingEmbedding(entryIds: string[]): void {
+    if (entryIds.length === 0) return;
+    const placeholders = entryIds.map(() => '?').join(',');
+    this.db.prepare(`
+      UPDATE memory_entries SET pending_embedding = 0 WHERE id IN (${placeholders})
+    `).run(...entryIds);
+  }
+
+  /**
+   * Get count of pending embeddings
+   */
+  getPendingEmbeddingCount(): number {
+    const result = this.db.prepare(`
+      SELECT COUNT(*) as count FROM memory_entries WHERE pending_embedding = 1
+    `).get() as { count: number };
+    return result.count;
   }
 
   close(): void {

@@ -1,0 +1,530 @@
+# RUBIX TOOL: GIT
+# VERSION: 2.x
+# FOUNDATION: Linus_Torvalds|C|GPL
+# PHILOSOPHY: distributed|integrity|speed
+
+==============================================================================
+HISTORY
+==============================================================================
+2005:Linus_Torvalds>created_for_Linux_kernel
+2005:BitKeeper_license_revoked>sparked_creation
+2007:GitHub_founded>social_coding
+2008:v1.6>submodules_improved
+2012:v1.8>push_default_changes
+2016:v2.9>parallel_checkout
+2020:v2.28>init.defaultBranch
+2023:v2.40>scalar_builtin
+2024:v2.45>reftable_backend
+
+CORE_CONCEPTS
+working_directory>staging_area>local_repo>remote_repo
+commit=snapshot_not_diff
+branch=pointer_to_commit
+HEAD=current_branch_pointer
+
+==============================================================================
+INIT_CLONE_PATTERNS
+==============================================================================
+NEW_PROJECT
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin git@github.com:user/repo.git
+git push -u origin main
+
+CLONE
+git clone git@github.com:user/repo.git
+git clone --depth 1 repo_url  # shallow
+git clone --branch develop repo_url
+git clone --recurse-submodules repo_url
+
+CONFIG_ESSENTIALS
+git config --global user.name "Name"
+git config --global user.email "email@example.com"
+git config --global init.defaultBranch main
+git config --global pull.rebase true
+git config --global push.autoSetupRemote true
+git config --global rerere.enabled true
+
+==============================================================================
+BRANCH_PATTERNS
+==============================================================================
+BRANCH_COMMANDS
+git branch feature/new-feature
+git checkout -b feature/new-feature  # create+switch
+git switch -c feature/new-feature    # modern
+git branch -d feature/merged         # delete merged
+git branch -D feature/unmerged       # force delete
+git branch -m old-name new-name      # rename
+git branch -a                        # list all
+git branch -vv                       # with tracking info
+
+NAMING_CONVENTIONS
+feature/user-authentication
+bugfix/login-validation
+hotfix/security-patch
+release/v1.2.0
+chore/update-dependencies
+docs/api-documentation
+refactor/database-layer
+test/payment-integration
+
+BRANCH_STRATEGY_GITFLOW
+main:production_ready
+develop:integration_branch
+feature/*:new_features>from_develop
+release/*:release_prep>from_develop
+hotfix/*:emergency_fixes>from_main
+
+BRANCH_STRATEGY_TRUNK
+main:always_deployable
+feature/*:short_lived>merge_fast
+!feature_flags_for_incomplete
+
+BRANCH_STRATEGY_GITHUB_FLOW
+main:deployable
+feature/*:from_main>PR>merge_to_main
++simple
++continuous_deployment
+
+==============================================================================
+COMMIT_PATTERNS
+==============================================================================
+COMMIT_COMMANDS
+git add file.txt
+git add .
+git add -p                    # interactive hunk staging
+git commit -m "message"
+git commit -am "message"      # add tracked + commit
+git commit --amend            # modify last commit
+git commit --amend --no-edit  # amend without message change
+git commit --fixup HEAD~2     # fixup for rebase
+
+CONVENTIONAL_COMMITS
+feat: add user authentication
+fix: resolve login validation bug
+docs: update API documentation
+style: format code with prettier
+refactor: extract payment service
+test: add unit tests for cart
+chore: update dependencies
+perf: optimize database queries
+ci: add GitHub Actions workflow
+build: configure webpack
+
+COMMIT_MESSAGE_STRUCTURE
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+
+EXAMPLE
+feat(auth): add password reset flow
+
+Implement password reset functionality including:
+- Reset request endpoint
+- Email verification
+- Token expiration handling
+
+Closes #123
+
+GOOD_COMMIT_PRINCIPLES
++atomic:one_logical_change
++present_tense:add_not_added
++imperative:add_not_adds
++50_char_subject_max
++72_char_body_wrap
++why_not_what:code_shows_what
+
+ANTI_PATTERNS
+-"fix stuff":meaningless
+-"WIP":commit_when_complete
+-huge_commits:break_down
+-mix_refactor_and_feature:separate
+
+==============================================================================
+STAGING_PATTERNS
+==============================================================================
+SELECTIVE_STAGING
+git add -p                    # patch mode
+git add -i                    # interactive
+git add file.txt
+git add *.js
+git add src/
+
+UNSTAGING
+git restore --staged file.txt
+git reset HEAD file.txt       # legacy
+
+VIEW_STAGED
+git diff --staged
+git diff --cached
+
+STASHING
+git stash
+git stash push -m "WIP feature"
+git stash list
+git stash pop                 # apply + remove
+git stash apply               # apply + keep
+git stash drop stash@{0}
+git stash clear
+git stash push -p             # partial stash
+
+==============================================================================
+MERGE_PATTERNS
+==============================================================================
+MERGE_COMMANDS
+git merge feature/branch
+git merge --no-ff feature/branch    # force merge commit
+git merge --squash feature/branch   # squash into one
+git merge --abort                   # cancel merge
+
+MERGE_STRATEGIES
+fast_forward:linear_history|default_when_possible
+no_ff:always_merge_commit|preserves_branch_history
+squash:single_commit|clean_history
+
+CONFLICT_RESOLUTION
+git status                    # see conflicts
+# edit files, remove markers
+git add resolved_file.txt
+git commit                    # complete merge
+
+CONFLICT_MARKERS
+<<<<<<< HEAD
+current branch content
+=======
+incoming branch content
+>>>>>>> feature/branch
+
+MERGE_TOOLS
+git mergetool
+git config --global merge.tool vimdiff
+
+==============================================================================
+REBASE_PATTERNS
+==============================================================================
+REBASE_COMMANDS
+git rebase main               # rebase current onto main
+git rebase -i HEAD~3          # interactive last 3
+git rebase --abort
+git rebase --continue
+git rebase --skip
+
+INTERACTIVE_REBASE_COMMANDS
+pick:use_commit
+reword:change_message
+edit:stop_for_amending
+squash:meld_into_previous
+fixup:squash_discard_message
+drop:remove_commit
+reorder:change_order
+
+COMMON_REBASE_WORKFLOWS
+# squash last 3 into 1
+git rebase -i HEAD~3
+# change pick to squash for commits 2,3
+
+# reorder commits
+git rebase -i HEAD~3
+# reorder lines
+
+# edit old commit
+git rebase -i HEAD~3
+# change pick to edit
+# make changes
+git add .
+git rebase --continue
+
+WHEN_REBASE
++local_unpushed_commits
++cleaning_history_before_PR
++updating_feature_from_main
+
+WHEN_NOT_REBASE
+-shared_branches:rewrites_history
+-already_pushed:force_push_needed
+-merge_commits_present:complex
+
+GOLDEN_RULE
+!never_rebase_shared_branches
+!force_push_overwrites_others_work
+
+==============================================================================
+REMOTE_PATTERNS
+==============================================================================
+REMOTE_COMMANDS
+git remote -v
+git remote add origin url
+git remote remove origin
+git remote rename origin upstream
+git remote set-url origin new_url
+
+FETCH_PULL_PUSH
+git fetch origin              # download without merge
+git fetch --all               # all remotes
+git fetch --prune             # remove deleted remote branches
+git pull                      # fetch + merge
+git pull --rebase             # fetch + rebase
+git push
+git push -u origin branch     # set upstream
+git push --force-with-lease   # safe force push
+git push origin --delete branch
+
+TRACKING
+git branch -u origin/main     # set upstream
+git branch --unset-upstream
+
+MULTIPLE_REMOTES
+git remote add upstream original_repo_url
+git fetch upstream
+git merge upstream/main
+
+==============================================================================
+HISTORY_INSPECTION
+==============================================================================
+LOG_COMMANDS
+git log
+git log --oneline
+git log --oneline --graph --all
+git log -n 5                  # last 5
+git log --author="name"
+git log --since="2024-01-01"
+git log --grep="fix"
+git log -- file.txt           # specific file
+git log -p                    # with diffs
+git log --stat                # with stats
+
+USEFUL_LOG_FORMATS
+git log --oneline --graph --decorate --all
+git log --pretty=format:"%h %ad | %s%d [%an]" --date=short
+
+DIFF_COMMANDS
+git diff                      # working vs staged
+git diff --staged             # staged vs last commit
+git diff HEAD                 # working vs last commit
+git diff branch1..branch2     # between branches
+git diff commit1..commit2     # between commits
+git diff HEAD~3..HEAD         # last 3 commits
+
+BLAME
+git blame file.txt
+git blame -L 10,20 file.txt   # lines 10-20
+git blame -w                  # ignore whitespace
+
+SHOW
+git show commit_hash
+git show HEAD:file.txt        # file at commit
+
+SEARCH
+git log -S "function_name"    # when added/removed
+git log -G "regex"            # regex search
+git grep "pattern"            # search working tree
+
+==============================================================================
+UNDO_PATTERNS
+==============================================================================
+UNDO_WORKING_CHANGES
+git restore file.txt          # discard changes
+git restore .                 # discard all
+git checkout -- file.txt      # legacy
+
+UNDO_STAGED
+git restore --staged file.txt
+git reset HEAD file.txt       # legacy
+
+UNDO_COMMIT_KEEP_CHANGES
+git reset --soft HEAD~1       # keep staged
+git reset HEAD~1              # keep unstaged
+git reset --mixed HEAD~1      # same as above
+
+UNDO_COMMIT_DISCARD
+git reset --hard HEAD~1       # dangerous!
+
+REVERT_PUBLIC_COMMIT
+git revert commit_hash        # creates inverse commit
+git revert HEAD               # revert last
+git revert --no-commit HEAD~3..HEAD  # revert range
+
+RECOVERY
+git reflog                    # all HEAD movements
+git checkout commit_hash      # inspect old state
+git branch recovery commit_hash  # recover
+
+RESET_VS_REVERT
+reset:rewrites_history|local_only
+revert:new_commit|safe_for_shared
+
+==============================================================================
+CLEAN_PATTERNS
+==============================================================================
+CLEAN_COMMANDS
+git clean -n                  # dry run
+git clean -f                  # force delete untracked
+git clean -fd                 # include directories
+git clean -fx                 # include ignored
+git clean -i                  # interactive
+
+==============================================================================
+TAG_PATTERNS
+==============================================================================
+TAG_COMMANDS
+git tag v1.0.0
+git tag -a v1.0.0 -m "Release 1.0.0"  # annotated
+git tag -a v1.0.0 commit_hash  # tag old commit
+git tag -l "v1.*"             # list matching
+git push origin v1.0.0        # push specific
+git push origin --tags        # push all
+git tag -d v1.0.0             # delete local
+git push origin --delete v1.0.0  # delete remote
+
+SEMANTIC_VERSIONING
+v1.0.0:MAJOR.MINOR.PATCH
+MAJOR:breaking_changes
+MINOR:new_features_backward_compatible
+PATCH:bug_fixes
+
+==============================================================================
+SUBMODULE_PATTERNS
+==============================================================================
+SUBMODULE_COMMANDS
+git submodule add url path
+git submodule update --init
+git submodule update --init --recursive
+git submodule update --remote  # update to latest
+git submodule foreach git pull origin main
+
+ANTI_PATTERNS
+-forgetting_--recursive:incomplete_clone
+-not_committing_submodule_update
+
+==============================================================================
+WORKTREE_PATTERNS
+==============================================================================
+WORKTREE_COMMANDS
+git worktree add ../hotfix hotfix/urgent
+git worktree list
+git worktree remove ../hotfix
+
+USE_CASES
++work_on_multiple_branches_simultaneously
++quick_hotfix_without_stashing
++compare_branches_side_by_side
+
+==============================================================================
+HOOKS_PATTERNS
+==============================================================================
+CLIENT_HOOKS
+pre-commit:lint|format|test
+commit-msg:validate_message
+pre-push:full_test_suite
+post-checkout:install_deps
+
+HOOK_EXAMPLE
+# .git/hooks/pre-commit
+#!/bin/sh
+npm run lint
+npm run test
+
+HUSKY_SETUP
+npx husky init
+echo "npm test" > .husky/pre-commit
+
+COMMITLINT
+npm install @commitlint/cli @commitlint/config-conventional
+# commitlint.config.js
+module.exports = { extends: ['@commitlint/config-conventional'] }
+
+==============================================================================
+GITIGNORE_PATTERNS
+==============================================================================
+COMMON_PATTERNS
+# Dependencies
+node_modules/
+vendor/
+venv/
+__pycache__/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment
+.env
+.env.local
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Testing
+coverage/
+.nyc_output/
+
+NEGATION
+!.gitkeep              # track empty dirs
+!important.log         # track specific
+
+GLOBAL_GITIGNORE
+git config --global core.excludesfile ~/.gitignore_global
+
+==============================================================================
+WORKFLOWS
+==============================================================================
+FEATURE_WORKFLOW
+git checkout main
+git pull
+git checkout -b feature/new-feature
+# work...
+git add .
+git commit -m "feat: add feature"
+git push -u origin feature/new-feature
+# create PR
+# after merge:
+git checkout main
+git pull
+git branch -d feature/new-feature
+
+HOTFIX_WORKFLOW
+git checkout main
+git pull
+git checkout -b hotfix/critical-fix
+# fix...
+git commit -m "fix: critical bug"
+git push -u origin hotfix/critical-fix
+# create PR with priority
+
+SYNC_FORK
+git remote add upstream original_repo
+git fetch upstream
+git checkout main
+git merge upstream/main
+git push origin main
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Huge_Commits            | 50+_files_changed                | atomic_commits
+Vague_Messages          | "fix"|"update"|"WIP"             | conventional_commits
+Force_Push_Shared       | --force_on_main                  | --force-with-lease|revert
+No_Branches             | all_commits_on_main              | feature_branches
+Merge_Conflicts_Often   | frequent_conflicts               | rebase_regularly|smaller_PRs
+Stale_Branches          | branches_months_old              | delete_after_merge
+No_Gitignore            | node_modules_committed           | proper_gitignore
+Secrets_Committed       | .env_in_repo                     | git-secrets|gitignore
+Broken_History          | random_reverts|messy_merges      | interactive_rebase

@@ -31,6 +31,10 @@ import type { ReviewIssue } from '../review/types.js';
 import { DeepWorkManager, type DeepWorkSession, type DeepWorkOptions, type FocusLevel } from '../deepwork/index.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { EscalationResponse } from '../communication/types.js';
+import { RubixOrchestrator, type RubixConfig } from '../rubix/RubixOrchestrator.js';
+import { InputCompressor } from '../prompts/InputCompressor.js';
+import type { RubixResult } from '../rubix/types.js';
+import type { RuntimeContext } from '../context/RuntimeContext.js';
 import {
   TaskStatus,
   SubtaskStatus,
@@ -122,6 +126,13 @@ export class TaskExecutor {
   // Working Memory (active memory engagement during task execution)
   private workingMemory: WorkingMemoryManager | undefined;
 
+  // RUBIX Department Head System (optional multi-agent mode)
+  private rubixOrchestrator?: RubixOrchestrator;
+  private useRubixMode: boolean = false;
+
+  // Runtime Context (compressed capabilities context for this instance)
+  private runtimeContext: RuntimeContext | undefined;
+
   private currentTask: CodexTask | undefined;
   private workLog: WorkLogEntry[] = [];
   private isExecuting = false;
@@ -163,9 +174,26 @@ export class TaskExecutor {
     this.isExecuting = true;
 
     try {
+      // Compress user input prompts for efficiency
+      const descResult = InputCompressor.compress(submission.description);
+      submission.description = descResult.compressed;
+      if (descResult.ratio > 0.05) {
+        console.log(`[TaskExecutor] Prompt compressed: ${Math.round(descResult.ratio * 100)}% reduction, ~${descResult.tokensSaved} tokens saved`);
+      }
+
+      if (submission.specification) {
+        const specResult = InputCompressor.compress(submission.specification);
+        submission.specification = specResult.compressed;
+      }
+
       // Create task
       const task = this.createTask(submission);
       this.currentTask = task;
+
+      // Use RUBIX mode if enabled
+      if (this.useRubixMode && this.rubixOrchestrator) {
+        return await this.executeWithRubix(submission, options);
+      }
 
       // Start deep work session
       this.deepWork.startSession(task.id, options.deepWork);
@@ -379,7 +407,7 @@ export class TaskExecutor {
 
         task.subtasks = decomposition.subtasks;
 
-        // Check for critical ambiguities
+        // Check for critical ambiguities - these require user decisions
         const criticalAmbiguities = decomposition.ambiguities.filter(a => a.critical);
         if (criticalAmbiguities.length > 0) {
           const batchEscalation = await this.escalation.createBatchDecisions(
@@ -395,51 +423,99 @@ export class TaskExecutor {
           );
 
           if (batchEscalation) {
+            // Set task to blocked and wait for user response
             task.status = TaskStatus.BLOCKED;
-            this.log('escalation', 'Need decisions before proceeding', {
-              escalationId: batchEscalation.id
+            this.log('escalation', 'Critical decisions needed before proceeding', {
+              escalationId: batchEscalation.id,
+              ambiguityCount: criticalAmbiguities.length,
+              questions: criticalAmbiguities.map(a => a.description)
             });
 
-            // Wait for resolution (in production, this would pause and resume)
-            // For now, we'll use the first interpretation as default
-            this.escalation.resolveEscalation(
-              batchEscalation.id,
-              'Using first interpretation for each ambiguity'
-            );
+            // Try to reach user via all communication channels (Telegram, Console, etc.)
+            if (this.communications) {
+              const response = await this.attemptCommunicationEscalation(batchEscalation, task);
+
+              if (response?.response) {
+                // User answered - incorporate their decisions
+                this.log('progress', 'User provided decisions for ambiguities');
+                this.escalation.resolveEscalation(batchEscalation.id, response.response);
+                task.status = TaskStatus.DECOMPOSING;
+
+                // Add user's decisions to context for better execution
+                codebaseContext += `\n\n=== USER DECISIONS ===\n${response.response}\n=== END DECISIONS ===`;
+              } else {
+                // No response after timeout - fail gracefully
+                this.log('failure', 'No response to decision request - cannot proceed');
+                task.status = TaskStatus.FAILED;
+                return {
+                  success: false,
+                  summary: `Task blocked: ${criticalAmbiguities.length} decision(s) needed.\n\nQuestions:\n${criticalAmbiguities.map(a => `- ${a.description}`).join('\n')}\n\nPlease answer via Telegram or god_codex_answer.`,
+                  subtasksCompleted: 0,
+                  subtasksFailed: 0,
+                  filesModified: [],
+                  testsWritten: 0,
+                  duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
+                  decisions: [],
+                  assumptions: []
+                };
+              }
+            } else {
+              // No communications configured - proceed with first option as default
+              this.log('escalation', 'No communication channels - using default options');
+              criticalAmbiguities.forEach((amb) => {
+                const firstOption = amb.possibleInterpretations[0] || 'default';
+                this.log('memory', `Default chosen: "${amb.description}" → "${firstOption}"`);
+              });
+              this.escalation.resolveEscalation(batchEscalation.id, 'Using defaults (no comms configured)');
+              // Reset status to continue execution
+              task.status = TaskStatus.DECOMPOSING;
+            }
           }
         }
 
         this.log('progress', `Decomposed into ${task.subtasks.length} subtasks`);
 
-        // Store decomposition pattern in learning
-        await this.learning.learnDecomposition(task, task.subtasks.length, true);
+        // Post-decomposition storage (wrap in try/catch to debug silent deaths)
+        try {
+          // Store decomposition pattern in learning
+          await this.learning.learnDecomposition(task, task.subtasks.length, true);
 
-        // === STORE DECOMPOSITION IN WORKING MEMORY ===
-        if (this.workingMemory) {
-          const subtaskTypes = task.subtasks.map(s => s.type).join(' → ');
-          const planId = await this.workingMemory.storeDecision(
-            `Decomposed into ${task.subtasks.length} subtasks: ${subtaskTypes}`,
-            `Complexity: ${decomposition.estimatedComplexity}. Ambiguities: ${decomposition.ambiguities.length}`,
-            [] // No alternatives tracked currently
-          );
+          // === STORE DECOMPOSITION IN WORKING MEMORY ===
+          if (this.workingMemory) {
+            const subtaskTypes = task.subtasks.map(s => s.type).join(' → ');
+            const planId = await this.workingMemory.storeDecision(
+              `Decomposed into ${task.subtasks.length} subtasks: ${subtaskTypes}`,
+              `Complexity: ${decomposition.estimatedComplexity}. Ambiguities: ${decomposition.ambiguities.length}`,
+              [] // No alternatives tracked currently
+            );
 
-          // Link subtask dependencies as causal relations
-          for (const subtask of task.subtasks) {
-            for (const depId of subtask.dependencies) {
-              await this.workingMemory.linkCause(depId, subtask.id, 'enables');
+            // Link subtask dependencies as causal relations
+            for (const subtask of task.subtasks) {
+              for (const depId of subtask.dependencies) {
+                await this.workingMemory.linkCause(depId, subtask.id, 'enables');
+              }
             }
+
+            this.log('memory', `Stored decomposition decision: ${planId}`);
           }
 
-          this.log('memory', `Stored decomposition decision: ${planId}`);
+          // Create initial checkpoint after decomposition
+          this.deepWork.createCheckpoint(
+            0,
+            task.subtasks.length,
+            `Task decomposed into ${task.subtasks.length} subtasks`
+          );
+        } catch (postDecompError) {
+          // LOG TO TERMINAL - critical for debugging silent task deaths
+          console.error('[TaskExecutor] POST-DECOMPOSITION ERROR (non-critical, continuing):');
+          console.error(postDecompError);
+          this.log('failure', `Post-decomposition storage error: ${postDecompError instanceof Error ? postDecompError.message : String(postDecompError)}`);
         }
-
-        // Create initial checkpoint after decomposition
-        this.deepWork.createCheckpoint(
-          0,
-          task.subtasks.length,
-          `Task decomposed into ${task.subtasks.length} subtasks`
-        );
       }
+
+      // Log transition for debugging
+      console.log('[TaskExecutor] Starting subtask execution phase...');
+      this.log('progress', 'Starting subtask execution phase');
 
       // Execute subtasks
       task.status = TaskStatus.EXECUTING;
@@ -449,7 +525,7 @@ export class TaskExecutor {
         return this.createDryRunResult(task);
       }
 
-      const result = await this.executeSubtasks(task, codebaseContext);
+      const result = await this.executeSubtasks(task, codebaseContext, options);
 
       // Complete task
       task.status = result.success ? TaskStatus.COMPLETED : TaskStatus.FAILED;
@@ -497,7 +573,22 @@ export class TaskExecutor {
   /**
    * Execute all subtasks in dependency order
    */
-  private async executeSubtasks(task: CodexTask, codebaseContext: string): Promise<TaskResult> {
+  private async executeSubtasks(task: CodexTask, codebaseContext: string, options?: ExecutionOptions): Promise<TaskResult> {
+    const maxParallel = options?.maxParallel ?? 1;
+
+    if (maxParallel > 1) {
+      console.log(`[TaskExecutor] Using parallel execution with ${maxParallel} workers`);
+      return this.executeSubtasksParallel(task, codebaseContext, maxParallel);
+    } else {
+      // Sequential execution (original logic)
+      return this.executeSubtasksSequential(task, codebaseContext);
+    }
+  }
+
+  /**
+   * Execute subtasks sequentially (original implementation)
+   */
+  private async executeSubtasksSequential(task: CodexTask, codebaseContext: string): Promise<TaskResult> {
     const completed: Subtask[] = [];
     const failed: Subtask[] = [];
     const filesModified: Set<string> = new Set();
@@ -579,6 +670,153 @@ export class TaskExecutor {
 
         // Check if we should continue or abort
         if (this.shouldAbortOnFailure(subtask, task)) {
+          break;
+        }
+      }
+    }
+
+    const startTime = task.startedAt?.getTime() || Date.now();
+    const duration = Date.now() - startTime;
+
+    return {
+      success: failed.length === 0,
+      summary: this.generateTaskSummary(task, completed, failed),
+      subtasksCompleted: completed.length,
+      subtasksFailed: failed.length,
+      filesModified: Array.from(filesModified),
+      testsWritten,
+      duration,
+      decisions: task.decisions,
+      assumptions: task.assumptions
+    };
+  }
+
+  /**
+   * Execute subtasks in parallel with dependency resolution
+   */
+  private async executeSubtasksParallel(
+    task: CodexTask,
+    codebaseContext: string,
+    maxParallel: number
+  ): Promise<TaskResult> {
+    const completed: Subtask[] = [];
+    const failed: Subtask[] = [];
+    const filesModified: Set<string> = new Set();
+    let testsWritten = 0;
+    const running = new Map<string, Promise<{ subtask: Subtask; success: boolean; result: SubtaskResult }>>();
+    const pending = [...task.subtasks].sort((a, b) => a.order - b.order);
+
+    console.log(`[TaskExecutor] Parallel execution: maxParallel=${maxParallel}, subtasks=${pending.length}`);
+
+    while (completed.length + failed.length < task.subtasks.length) {
+      // Find subtasks ready to run (dependencies met)
+      const ready = pending.filter(s =>
+        s.status === SubtaskStatus.PENDING &&
+        s.dependencies.every(depId =>
+          depId === '' || completed.some(c => c.id === depId)
+        )
+      );
+
+      // Launch up to maxParallel - running.size
+      const slots = maxParallel - running.size;
+      for (const subtask of ready.slice(0, slots)) {
+        subtask.status = SubtaskStatus.IN_PROGRESS;
+        subtask.startedAt = new Date();
+        console.log(`[TaskExecutor] Starting parallel subtask: ${subtask.description}`);
+        this.log('progress', `Starting subtask: ${subtask.description}`);
+
+        const promise = this.executeSubtask(task, subtask, codebaseContext)
+          .then(result => ({ subtask, success: result.success, result }))
+          .catch(error => {
+            console.error(`[TaskExecutor] Subtask error: ${error}`);
+            return {
+              subtask,
+              success: false,
+              result: {
+                success: false,
+                output: `Execution error: ${error instanceof Error ? error.message : String(error)}`,
+                duration: 0
+              }
+            };
+          });
+        running.set(subtask.id, promise);
+
+        // Remove from pending
+        const idx = pending.indexOf(subtask);
+        if (idx >= 0) pending.splice(idx, 1);
+      }
+
+      if (running.size === 0) {
+        // No more can run - check for stuck state
+        if (pending.length > 0) {
+          console.warn('[TaskExecutor] Deadlock detected - remaining subtasks have unmet dependencies');
+          for (const s of pending) {
+            s.status = SubtaskStatus.FAILED;
+            failed.push(s);
+          }
+        }
+        break;
+      }
+
+      // Wait for first to complete
+      const result = await Promise.race(running.values());
+      running.delete(result.subtask.id);
+
+      result.subtask.completedAt = new Date();
+      result.subtask.result = result.result;
+
+      if (result.success) {
+        completed.push(result.subtask);
+        result.subtask.status = SubtaskStatus.COMPLETED;
+        console.log(`[TaskExecutor] Completed: ${result.subtask.description}`);
+        this.log('success', `Subtask completed: ${result.subtask.description}`);
+
+        result.result.filesModified?.forEach(f => filesModified.add(f));
+        testsWritten += result.result.testsRun || 0;
+
+        // Log to deep work
+        this.deepWork.log({
+          type: 'progress',
+          message: `Completed: ${result.subtask.description}`,
+          subtaskId: result.subtask.id,
+          details: { filesModified: result.result.filesModified }
+        });
+
+        // Create checkpoint at milestones
+        const remaining = task.subtasks.length - completed.length - failed.length;
+        if (completed.length % 3 === 0 || remaining === 0 || result.subtask.type === 'integrate') {
+          this.deepWork.createCheckpoint(
+            completed.length,
+            remaining,
+            `${completed.length}/${task.subtasks.length} subtasks complete`,
+            { filesModified: Array.from(filesModified) }
+          );
+        }
+      } else {
+        failed.push(result.subtask);
+        result.subtask.status = SubtaskStatus.FAILED;
+        console.log(`[TaskExecutor] Failed: ${result.subtask.description}`);
+        this.log('failure', `Subtask failed: ${result.subtask.description}`, {
+          error: result.result.output
+        });
+
+        // Log failure to deep work
+        this.deepWork.log({
+          type: 'error',
+          message: `Failed: ${result.subtask.description}`,
+          subtaskId: result.subtask.id,
+          details: { error: result.result.output }
+        });
+
+        // Check if we should abort on this failure
+        if (this.shouldAbortOnFailure(result.subtask, task)) {
+          // Cancel pending subtasks that depend on this one
+          for (const s of pending) {
+            if (s.dependencies.includes(result.subtask.id)) {
+              s.status = SubtaskStatus.SKIPPED;
+              this.log('progress', `Skipping subtask (dependency failed): ${s.description}`);
+            }
+          }
           break;
         }
       }
@@ -1344,12 +1582,14 @@ export class TaskExecutor {
 
       // VALIDATION STEP 2: Verify all files exist on disk
       const existsSync = await import('fs').then(m => m.existsSync);
-      const missingFiles = filesModified.filter(f => !existsSync(f));
+      const { join } = await import('path');
+      const codebase = task.codebase;
+      const missingFiles = filesModified.filter(f => !existsSync(join(codebase, f)));
       if (missingFiles.length > 0) {
         return {
           success: false,
           error: `Generated files not found on disk: ${missingFiles.join(', ')}`,
-          filesModified: filesModified.filter(f => existsSync(f)),
+          filesModified: filesModified.filter(f => existsSync(join(codebase, f))),
           consoleErrors: missingFiles.map(f => `File not found: ${f}`)
         };
       }
@@ -2014,6 +2254,18 @@ Summary: ${result.summary}`;
   }
 
   /**
+   * Force reset - clears stuck/blocked tasks
+   */
+  forceReset(): void {
+    if (this.currentTask) {
+      this.log('complete', 'Task force-reset (was stuck/blocked)');
+    }
+    this.currentTask = undefined;
+    this.isExecuting = false;
+    this.workLog = [];
+  }
+
+  /**
    * Get work log
    */
   getWorkLog(): WorkLogEntry[] {
@@ -2147,6 +2399,20 @@ Summary: ${result.summary}`;
    */
   hasWolfram(): boolean {
     return this.wolfram !== undefined && this.wolfram.isConfigured();
+  }
+
+  /**
+   * Set runtime context (compressed capabilities context)
+   */
+  setRuntimeContext(context: RuntimeContext): void {
+    this.runtimeContext = context;
+  }
+
+  /**
+   * Get the runtime context if available
+   */
+  getRuntimeContext(): RuntimeContext | undefined {
+    return this.runtimeContext;
   }
 
   /**
@@ -2614,6 +2880,108 @@ ${wolframResults.join('\n')}
    */
   shouldNotifyDeepWork(type: string, urgency: 'low' | 'normal' | 'high' | 'critical'): boolean {
     return this.deepWork.shouldNotify(type, urgency);
+  }
+
+  /**
+   * Enable RUBIX mode - uses Department Head system
+   * @param config RUBIX configuration
+   */
+  enableRubixMode(config: Omit<RubixConfig, 'apiKey'>): void {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      console.warn('[TaskExecutor] Cannot enable RUBIX mode: ANTHROPIC_API_KEY not set');
+      return;
+    }
+
+    this.rubixOrchestrator = new RubixOrchestrator({
+      apiKey,
+      ...config
+    });
+    this.useRubixMode = true;
+    console.log('[TaskExecutor] RUBIX mode enabled with 5 department heads');
+  }
+
+  /**
+   * Disable RUBIX mode - reverts to standard execution
+   */
+  disableRubixMode(): void {
+    this.rubixOrchestrator = undefined;
+    this.useRubixMode = false;
+    console.log('[TaskExecutor] RUBIX mode disabled');
+  }
+
+  /**
+   * Execute task using RUBIX Department Head system
+   */
+  private async executeWithRubix(
+    submission: TaskSubmission,
+    _options?: ExecutionOptions
+  ): Promise<TaskResult> {
+    const startTime = Date.now();
+
+    try {
+      this.log('start', `Executing with RUBIX Department Head system`);
+
+      const rubixResult = await this.rubixOrchestrator!.execute({
+        id: `rubix-${Date.now()}`,
+        description: submission.description,
+        specification: submission.specification,
+        codebase: submission.codebase || process.cwd(),
+        priority: 'medium'
+      });
+
+      // Convert RubixResult to TaskResult
+      return this.convertRubixResult(rubixResult, startTime);
+
+    } catch (error) {
+      console.error('[TaskExecutor] RUBIX execution error:', error);
+      return {
+        success: false,
+        summary: `RUBIX execution failed: ${(error as Error).message}`,
+        subtasksCompleted: 0,
+        subtasksFailed: 0,
+        filesModified: [],
+        testsWritten: 0,
+        duration: Date.now() - startTime,
+        decisions: [],
+        assumptions: []
+      };
+    }
+  }
+
+  /**
+   * Convert RubixResult to TaskResult for compatibility
+   */
+  private convertRubixResult(rubixResult: RubixResult, startTime: number): TaskResult {
+    // Count success/failure from department reports
+    const completedCount = rubixResult.departmentReports.filter(r => r.success).length;
+    const failedCount = rubixResult.departmentReports.filter(r => !r.success).length;
+
+    // Extract files created/modified
+    const filesModified = rubixResult.artifacts
+      .filter(a => a.type === 'file' && a.path)
+      .map(a => a.path!);
+
+    // Count tests
+    const testsWritten = rubixResult.artifacts.filter(a => a.type === 'test').length;
+
+    // Log department results for visibility
+    this.log('progress', `RUBIX execution completed:`);
+    for (const report of rubixResult.departmentReports) {
+      this.log('progress', `  ${report.department}: ${report.success ? 'SUCCESS' : 'FAILED'} - ${report.summary}`);
+    }
+
+    return {
+      success: rubixResult.success,
+      summary: rubixResult.summary,
+      subtasksCompleted: completedCount,
+      subtasksFailed: failedCount,
+      filesModified,
+      testsWritten,
+      duration: Date.now() - startTime,
+      decisions: [],
+      assumptions: []
+    };
   }
 
   /**

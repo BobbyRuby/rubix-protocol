@@ -12,6 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { SQLiteStorage } from '../storage/SQLiteStorage.js';
 import { VectorDB } from '../vector/VectorDB.js';
 import { EmbeddingService } from '../vector/EmbeddingService.js';
+import { EmbeddingQueue } from '../vector/EmbeddingQueue.js';
 import { ProvenanceStore } from '../provenance/ProvenanceStore.js';
 import { CausalMemory } from '../causal/CausalMemory.js';
 import { PatternMatcher } from '../pattern/PatternMatcher.js';
@@ -59,6 +60,8 @@ export class MemoryEngine {
   private sona: SonaEngine;
   private gnn: EnhancementLayer;
   private router: TinyDancer;
+  private embeddingQueue!: EmbeddingQueue;
+  private flushThreshold: number = 10;
   private initialized: boolean = false;
 
   constructor(configOverrides?: Partial<MemoryEngineConfig>) {
@@ -104,6 +107,13 @@ export class MemoryEngine {
       apiKey: this.config.embeddingConfig.apiKey,
       batchSize: this.config.embeddingConfig.batchSize ?? 100
     });
+
+    // Initialize embedding queue for deferred batch processing
+    this.embeddingQueue = new EmbeddingQueue(
+      this.embeddings,
+      this.vectorDb,
+      { flushThreshold: this.flushThreshold, maxRetries: 3, retryDelayMs: 1000 }
+    );
 
     this.provenance = new ProvenanceStore(this.storage, {
       lScoreConfig: this.config.lScoreConfig
@@ -156,6 +166,9 @@ export class MemoryEngine {
     await this.causal.initialize();
     this.sona.initialize();
 
+    // Start periodic flush (every 30 seconds)
+    this.embeddingQueue.startPeriodicFlush(30000);
+
     this.initialized = true;
   }
 
@@ -174,10 +187,8 @@ export class MemoryEngine {
     const id = uuidv4();
     const now = new Date();
 
-    // Generate embedding
-    const { embedding } = await this.embeddings.embed(content);
-
     // Calculate lineage depth and collect parent info for L-Score
+    // NOTE: L-Score does NOT depend on embeddings - only provenance metadata
     const parentIds = options.parentIds ?? [];
     let lineageDepth = 0;
     const parentLScores: number[] = [];
@@ -216,11 +227,11 @@ export class MemoryEngine {
       }
     }
 
-    // Create memory entry
+    // Create memory entry WITHOUT embedding (deferred to batch processing)
     const entry: MemoryEntry = {
       id,
       content,
-      embedding,
+      embedding: new Float32Array(0), // Placeholder - will be populated on flush
       metadata: {
         source: options.source ?? MemorySource.USER_INPUT,
         tags: options.tags ?? [],
@@ -243,15 +254,30 @@ export class MemoryEngine {
     // Store in SQLite
     this.storage.storeEntry(entry);
 
-    // Store vector mapping and add to index
+    // Get vector label and queue for deferred batch embedding
     const label = this.storage.storeVectorMapping(id);
-    this.vectorDb.add(label, embedding);
+    this.embeddingQueue.queue(id, content, label);
+
+    // Mark as pending embedding
+    this.storage.setPendingEmbedding(id, true);
 
     // Update stored L-Score (for consistency with provenance store)
     this.storage.updateLScore(id, lScore);
 
-    // Save vector index
-    await this.vectorDb.save();
+    // Auto-flush if threshold reached
+    if (this.embeddingQueue.pendingCount >= this.flushThreshold) {
+      const result = await this.embeddingQueue.flush();
+      if (result.processed > 0) {
+        // Clear pending flags for successfully embedded entries
+        const successIds = Array.from(this.embeddingQueue['pending'].keys()).filter(
+          id => !result.failed.includes(id)
+        );
+        if (successIds.length > 0) {
+          this.storage.clearPendingEmbedding(successIds);
+        }
+        await this.vectorDb.save();
+      }
+    }
 
     return entry;
   }
@@ -317,6 +343,11 @@ export class MemoryEngine {
    */
   async query(text: string, options: QueryOptions = {}): Promise<QueryResult[]> {
     await this.ensureInitialized();
+
+    // FLUSH pending embeddings before semantic search
+    if (this.embeddingQueue.pendingCount > 0) {
+      await this.embeddingQueue.flush();
+    }
 
     const topK = options.topK ?? 10;
     const minScore = options.minScore ?? 0.0;
@@ -430,6 +461,11 @@ export class MemoryEngine {
     options: ShadowSearchOptions = {}
   ): Promise<ShadowSearchResult> {
     await this.ensureInitialized();
+
+    // FLUSH pending embeddings before shadow search
+    if (this.embeddingQueue.pendingCount > 0) {
+      await this.embeddingQueue.flush();
+    }
 
     return this.shadowSearch.search(
       text,
@@ -1054,6 +1090,13 @@ export class MemoryEngine {
    * Close the memory engine
    */
   async close(): Promise<void> {
+    // Flush any pending embeddings before shutdown
+    if (this.embeddingQueue.pendingCount > 0) {
+      console.log(`[MemoryEngine] Flushing ${this.embeddingQueue.pendingCount} pending embeddings before close...`);
+      await this.embeddingQueue.flush();
+    }
+    this.embeddingQueue.stopPeriodicFlush();
+
     await this.vectorDb.save();
     this.storage.close();
     this.initialized = false;

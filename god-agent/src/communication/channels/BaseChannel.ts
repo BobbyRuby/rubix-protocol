@@ -71,7 +71,22 @@ export abstract class BaseChannel implements IChannel {
    * Handle incoming response from webhook/listener
    */
   async handleIncomingResponse(payload: unknown): Promise<void> {
-    const response = await this.parseResponse(payload);
+    let response: EscalationResponse | null = null;
+
+    // Check for synthetic payload (injected from MCP tool)
+    if (payload && typeof payload === 'object' && '_synthetic' in payload) {
+      const synthetic = payload as { _synthetic: boolean; requestId: string; response: string };
+      response = {
+        requestId: synthetic.requestId,
+        channel: this.type,
+        response: synthetic.response,
+        receivedAt: new Date()
+      };
+      console.log(`[${this.type}] Processing synthetic MCP response`);
+    } else {
+      response = await this.parseResponse(payload);
+    }
+
     if (!response) {
       console.log(`[${this.type}] Could not parse response payload`);
       return;
@@ -146,8 +161,55 @@ export abstract class BaseChannel implements IChannel {
         resolve: () => {},  // No-op resolve for tracked-only requests
         timeoutHandle: setTimeout(() => {
           this.pendingRequests.delete(request.id);
-        }, request.timeout || 300000)
+        }, request.timeout || 600000)
       });
     }
+  }
+
+  /**
+   * Extend timeout for pending requests by additional time
+   * Returns true if any pending request was extended, false otherwise
+   */
+  extendTimeout(additionalMs: number = 600000): { extended: boolean; newTimeout?: Date; requestId?: string } {
+    if (this.pendingRequests.size === 0) {
+      return { extended: false };
+    }
+
+    // Find the most recent pending request
+    const entries = Array.from(this.pendingRequests.entries());
+    const [requestId, pending] = entries[entries.length - 1];
+
+    // Clear existing timeout
+    clearTimeout(pending.timeoutHandle);
+
+    // Calculate new timeout end time
+    const newTimeoutEnd = new Date(Date.now() + additionalMs);
+
+    // Create new timeout
+    pending.timeoutHandle = setTimeout(() => {
+      this.pendingRequests.delete(requestId);
+      this.status = 'timeout';
+      console.log(`[${this.type}] Request ${requestId.slice(0,8)} timed out after extension`);
+      pending.resolve(null);
+    }, additionalMs);
+
+    console.log(`[${this.type}] Extended timeout for ${requestId.slice(0,8)} by ${additionalMs/60000} minutes`);
+
+    return {
+      extended: true,
+      newTimeout: newTimeoutEnd,
+      requestId: requestId.slice(0, 8)
+    };
+  }
+
+  /**
+   * Get remaining time for pending requests
+   */
+  getPendingInfo(): Array<{ requestId: string; title: string; waitingSince: Date }> {
+    return Array.from(this.pendingRequests.values()).map(p => ({
+      requestId: p.request.id.slice(0, 8),
+      title: p.request.title,
+      waitingSince: p.request.createdAt
+    }));
   }
 }

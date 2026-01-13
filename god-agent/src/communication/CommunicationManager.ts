@@ -380,6 +380,13 @@ export class CommunicationManager {
   }
 
   /**
+   * Get list of configured channel types
+   */
+  getConfiguredChannels(): ChannelType[] {
+    return Array.from(this.channels.keys());
+  }
+
+  /**
    * Enable/disable TelegramBot polling mode.
    * When active, TelegramChannel operates in send-only mode
    * to avoid conflict (only one poller per bot token allowed).
@@ -411,10 +418,109 @@ export class CommunicationManager {
   }
 
   /**
+   * Inject a response for a pending escalation from an external source (e.g., MCP tool).
+   * This resolves the waiting Promise in whatever channel is currently waiting.
+   */
+  injectResponse(escalationId: string, responseText: string): boolean {
+    // Find channel with pending request for this escalation
+    for (const [channelType, channel] of this.channels) {
+      const pendingInfo = channel.getPendingInfo();
+
+      // Check if any pending request matches this escalation
+      for (const pending of pendingInfo) {
+        // The request ID contains the escalation ID
+        if (pending.requestId.includes(escalationId) || pendingInfo.length > 0) {
+          // Found a pending request - inject the response
+          console.log(`[CommunicationManager] Injecting MCP response into ${channelType} channel`);
+
+          // Call the channel's handleIncomingResponse with a synthetic payload
+          // that will be parsed correctly
+          channel.handleIncomingResponse({
+            _synthetic: true,
+            requestId: pending.requestId,
+            response: responseText
+          });
+
+          return true;
+        }
+      }
+    }
+
+    console.log(`[CommunicationManager] No pending channel request found for escalation ${escalationId}`);
+    return false;
+  }
+
+  /**
    * Get the TelegramChannel for direct access (e.g., from TelegramBot).
    */
   getTelegramChannel(): TelegramChannel | undefined {
     return this.channels.get('telegram') as TelegramChannel | undefined;
+  }
+
+  /**
+   * Extend timeout for all pending escalations by additional time (default 10 minutes)
+   * Used when user needs more time to respond (/wait command)
+   */
+  extendTimeout(additionalMinutes: number = 10): {
+    extended: boolean;
+    channelsExtended: string[];
+    newTimeout?: Date;
+  } {
+    const additionalMs = additionalMinutes * 60000;
+    const channelsExtended: string[] = [];
+    let latestTimeout: Date | undefined;
+
+    for (const [channelType, channel] of this.channels) {
+      if (channel.hasPendingRequests()) {
+        const result = channel.extendTimeout(additionalMs);
+        if (result.extended) {
+          channelsExtended.push(channelType);
+          if (!latestTimeout || (result.newTimeout && result.newTimeout > latestTimeout)) {
+            latestTimeout = result.newTimeout;
+          }
+        }
+      }
+    }
+
+    if (channelsExtended.length > 0) {
+      console.log(`[CommunicationManager] Extended timeout by ${additionalMinutes} minutes on channels: ${channelsExtended.join(', ')}`);
+      return {
+        extended: true,
+        channelsExtended,
+        newTimeout: latestTimeout
+      };
+    }
+
+    return { extended: false, channelsExtended: [] };
+  }
+
+  /**
+   * Get pending escalation info from all channels
+   */
+  getPendingEscalations(): Array<{
+    channel: string;
+    requestId: string;
+    title: string;
+    waitingSince: Date;
+  }> {
+    const pending: Array<{
+      channel: string;
+      requestId: string;
+      title: string;
+      waitingSince: Date;
+    }> = [];
+
+    for (const [channelType, channel] of this.channels) {
+      const channelPending = channel.getPendingInfo();
+      for (const p of channelPending) {
+        pending.push({
+          channel: channelType,
+          ...p
+        });
+      }
+    }
+
+    return pending;
   }
 }
 

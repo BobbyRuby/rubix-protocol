@@ -33,6 +33,12 @@ export interface EmbeddingServiceConfig {
   dimensions: number;
   apiKey?: string;
   batchSize: number;
+  /** Timeout in milliseconds (default 30000) */
+  timeoutMs?: number;
+  /** Max retries on transient errors (default 3) */
+  maxRetries?: number;
+  /** Base delay between retries in ms (default 1000, uses exponential backoff) */
+  retryDelayMs?: number;
 }
 
 export interface EmbeddingResult {

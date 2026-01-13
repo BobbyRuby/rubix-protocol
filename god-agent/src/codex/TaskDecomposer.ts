@@ -20,59 +20,15 @@ import {
   type Ambiguity,
   type DependencyGraph
 } from './types.js';
+import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
 
 /**
- * Decomposition prompt template
+ * Decomposition prompt template (compressed)
  */
-const DECOMPOSE_PROMPT = `You are decomposing a development task into subtasks.
-
-Each subtask should be:
-- Independently executable (doesn't depend on unfinished subtasks except explicit dependencies)
-- Testable (clear success criteria)
-- Small enough to complete in one focused session
-- Ordered by dependencies
-
-Subtask types:
-- research: Understanding existing code, patterns, or requirements
-- design: Planning architecture, schema, or API design
-- code: Writing new code or modifying existing code
-- test: Writing tests (unit, integration, e2e)
-- integrate: Connecting components, wiring up dependencies
-- verify: End-to-end verification of functionality
-- review: Code review and quality checks
-
-For each subtask, include:
-1. Type (research/design/code/test/integrate/verify/review)
-2. Clear description of what to do
-3. Dependencies (IDs of subtasks that must complete first)
-4. Verification steps (how to verify this subtask is complete)
-
-Also identify:
-- Ambiguities: Parts of the spec that are unclear or have multiple valid interpretations
-- Critical decisions: Choices that need user input before proceeding
-
-Return your response as JSON in this exact format:
-{
-  "subtasks": [
-    {
-      "type": "research",
-      "description": "Understand existing data models and patterns",
-      "dependencies": [],
-      "verification": [
-        { "type": "console_check", "description": "No errors during exploration" }
-      ]
-    }
-  ],
-  "estimatedComplexity": "medium",
-  "ambiguities": [
-    {
-      "description": "Unclear whether to use REST or GraphQL for API",
-      "critical": true,
-      "possibleInterpretations": ["REST endpoints", "GraphQL schema"],
-      "suggestedQuestion": "Should the API use REST or GraphQL?"
-    }
-  ]
-}`;
+const DECOMPOSE_PROMPT = `DECOMPOSE
+TYPES:research,design,code,test,integrate,verify,review
+RULES:independent,testable,ordered_deps,one_session
+→{subtasks:[{type,description,dependencies:[],verification:[]}],estimatedComplexity:low|medium|high,ambiguities:[{description,critical:bool,possibleInterpretations:[],suggestedQuestion}]}`;
 
 /**
  * TaskDecomposer - Break tasks into subtasks using Claude API
@@ -222,27 +178,19 @@ export class TaskDecomposer {
         await this.findSimilarDecompositions(task.description)
       );
 
+      // RUBIX identity + compressed system prompt
+      const identity = SelfKnowledgeInjector.getIdentity('task_decomposer');
       const response = await this.client!.messages.create({
         model: this.model,
         max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }],
-        system: `You are an expert software architect who decomposes development tasks into clear, executable subtasks.
+        system: `${identity}
 
-CRITICAL: You must respond with ONLY valid JSON matching this exact schema:
-{
-  "subtasks": [{ "type": "...", "description": "...", "dependencies": [] }],
-  "estimatedComplexity": "low|medium|high",
-  "ambiguities": [{ "description": "...", "critical": true|false, "possibleInterpretations": [], "suggestedQuestion": "..." }]
-}
-
-If the task is too vague or you need clarification before decomposing, respond with:
-{
-  "needsClarification": true,
-  "questions": ["Question 1?", "Question 2?"],
-  "reason": "Why clarification is needed"
-}
-
-Do NOT include any text outside the JSON object.`
+DECOMPOSE_AGENT
+ROLE:architect,break_tasks,order_deps
+OUT_SCHEMA:{subtasks:[{type,description,dependencies:[]}],estimatedComplexity:low|medium|high,ambiguities:[{description,critical,possibleInterpretations:[],suggestedQuestion}]}
+CLARIFY_SCHEMA:{needsClarification:true,questions:[],reason:""}
+RULE:json_only,no_prose`
       });
 
       const textContent = response.content.find(block => block.type === 'text');

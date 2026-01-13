@@ -34,3 +34,6 @@ god-agent/data/
 
 # Temp
 nul
+
+tmpclaude-*-cwd/
+**/tmpclaude-*-cwd/

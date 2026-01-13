@@ -1,8 +1,9 @@
 /**
  * CodeGenerator
  *
- * Generates code using Claude API and manages file operations.
- * This is the execution engine that makes RUBIX actually write code.
+ * Generates code using Claude Code CLI (Max subscription) with API fallback.
+ * Primary: Spawns claude CLI → uses your Max subscription (Opus)
+ * Fallback: When quota exhausted → direct Anthropic API
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -16,6 +17,8 @@ import type { Subtask, CodexTask, SubtaskAttempt } from './types.js';
 import type { ExtendedThinkingConfig } from '../core/types.js';
 import { ContainmentManager } from './ContainmentManager.js';
 import type { WolframManager } from '../capabilities/wolfram/WolframManager.js';
+import { ClaudeCodeExecutor } from './ClaudeCodeExecutor.js';
+import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
 
 const execAsync = promisify(exec);
 
@@ -45,6 +48,12 @@ export interface CodeGenResult {
   thinkingContent?: string;
   /** Thinking tokens used (if ultrathink was enabled) */
   thinkingTokensUsed?: number;
+  /** Whether CLI quota was exhausted (triggers API fallback) */
+  quotaExhausted?: boolean;
+  /** Whether CLI is unavailable */
+  cliUnavailable?: boolean;
+  /** Whether model was downgraded from Opus (triggers API fallback) */
+  modelDowngraded?: boolean;
 }
 
 /**
@@ -61,32 +70,63 @@ interface FileOperation {
  * Configuration for CodeGenerator
  */
 export interface CodeGeneratorConfig {
-  apiKey: string;
+  apiKey?: string;  // Optional now - only needed for API fallback
   model?: string;
   maxTokens?: number;
   codebaseRoot: string;
   /** Extended thinking (ultrathink) configuration */
   extendedThinking?: ExtendedThinkingConfig;
+  /** Execution mode: 'cli-first' (default), 'api-only', or 'cli-only' */
+  executionMode?: 'cli-first' | 'api-only' | 'cli-only';
+  /** CLI model preference: opus (default), sonnet, haiku */
+  cliModel?: 'opus' | 'sonnet' | 'haiku';
+  /** CLI timeout in ms (default: 5 minutes) */
+  cliTimeout?: number;
 }
 
 /**
  * CodeGenerator - Claude-powered code generation
+ *
+ * Execution priority:
+ * 1. Claude Code CLI (uses Max subscription - Opus by default)
+ * 2. Anthropic API (fallback when quota exhausted)
  */
 export class CodeGenerator {
-  private client: Anthropic;
+  private client: Anthropic | null = null;
   private config: CodeGeneratorConfig;
   private model: string;
   private containment: ContainmentManager | undefined;
   private wolfram: WolframManager | undefined;
+  private cliExecutor: ClaudeCodeExecutor;
+  private executionMode: 'cli-first' | 'api-only' | 'cli-only';
+  private useApiFallback = false;
 
   constructor(config: CodeGeneratorConfig) {
-    if (!config.apiKey) {
-      throw new Error('ANTHROPIC_API_KEY is required for code generation');
-    }
-
     this.config = config;
     this.model = config.model || 'claude-opus-4-5-20251101';
-    this.client = new Anthropic({ apiKey: config.apiKey });
+    this.executionMode = config.executionMode || 'cli-first';
+
+    // Initialize CLI executor
+    this.cliExecutor = new ClaudeCodeExecutor({
+      cwd: config.codebaseRoot,
+      model: config.cliModel || 'opus',
+      timeout: config.cliTimeout || 5 * 60 * 1000,
+      allowEdits: true
+    });
+
+    // Initialize API client only if key provided and mode allows API
+    if (config.apiKey && this.executionMode !== 'cli-only') {
+      this.client = new Anthropic({ apiKey: config.apiKey });
+      console.log('[CodeGenerator] API fallback enabled');
+    } else if (this.executionMode === 'api-only') {
+      if (!config.apiKey) {
+        throw new Error('ANTHROPIC_API_KEY is required for api-only mode');
+      }
+      this.client = new Anthropic({ apiKey: config.apiKey });
+    }
+
+    console.log(`[CodeGenerator] Execution mode: ${this.executionMode}`);
+    console.log(`[CodeGenerator] CLI model: ${config.cliModel || 'opus'}`);
   }
 
   /**
@@ -95,6 +135,106 @@ export class CodeGenerator {
    * @param thinkingBudget Optional thinking budget for ultrathink mode (tokens)
    */
   async generate(request: CodeGenRequest, thinkingBudget?: number): Promise<CodeGenResult> {
+    const { task, subtask, attempt, codebaseContext, previousAttempts } = request;
+
+    // Build prompts
+    const prompt = this.buildPrompt(task, subtask, attempt, codebaseContext, previousAttempts);
+    const systemPrompt = this.getSystemPrompt();
+
+    // Determine execution path
+    const shouldTryCli = this.executionMode !== 'api-only' && !this.useApiFallback;
+    const canFallbackToApi = this.executionMode === 'cli-first' && this.client !== null;
+
+    // Try CLI first (uses Max subscription)
+    if (shouldTryCli) {
+      console.log('[CodeGenerator] Attempting Claude Code CLI (Max subscription)...');
+      const cliResult = await this.executeViaCli(task, prompt, systemPrompt);
+
+      if (cliResult.success) {
+        console.log('[CodeGenerator] CLI execution successful');
+        return cliResult;
+      }
+
+      // Check if we should fall back to API
+      if (cliResult.quotaExhausted && canFallbackToApi) {
+        console.log('[CodeGenerator] Quota exhausted - falling back to API');
+        this.useApiFallback = true;
+      } else if (cliResult.modelDowngraded && canFallbackToApi) {
+        console.log('[CodeGenerator] Model downgraded from Opus - falling back to API (user wants Opus only)');
+        this.useApiFallback = true;
+      } else if (cliResult.cliUnavailable && canFallbackToApi) {
+        console.log('[CodeGenerator] CLI unavailable - falling back to API');
+        this.useApiFallback = true;
+      } else if (this.executionMode === 'cli-only') {
+        // CLI-only mode - don't fall back
+        return cliResult;
+      } else if (!canFallbackToApi) {
+        // No API fallback available
+        return cliResult;
+      }
+      // For other errors in cli-first mode, try API
+    }
+
+    // API execution (fallback or api-only mode)
+    if (!this.client) {
+      return {
+        success: false,
+        filesCreated: [],
+        filesModified: [],
+        output: '',
+        error: 'No API client available and CLI failed'
+      };
+    }
+
+    console.log('[CodeGenerator] Executing via Anthropic API...');
+    return this.executeViaApi(request, thinkingBudget);
+  }
+
+  /**
+   * Execute via Claude Code CLI
+   */
+  private async executeViaCli(task: CodexTask, prompt: string, systemPrompt: string): Promise<CodeGenResult> {
+    try {
+      // Use the task's codebase if provided
+      const codebaseRoot = task.codebase || this.config.codebaseRoot;
+
+      // Update CLI executor cwd if different
+      const cliExecutor = new ClaudeCodeExecutor({
+        cwd: codebaseRoot,
+        model: this.config.cliModel || 'opus',
+        timeout: this.config.cliTimeout || 5 * 60 * 1000,
+        allowEdits: true
+      });
+
+      // Execute via CLI
+      const result = await cliExecutor.execute(prompt, systemPrompt);
+
+      return {
+        success: result.success,
+        filesCreated: result.filesCreated,
+        filesModified: result.filesModified,
+        output: result.output,
+        error: result.error,
+        quotaExhausted: result.quotaExhausted,
+        cliUnavailable: result.cliUnavailable,
+        modelDowngraded: result.modelDowngraded
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        filesCreated: [],
+        filesModified: [],
+        output: '',
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Execute via Anthropic API (original implementation)
+   */
+  private async executeViaApi(request: CodeGenRequest, thinkingBudget?: number): Promise<CodeGenResult> {
     const { task, subtask, attempt, codebaseContext, previousAttempts } = request;
 
     try {
@@ -321,6 +461,10 @@ export class CodeGenerator {
     tools: Anthropic.Messages.Tool[],
     thinkingBudget?: number
   ): Promise<Message> {
+    if (!this.client) {
+      throw new Error('API client not initialized');
+    }
+
     console.log(`[CodeGenerator] Calling Claude API with tools (model: ${this.model})`);
     console.log(`[CodeGenerator] Messages: ${messages.length}, Tools: ${tools.length}`);
 
@@ -388,36 +532,22 @@ export class CodeGenerator {
   }
 
   /**
-   * Get system prompt for code generation
+   * Get system prompt for code generation (compressed)
    */
   private getSystemPrompt(): string {
-    return `You are RUBIX, an autonomous code generation agent. Your job is to write production-quality code based on the task specification.
+    // RUBIX identity + compressed generation prompt
+    const identity = SelfKnowledgeInjector.getIdentity('code_generator');
+    return `${identity}
 
-CRITICAL RULES:
-1. Write COMPLETE, WORKING code - no placeholders, no TODOs, no "implement this"
-2. Follow existing patterns in the codebase context provided
-3. Use TypeScript with strict typing
-4. Include proper error handling
-5. Write clean, readable code with minimal comments (code should be self-documenting)
-
-OUTPUT FORMAT:
-For each file you need to create or modify, use this exact format:
-
-<file path="relative/path/to/file.ts" action="create|modify">
-// Complete file contents here
-</file>
-
-If modifying an existing file, include the COMPLETE new file contents, not just the changes.
-
-IMPORTANT:
-- Always output complete, runnable code
-- Never use ellipsis (...) or "rest of code" comments
-- Include all necessary imports
-- Follow the existing code style from the context`;
+GEN
+ROLE:implement,ship,complete_code
+RULES:no_placeholders,no_todos,full_files,strict_types,error_handling
+OUT:<file path="..." action="create|modify">complete_code</file>
+STYLE:follow_codebase_patterns,all_imports,self_documenting`;
   }
 
   /**
-   * Build the generation prompt
+   * Build the generation prompt (compressed)
    */
   private buildPrompt(
     task: CodexTask,
@@ -426,55 +556,33 @@ IMPORTANT:
     codebaseContext: string,
     previousAttempts?: SubtaskAttempt[]
   ): string {
-    let prompt = `## Task
-${task.description}
-
-`;
+    // Compressed prompt format
+    let prompt = `TASK:${task.description.slice(0, 500)}`;
 
     if (task.specification) {
-      prompt += `## Specification
-${task.specification}
-
-`;
+      prompt += `\nSPEC:${task.specification.slice(0, 500)}`;
     }
 
     if (task.constraints && task.constraints.length > 0) {
-      prompt += `## Constraints
-${task.constraints.map(c => `- ${c}`).join('\n')}
-
-`;
+      prompt += `\nCONSTRAINTS:${task.constraints.slice(0, 5).join(',')}`;
     }
 
-    prompt += `## Current Subtask
-Type: ${subtask.type}
-Description: ${subtask.description}
-Attempt: ${attempt.attemptNumber}
-Approach: ${attempt.approach}
+    prompt += `\nSUBTASK:${subtask.type}|${subtask.description.slice(0, 200)}`;
+    prompt += `\nATTEMPT:${attempt.attemptNumber}|${attempt.approach.slice(0, 100)}`;
+    prompt += `\nCTX:${codebaseContext.slice(0, 2000)}`;
 
-`;
-
-    prompt += `## Codebase Context
-${codebaseContext}
-
-`;
-
-    // Include previous attempt errors if retrying
+    // Include previous failures compactly
     if (previousAttempts && previousAttempts.length > 0) {
-      prompt += `## Previous Attempts (learn from these failures)
-`;
-      for (const prev of previousAttempts) {
-        if (prev.error) {
-          prompt += `Attempt ${prev.attemptNumber}: ${prev.approach}
-Error: ${prev.error}
-${prev.consoleErrors ? `Console Errors:\n${prev.consoleErrors.join('\n')}` : ''}
-
-`;
-        }
+      const failures = previousAttempts
+        .filter(p => p.error)
+        .map(p => `${p.attemptNumber}:${p.error?.slice(0, 100)}`)
+        .join('|');
+      if (failures) {
+        prompt += `\nPREV_FAIL:${failures}`;
       }
     }
 
-    prompt += `## Your Task
-Generate the necessary code to complete this subtask. Output complete file contents using the <file> format specified in the system prompt.`;
+    prompt += `\n→<file path="" action="create|modify">code</file>`;
 
     return prompt;
   }
@@ -665,33 +773,46 @@ Generate the necessary code to complete this subtask. Output complete file conte
   async generateDesign(request: CodeGenRequest): Promise<CodeGenResult> {
     const { task, subtask, codebaseContext } = request;
 
+    // Try CLI first for design
+    if (this.executionMode !== 'api-only' && !this.useApiFallback) {
+      const designPrompt = `DESIGN
+TASK:${task.description.slice(0, 500)}
+SUBTASK:${subtask.description.slice(0, 300)}
+CTX:${codebaseContext.slice(0, 1500)}
+→{architecture,data_models,components,integrations,risks}`;
+
+      const cliResult = await this.executeViaCli(task, designPrompt, 'ARCHITECT\nROLE:design,structure,interfaces\n→markdown_doc');
+      if (cliResult.success || this.executionMode === 'cli-only') {
+        return cliResult;
+      }
+    }
+
+    if (!this.client) {
+      return {
+        success: false,
+        filesCreated: [],
+        filesModified: [],
+        output: '',
+        error: 'No API client available'
+      };
+    }
+
     try {
+      // Compressed design prompt
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: 4096,
         messages: [
           {
             role: 'user',
-            content: `## Task
-${task.description}
-
-## Subtask
-${subtask.description}
-
-## Codebase Context
-${codebaseContext}
-
-Generate a design document for this task. Include:
-1. Architecture overview
-2. Data models/interfaces
-3. Component breakdown
-4. Integration points
-5. Potential risks/considerations
-
-Output as markdown.`
+            content: `DESIGN
+TASK:${task.description.slice(0, 500)}
+SUBTASK:${subtask.description.slice(0, 300)}
+CTX:${codebaseContext.slice(0, 1500)}
+→{architecture,data_models,components,integrations,risks}`
           }
         ],
-        system: 'You are a senior software architect. Generate clear, actionable design documents.'
+        system: 'ARCHITECT\nROLE:design,structure,interfaces\n→markdown_doc'
       });
 
       const content = response.content[0];
@@ -730,33 +851,46 @@ Output as markdown.`
   async analyzeCode(request: CodeGenRequest): Promise<CodeGenResult> {
     const { task, subtask, codebaseContext } = request;
 
+    // Try CLI first for research
+    if (this.executionMode !== 'api-only' && !this.useApiFallback) {
+      const researchPrompt = `RESEARCH
+TASK:${task.description.slice(0, 500)}
+GOAL:${subtask.description.slice(0, 300)}
+CTX:${codebaseContext.slice(0, 1500)}
+→{patterns:[],files_to_modify:[],deps:[],conflicts:[],recommended_approach:""}`;
+
+      const cliResult = await this.executeViaCli(task, researchPrompt, 'ANALYZE\nROLE:discover,map,patterns\n→specific_file_paths,code_patterns');
+      if (cliResult.success || this.executionMode === 'cli-only') {
+        return cliResult;
+      }
+    }
+
+    if (!this.client) {
+      return {
+        success: false,
+        filesCreated: [],
+        filesModified: [],
+        output: '',
+        error: 'No API client available'
+      };
+    }
+
     try {
+      // Compressed research prompt
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: 4096,
         messages: [
           {
             role: 'user',
-            content: `## Task
-${task.description}
-
-## Research Goal
-${subtask.description}
-
-## Codebase Context
-${codebaseContext}
-
-Analyze the codebase and provide:
-1. Relevant existing patterns
-2. Files that will need modification
-3. Dependencies to consider
-4. Potential conflicts or issues
-5. Recommended approach
-
-Be specific about file paths and code patterns.`
+            content: `RESEARCH
+TASK:${task.description.slice(0, 500)}
+GOAL:${subtask.description.slice(0, 300)}
+CTX:${codebaseContext.slice(0, 1500)}
+→{patterns:[],files_to_modify:[],deps:[],conflicts:[],recommended_approach:""}`
           }
         ],
-        system: 'You are a code analyst. Provide detailed, actionable analysis of codebases.'
+        system: 'ANALYZE\nROLE:discover,map,patterns\n→specific_file_paths,code_patterns'
       });
 
       const content = response.content[0];
@@ -923,6 +1057,70 @@ Be specific about file paths and code patterns.`
       console.error(`[CodeGenerator] Tool execution error:`, error);
       return `Error executing ${name}: ${errorMsg}`;
     }
+  }
+
+  // ===========================================================================
+  // Execution Mode Management
+  // ===========================================================================
+
+  /**
+   * Get current execution status
+   */
+  getExecutionStatus(): {
+    mode: 'cli-first' | 'api-only' | 'cli-only';
+    usingApiFallback: boolean;
+    cliStatus: {
+      cliAvailable: boolean | null;
+      consecutiveQuotaErrors: number;
+      inQuotaCooldown: boolean;
+    };
+    apiAvailable: boolean;
+  } {
+    return {
+      mode: this.executionMode,
+      usingApiFallback: this.useApiFallback,
+      cliStatus: this.cliExecutor.getStatus(),
+      apiAvailable: this.client !== null
+    };
+  }
+
+  /**
+   * Reset API fallback - try CLI again
+   */
+  resetApiFallback(): void {
+    this.useApiFallback = false;
+    this.cliExecutor.resetQuotaTracking();
+    console.log('[CodeGenerator] Reset API fallback - will try CLI again');
+  }
+
+  /**
+   * Force API fallback mode (skip CLI)
+   */
+  forceApiFallback(): void {
+    if (this.client) {
+      this.useApiFallback = true;
+      console.log('[CodeGenerator] Forced API fallback mode');
+    } else {
+      console.warn('[CodeGenerator] Cannot force API fallback - no API client');
+    }
+  }
+
+  /**
+   * Set execution mode at runtime
+   */
+  setExecutionMode(mode: 'cli-first' | 'api-only' | 'cli-only'): void {
+    if (mode === 'api-only' && !this.client) {
+      throw new Error('Cannot set api-only mode without API key');
+    }
+    this.executionMode = mode;
+    console.log(`[CodeGenerator] Execution mode set to: ${mode}`);
+  }
+
+  /**
+   * Check if CLI is available
+   */
+  async isCliAvailable(): Promise<boolean> {
+    return this.cliExecutor.checkCliAvailable();
   }
 }
 

@@ -1,0 +1,377 @@
+# RUBIX PLATFORM: NEXT.JS
+# VERSION: 14.x|15.x
+# FOUNDATION: React|Node.js|Vercel
+# PHILOSOPHY: zero_config|hybrid_rendering|edge_first
+
+==============================================================================
+HISTORY
+==============================================================================
+2016:Guillermo_Rauch>Zeit>first_release
+2017:v3.0>static_export|dynamic_import
+2019:v9.0>API_routes|automatic_static_optimization
+2020:v10.0>Image_component|Internationalization
+2021:v12.0>Rust_compiler|Middleware
+2022:v13.0>App_Router|React_Server_Components|Turbopack
+2023:v14.0>Server_Actions|Partial_Prerendering
+2024:v15.0>React_19|async_request_APIs|caching_changes
+
+CORE_MAINTAINERS
+Guillermo_Rauch:creator|Vercel_CEO
+Tim_Neutkens:lead_maintainer
+JJ_Kasper:core_team
+Shu_Ding:core_team
+Lee_Robinson:VP_Product
+
+==============================================================================
+APP_ROUTER_PATTERNS
+==============================================================================
+FILE_SYSTEM_ROUTING
+app/
+  page.tsx:route_root
+  layout.tsx:shared_layout
+  loading.tsx:loading_UI
+  error.tsx:error_boundary
+  not-found.tsx:404
+  route.ts:API_endpoint
+
+ROUTE_CONVENTIONS
+app/blog/[slug]/page.tsx:dynamic_segment
+app/shop/[...slug]/page.tsx:catch_all
+app/shop/[[...slug]]/page.tsx:optional_catch_all
+app/(marketing)/about/page.tsx:route_groups_no_URL
+app/@modal/(.)photo/[id]/page.tsx:parallel_routes
+
+LAYOUT_PATTERN
++shared_UI_across_routes
++maintain_state_across_navigation
++nested_layouts
+
+export default function Layout({children}:{children:React.ReactNode}){
+  return(
+    <html>
+      <body>
+        <nav/>
+        {children}
+        <footer/>
+      </body>
+    </html>
+  )
+}
+
+ANTI_PATTERNS
+-pages_dir_in_new_projects:use_app_router
+-prop_drilling_through_layouts:use_context|server_fetch
+
+==============================================================================
+SERVER_CLIENT_COMPONENTS
+==============================================================================
+SERVER_COMPONENTS_DEFAULT
++async_components
++direct_data_fetching
++no_client_JS_bundle
++access_backend_resources
+
+async function PostList(){
+  const posts=await db.posts.findMany()
+  return posts.map(p=><Post key={p.id} post={p}/>)
+}
+
+CLIENT_COMPONENTS
++'use client'_directive
++interactivity:useState|useEffect|onClick
++browser_APIs
++third_party_client_libs
+
+'use client'
+function Counter(){
+  const [count,setCount]=useState(0)
+  return <button onClick={()=>setCount(c=>c+1)}>{count}</button>
+}
+
+COMPOSITION_PATTERN
++server_component_wraps_client
++pass_server_data_as_props
++children_prop_for_client_slots
+
+async function ServerWrapper(){
+  const data=await fetchData()
+  return <ClientComponent initialData={data}/>
+}
+
+ANTI_PATTERNS
+-use_client_everywhere:lose_SSR_benefits
+-async_client_component:use_server_component
+-importing_client_in_server:bundle_bloat
+-useState_for_server_data:fetch_in_server
+
+DECISION_TREE
+need_interactivity?:client
+need_browser_API?:client
+need_state|effects?:client
+else:server_default
+
+==============================================================================
+DATA_FETCHING_PATTERNS
+==============================================================================
+SERVER_COMPONENT_FETCH
+async function Page(){
+  const data=await fetch('https://api.example.com/data',{
+    cache:'force-cache'|'no-store',
+    next:{revalidate:3600,tags:['posts']}
+  })
+  return <div>{data}</div>
+}
+
+CACHING_OPTIONS
+cache:'force-cache':default|static
+cache:'no-store':dynamic|no_cache
+next:{revalidate:N}:ISR_seconds
+next:{tags:['tag']}:on_demand_revalidation
+
+REVALIDATION
+*revalidatePath('/path'):page_revalidation
+*revalidateTag('tag'):tag_based
+
+PARALLEL_DATA_FETCHING
+async function Page(){
+  const [posts,users]=await Promise.all([
+    fetchPosts(),
+    fetchUsers()
+  ])
+}
+
+SEQUENTIAL_WHEN_DEPENDENT
+async function Page(){
+  const user=await fetchUser()
+  const posts=await fetchUserPosts(user.id)
+}
+
+ANTI_PATTERNS
+-client_fetch_for_initial_data:server_fetch
+-waterfall_when_parallel_possible:Promise.all
+-not_using_cache:performance_loss
+-over_caching_dynamic_data:stale_data
+
+==============================================================================
+SERVER_ACTIONS_PATTERNS
+==============================================================================
+INLINE_SERVER_ACTION
+async function Page(){
+  async function submitForm(formData:FormData){
+    'use server'
+    await db.posts.create({title:formData.get('title')})
+    revalidatePath('/posts')
+  }
+  return <form action={submitForm}>...</form>
+}
+
+SEPARATE_FILE_PATTERN
+//actions.ts
+'use server'
+export async function createPost(formData:FormData){
+  await db.posts.create({...})
+  revalidatePath('/posts')
+}
+
+//page.tsx
+import {createPost} from './actions'
+<form action={createPost}>
+
+WITH_USEFORMSTATUS
+'use client'
+import {useFormStatus} from 'react-dom'
+function SubmitButton(){
+  const {pending}=useFormStatus()
+  return <button disabled={pending}>{pending?'...':'Submit'}</button>
+}
+
+WITH_USEACTIONSTATE
+'use client'
+import {useActionState} from 'react'
+const [state,action]=useActionState(createPost,initialState)
+
+ANTI_PATTERNS
+-mutation_in_GET_route:use_POST|server_action
+-no_error_handling:try_catch
+-no_validation:validate_before_DB
+-not_revalidating:stale_UI
+
+==============================================================================
+API_ROUTES_PATTERNS
+==============================================================================
+ROUTE_HANDLERS
+//app/api/posts/route.ts
+export async function GET(request:Request){
+  const posts=await db.posts.findMany()
+  return Response.json(posts)
+}
+
+export async function POST(request:Request){
+  const body=await request.json()
+  const post=await db.posts.create({data:body})
+  return Response.json(post,{status:201})
+}
+
+DYNAMIC_ROUTES
+//app/api/posts/[id]/route.ts
+export async function GET(
+  request:Request,
+  {params}:{params:{id:string}}
+){
+  const post=await db.posts.findUnique({where:{id:params.id}})
+  if(!post)return Response.json({error:'Not found'},{status:404})
+  return Response.json(post)
+}
+
+MIDDLEWARE
+//middleware.ts
+export function middleware(request:NextRequest){
+  const token=request.cookies.get('token')
+  if(!token)return NextResponse.redirect('/login')
+  return NextResponse.next()
+}
+export const config={matcher:['/dashboard/:path*']}
+
+ANTI_PATTERNS
+-API_route_for_server_component_data:direct_fetch
+-no_error_handling:try_catch|status_codes
+-exposing_internal_errors:generic_messages
+
+==============================================================================
+STATE_MANAGEMENT_PATTERNS
+==============================================================================
+SERVER_STATE
++React_Server_Components:no_client_state_needed
++URL_state:searchParams
++Server_Actions:mutations
+
+CLIENT_STATE_OPTIONS
+useState:local_component
+useReducer:complex_local
+Context:shared_subtree
+Zustand:global_simple
+Jotai:atomic_state
+Redux_Toolkit:complex_global
+
+URL_AS_STATE
+//use_searchParams
+const searchParams=useSearchParams()
+const query=searchParams.get('q')
+
+//update_via_router
+const router=useRouter()
+router.push('?q=newquery')
+
+ANTI_PATTERNS
+-global_state_for_server_data:server_fetch
+-Context_at_root_for_everything:prop_drill_first
+-Redux_for_simple_state:overkill
+
+==============================================================================
+PERFORMANCE_PATTERNS
+==============================================================================
+IMAGE_OPTIMIZATION
+import Image from 'next/image'
+<Image src="/photo.jpg" width={800} height={600} alt="..." priority/>
+
++automatic_optimization
++lazy_loading_default
++priority:LCP_images
++placeholder="blur":loading_state
+
+FONT_OPTIMIZATION
+import {Inter} from 'next/font/google'
+const inter=Inter({subsets:['latin']})
+<body className={inter.className}>
+
+CODE_SPLITTING
++automatic_route_splitting
++dynamic_import:lazy_load_components
+const DynamicComponent=dynamic(()=>import('./Heavy'),{ssr:false})
+
+STREAMING
++loading.tsx:route_level
++Suspense:component_level
+<Suspense fallback={<Loading/>}>
+  <SlowComponent/>
+</Suspense>
+
+ANTI_PATTERNS
+-img_tag:use_next/image
+-no_priority_on_LCP:priority_prop
+-client_heavy_components_in_server:dynamic_import
+-blocking_navigation:streaming|suspense
+
+==============================================================================
+AUTHENTICATION_PATTERNS
+==============================================================================
+NEXT-AUTH|AUTH.JS
+//auth.ts
+import NextAuth from 'next-auth'
+export const {handlers,auth,signIn,signOut}=NextAuth({
+  providers:[GitHub,Google],
+  callbacks:{...}
+})
+
+//middleware.ts
+export {auth as middleware} from './auth'
+
+SERVER_COMPONENT_AUTH
+import {auth} from '@/auth'
+async function Page(){
+  const session=await auth()
+  if(!session)redirect('/login')
+}
+
+ANTI_PATTERNS
+-JWT_in_localStorage:use_httpOnly_cookies
+-client_only_auth_check:server_check
+-no_middleware_protection:add_middleware
+
+==============================================================================
+PROJECT_STRUCTURE
+==============================================================================
+STANDARD
+app/
+  (auth)/login|register/page.tsx
+  (dashboard)/layout.tsx|page.tsx
+  api/
+components/
+lib/
+hooks/
+types/
+public/
+
+FEATURE_BASED
+app/
+features/
+  auth/components|hooks|actions
+  posts/components|hooks|actions
+shared/
+  components/
+  hooks/
+
+==============================================================================
+PACKAGES_ESSENTIAL
+==============================================================================
+next-auth:authentication
+prisma:database_ORM
+zod:validation
+react-hook-form:forms
+tailwindcss:styling
+@tanstack/react-query:client_caching
+swr:data_fetching
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Use_Client_Everywhere   | most_components_client           | default_server
+Client_Fetch_Initial    | useEffect_fetch_on_mount         | server_component
+No_Loading_UI           | blank_screen_on_nav              | loading.tsx|Suspense
+API_For_Server_Data     | route_handler_for_page_data      | direct_fetch_server
+No_Image_Optimization   | <img>_tag_usage                  | next/image
+Waterfall_Fetches       | sequential_independent_fetches   | Promise.all
+State_Prop_Drilling     | props_through_5+_levels          | Context|composition
+Fat_Server_Action       | action_with_many_concerns        | split_actions

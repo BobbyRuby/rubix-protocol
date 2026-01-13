@@ -59,6 +59,7 @@ export class ShadowSearch {
 
   /**
    * Find contradictions to a query
+   * @param precomputedEmbedding - Optional pre-computed embedding to avoid duplicate API calls
    */
   async findContradictions(
     query: string,
@@ -66,13 +67,14 @@ export class ShadowSearch {
     embeddings: EmbeddingService,
     storage: SQLiteStorage,
     provenance: ProvenanceStore,
-    options: ShadowSearchOptions = {}
+    options: ShadowSearchOptions = {},
+    precomputedEmbedding?: Float32Array
   ): Promise<Contradiction[]> {
     const threshold = options.threshold ?? this.config.defaultThreshold;
     const topK = options.topK ?? this.config.defaultTopK;
 
-    // Generate embedding for the query
-    const { embedding } = await embeddings.embed(query);
+    // Use pre-computed embedding if available, otherwise generate
+    const embedding = precomputedEmbedding ?? (await embeddings.embed(query)).embedding;
 
     // Invert the embedding for shadow search
     const shadowVector = this.invert(embedding);
@@ -216,14 +218,15 @@ export class ShadowSearch {
     const { embedding } = await embeddings.embed(query);
     const supportResults = vectorDb.search(embedding, topK);
 
-    // Get contradicting evidence (shadow search)
+    // Get contradicting evidence (shadow search) - pass embedding to avoid duplicate API call
     const contradictions = await this.findContradictions(
       query,
       vectorDb,
       embeddings,
       storage,
       provenance,
-      options
+      options,
+      embedding
     );
 
     // Map support results to include L-Score

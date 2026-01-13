@@ -11,6 +11,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { glob } from 'glob';
 import type { ContainmentManager } from './ContainmentManager.js';
+import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
 
 /**
  * Configuration for PlanningAgent
@@ -123,71 +124,28 @@ const PLANNING_TOOLS: Anthropic.Messages.Tool[] = [
 
 /**
  * System prompt for planning mode
+ * Compressed format: efficient tokens, human-machine clarity preserved
  */
-const PLANNING_SYSTEM_PROMPT = `You are a collaborative planning partner with perfect memory AND tool access.
+const RUBIX_IDENTITY = SelfKnowledgeInjector.getIdentity('planning_agent');
+const PLANNING_SYSTEM_PROMPT = `${RUBIX_IDENTITY}
 
-Your role is to help the user think through their project BEFORE any code is written.
-The conversation is stored in memory - you can reference anything discussed previously.
+PLAN_AGENT
+ROLE:planning_subsystem,perfect_memory,tool_access
+GOAL:think_through_project_BEFORE_code,store_exchanges_in_memory
 
-## Your Tools
+TOOLS:read_file,glob_files,grep_search,web_fetch,list_directory
+USE_TOOLS_WHEN:user_asks_about_code,need_architecture_context,lookup_docs,explore_existing
 
-You have access to tools for exploring the codebase and researching:
-- **read_file**: Read any file to understand existing code
-- **glob_files**: Find files by pattern
-- **grep_search**: Search for code patterns
-- **web_fetch**: Fetch documentation or research online
-- **list_directory**: Explore directory structures
+APPROACH:
+1.UNDERSTAND:ask_clarifying(1-2_questions),use_tools,explore_requirements,find_the_why
+2.EXPLORE:suggest_approaches_with_tradeoffs,discuss_alternatives,share_considerations
+3.BUILD_PLAN:summarize_decisions,track_open_questions,actionable_plan
+4.STAY_IN_PLANNING:NO_code_writes,NO_execution,offer_summary_when_complete,wait_for_/execute
 
-USE THESE TOOLS PROACTIVELY when:
-- User asks about existing code ("what's in package.json?")
-- You need to understand the current architecture
-- Looking up documentation or examples
-- Exploring what already exists before planning new features
+STYLE:collaborative,concise,use_questions,build_on_ideas,direct_about_tradeoffs,markdown
 
-## Your Approach
-
-1. **Understand First**
-   - Ask clarifying questions (1-2 at a time, not overwhelming lists)
-   - USE TOOLS to explore the codebase when relevant
-   - Explore requirements, constraints, preferences
-   - Understand the "why" behind the request
-
-2. **Explore Options**
-   - Suggest approaches with trade-offs
-   - Discuss alternatives based on what you find in the codebase
-   - Share relevant considerations
-   - Be conversational, not lecture-y
-
-3. **Build the Plan**
-   - Periodically summarize what's been decided
-   - Track open questions
-   - Build toward a clear, actionable plan
-
-4. **Stay in Planning Mode**
-   - NEVER write actual code to files
-   - NEVER start execution
-   - When the plan feels complete, offer to summarize it
-   - User will explicitly say "/execute" when ready
-
-## Conversation Style
-
-- Friendly and collaborative
-- Break up long responses naturally
-- Use questions to guide the conversation
-- Acknowledge and build on user's ideas
-- Be direct about concerns or trade-offs
-- Use markdown formatting for structure
-
-## Memory Context
-
-You receive:
-- CURRENT PLAN: The evolving plan document (if exists)
-- RELEVANT CONTEXT: Past exchanges related to the current topic
-- RECENT CONVERSATION: Last few exchanges for continuity
-- KEY DECISIONS: Important choices already made
-
-Use this context naturally - reference past discussions when relevant.
-Don't repeat information that's already been covered unless asked.`;
+CONTEXT_RECEIVED:current_plan,relevant_past_exchanges,recent_conversation,key_decisions
+RULE:reference_past_naturally,no_repeat_unless_asked`;
 
 /**
  * PlanningAgent - Claude-powered planning conversations with tool access
@@ -625,6 +583,132 @@ Be thorough but concise.`,
     } catch {
       // Fallback to truncation
       return content.substring(0, 200) + '...';
+    }
+  }
+
+  /**
+   * Chat mode - conversational responses without plan generation
+   * Used by ConversationSession before /rubixallize
+   */
+  async chat(context: string, userMessage: string): Promise<string> {
+    const conversationIdentity = SelfKnowledgeInjector.getIdentity('conversation_agent');
+    const conversationalPrompt = `${conversationIdentity}
+
+CONV_AGENT
+ROLE:conversational_interface,tool_access
+HELPS:answer_code_questions,read_explore_files,research_docs,general_chat
+TOOLS:read_file,glob_files,grep_search,web_fetch,list_directory
+STYLE:friendly,conversational,proactive_tool_use
+
+CONTEXT:
+${context}`;
+
+    try {
+      const response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: this.maxTokens,
+        system: conversationalPrompt,
+        tools: PLANNING_TOOLS,
+        messages: [{ role: 'user', content: userMessage }]
+      });
+
+      // Handle tool use loop
+      let currentResponse = response;
+      let messages: Anthropic.Messages.MessageParam[] = [
+        { role: 'user', content: userMessage }
+      ];
+
+      while (currentResponse.stop_reason === 'tool_use') {
+        const toolUseBlocks = currentResponse.content.filter(
+          (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
+        );
+
+        const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
+
+        for (const tool of toolUseBlocks) {
+          const result = await this.executeToolCall(
+            tool.name,
+            tool.input as Record<string, unknown>
+          );
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: tool.id,
+            content: result
+          });
+        }
+
+        messages.push({ role: 'assistant', content: currentResponse.content });
+        messages.push({ role: 'user', content: toolResults });
+
+        currentResponse = await this.client.messages.create({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          system: conversationalPrompt,
+          tools: PLANNING_TOOLS,
+          messages
+        });
+      }
+
+      // Extract final text response
+      const textContent = currentResponse.content.find(
+        (block): block is Anthropic.Messages.TextBlock => block.type === 'text'
+      );
+
+      if (!textContent) {
+        throw new Error('No text response from Claude');
+      }
+
+      return textContent.text;
+    } catch (error) {
+      console.error('[PlanningAgent] Chat error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Synthesize a structured task description from conversation exchanges
+   * Used when converting ConversationSession to PlanningSession
+   */
+  async synthesizeTaskDescription(exchanges: Array<{ role: string; content: string; timestamp: Date }>): Promise<string> {
+    // Build conversation summary
+    const conversationText = exchanges
+      .map(e => `${e.role.toUpperCase()}: ${e.content}`)
+      .join('\n\n');
+
+    const prompt = `Analyze this conversation and extract a clear, structured task description.
+
+The task description should:
+1. Be 1-3 sentences
+2. Capture the main goal or intent
+3. Be specific enough to guide planning
+4. Focus on WHAT needs to be done, not HOW
+
+Conversation:
+${conversationText}
+
+Output ONLY the task description, nothing else.`;
+
+    try {
+      const response = await this.client.messages.create({
+        model: 'claude-haiku-4-20250514', // Use Haiku for synthesis (fast & cheap)
+        max_tokens: 200,
+        system: 'You are a technical analyst. Extract clear task descriptions from conversations.',
+        messages: [{ role: 'user', content: prompt }]
+      });
+
+      const textContent = response.content.find(block => block.type === 'text');
+      if (!textContent || textContent.type !== 'text') {
+        // Fallback: use first user message
+        const firstUserMessage = exchanges.find(e => e.role === 'user');
+        return firstUserMessage?.content.substring(0, 200) || 'Continue our conversation';
+      }
+
+      return textContent.text.trim();
+    } catch (error) {
+      console.error('[PlanningAgent] Task synthesis error:', error);
+      // Fallback: use first user message
+      const firstUserMessage = exchanges.find(e => e.role === 'user');
+      return firstUserMessage?.content.substring(0, 200) || 'Continue our conversation';
     }
   }
 

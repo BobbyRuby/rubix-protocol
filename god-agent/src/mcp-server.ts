@@ -48,6 +48,8 @@ import type { ProbeStatus } from './curiosity/types.js';
 import { memoryCompressor } from './memory/MemoryCompressor.js';
 import type { MemoryType } from './memory/types.js';
 import { SelfKnowledgeBootstrap } from './bootstrap/SelfKnowledgeBootstrap.js';
+import { SelfKnowledgeCompressor } from './prompts/SelfKnowledgeCompressor.js';
+import { createRuntimeContext } from './context/RuntimeContext.js';
 
 // ==========================================
 // Tool Input Schemas (Zod)
@@ -1737,6 +1739,31 @@ const TOOLS: Tool[] = [
       required: []
     }
   },
+  {
+    name: 'god_codex_wait',
+    description: `Extend the timeout for pending RUBIX escalations.
+
+    When RUBIX is waiting for your response to an escalation,
+    use this to add more time before it times out.
+
+    Default: Adds 10 minutes. Can be called multiple times to stack.
+
+    Examples:
+    - god_codex_wait() - Add 10 minutes
+    - god_codex_wait({ minutes: 30 }) - Add 30 minutes
+
+    Also available as /wait command in Telegram.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        minutes: {
+          type: 'number',
+          description: 'Minutes to extend timeout (default: 10)'
+        }
+      },
+      required: []
+    }
+  },
 
   // ==========================================
   // Collaborative Partner Tools
@@ -3366,13 +3393,21 @@ const TOOLS: Tool[] = [
     - "How does the memory system work?"
     - "What MCP tools are available?"
 
-    Returns expanded human-readable responses from bootstrapped self-knowledge.`,
+    Format options:
+    - tokens: Raw token format (efficient storage)
+    - readable: Human-readable summary (default)
+    - full: Detailed formatted output with boxes`,
     inputSchema: {
       type: 'object',
       properties: {
         question: {
           type: 'string',
           description: 'Question about RUBIX architecture or capabilities'
+        },
+        format: {
+          type: 'string',
+          enum: ['tokens', 'readable', 'full'],
+          description: 'Output format (default: readable)'
         },
         topK: {
           type: 'number',
@@ -3711,6 +3746,8 @@ class GodAgentMCPServer {
             return await this.handleCodexCancel();
           case 'god_codex_log':
             return await this.handleCodexLog();
+          case 'god_codex_wait':
+            return await this.handleCodexWait(args);
 
           // Collaborative Partner Tools
           case 'god_partner_config':
@@ -5416,6 +5453,29 @@ class GodAgentMCPServer {
           this.taskExecutor.setCodeReviewer(this.reviewer);
           console.log('[MCP Server] CodeReviewer wired - RUBIX will self-review generated code');
 
+          // Wire CommunicationManager for escalations (Telegram, Phone, SMS, etc.)
+          const comms = this.getCommunicationManager();
+          this.taskExecutor.setCommunications(comms);
+          console.log('[MCP Server] CommunicationManager wired - escalations will reach user via configured channels');
+
+          // Generate RuntimeContext - compressed capabilities context for this instance
+          const configuredChannels = comms.getConfiguredChannels?.() || [];
+          const runtimeCtx = createRuntimeContext({
+            capabilities: {
+              lsp: true, git: true, analysis: true, ast: true,
+              deps: true, stacktrace: true, docs: true
+            },
+            channels: configuredChannels,
+            toolCount: 50,
+            wolfram: !!process.env.WOLFRAM_APP_ID,
+            playwright: !!this.playwright,
+            containment: true,
+            codebaseRoot: process.cwd()
+          });
+          this.taskExecutor.setRuntimeContext(runtimeCtx.readable);
+          console.log(`[MCP Server] RuntimeContext generated (${runtimeCtx.tokenEstimate} tokens):`);
+          console.log(runtimeCtx.compressed);
+
           console.log('[MCP Server] CodeGenerator initialized - RUBIX can now write real code');
         } catch (error) {
           console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
@@ -5579,6 +5639,13 @@ class GodAgentMCPServer {
       };
     }
 
+    // Also inject response into CommunicationManager to resolve any waiting channel Promise
+    const comms = this.getCommunicationManager();
+    const injected = comms.injectResponse(input.escalationId, input.answer);
+    if (injected) {
+      console.log(`[MCP Server] Injected MCP response into communication channel`);
+    }
+
     return {
       content: [{
         type: 'text',
@@ -5632,26 +5699,38 @@ class GodAgentMCPServer {
       await this.getEngine();
       const executor = this.getTaskExecutor();
 
-      if (!executor.isRunning()) {
+      // Check if there's a task (running OR stuck)
+      const status = executor.getStatus();
+      const hasTask = status.currentTask !== null;
+
+      if (!hasTask) {
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
               success: false,
-              message: 'No task is currently running.'
+              message: 'No task to cancel.'
             }, null, 2)
           }]
         };
       }
 
+      // Force cancel even if not actively running (handles stuck/blocked tasks)
       const cancelled = executor.cancel();
+
+      // If cancel returns false but we have a stuck task, force clear it
+      if (!cancelled && hasTask) {
+        // Force clear by calling cancel again - it will work on blocked tasks
+        executor.forceReset?.();
+      }
 
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            success: cancelled,
-            message: cancelled ? 'Task cancelled.' : 'Failed to cancel task.'
+            success: true,
+            message: `Task ${status.currentTask?.status === 'blocked' ? 'force-cleared' : 'cancelled'}.`,
+            previousStatus: status.currentTask?.status
           }, null, 2)
         }]
       };
@@ -5698,6 +5777,72 @@ class GodAgentMCPServer {
             entries: [],
             count: 0,
             message: 'No work log available.'
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleCodexWait(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      minutes: z.number().optional().default(10)
+    }).parse(args || {});
+
+    try {
+      await this.getEngine();
+      const executor = this.getTaskExecutor();
+
+      // Check if there's a communication manager to extend timeout
+      const communications = executor.getCommunications?.();
+
+      if (!communications) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              message: 'No communication channels configured. Use /wait in Telegram instead.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const result = communications.extendTimeout(input.minutes);
+
+      if (result.extended) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              message: `Extended timeout by ${input.minutes} minutes`,
+              newTimeout: result.newTimeout?.toISOString(),
+              channelsExtended: result.channelsExtended
+            }, null, 2)
+          }]
+        };
+      } else {
+        // No pending escalations
+        const status = executor.getStatus();
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              message: 'No pending escalation to extend.',
+              taskStatus: status.currentTask?.status || 'no active task',
+              hint: 'Use god_codex_status to check task state.'
+            }, null, 2)
+          }]
+        };
+      }
+    } catch {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            message: 'Failed to extend timeout.'
           }, null, 2)
         }]
       };
@@ -8510,21 +8655,45 @@ class GodAgentMCPServer {
     if (!this.communications) {
       const codexConfig = this.configManager.getConfig();
 
+      // Check for Telegram env vars (auto-configure if available)
+      const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+      const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+      const hasTelegram = !!(telegramBotToken && telegramChatId);
+
       // Map CodexConfiguration communications to CommunicationConfig format
       const commsConfig: Partial<CommunicationConfig> = codexConfig.communications ? {
-        enabled: codexConfig.communications.enabled,
-        fallbackOrder: codexConfig.communications.fallbackOrder || ['phone', 'sms', 'slack', 'discord', 'email'],
+        enabled: codexConfig.communications.enabled || hasTelegram,
+        fallbackOrder: codexConfig.communications.fallbackOrder || ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
         timeoutMs: codexConfig.communications.timeoutMs || 300000,
         retryAttempts: codexConfig.communications.retryAttempts || 1,
-        webhookServer: codexConfig.communications.webhookServer || { port: 3456 }
+        webhookServer: codexConfig.communications.webhookServer || { port: 3456 },
+        // Auto-configure Telegram from env vars
+        telegram: hasTelegram ? {
+          enabled: true,
+          botToken: telegramBotToken!,
+          chatId: telegramChatId!
+        } : undefined
       } : {
-        enabled: false,  // Will be enabled via setup
-        fallbackOrder: ['phone', 'sms', 'slack', 'discord', 'email'],
+        // Default config - auto-enable if Telegram env vars present
+        enabled: hasTelegram,
+        fallbackOrder: ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
         timeoutMs: 300000,
         retryAttempts: 1,
-        webhookServer: { port: 3456 }
+        webhookServer: { port: 3456 },
+        telegram: hasTelegram ? {
+          enabled: true,
+          botToken: telegramBotToken!,
+          chatId: telegramChatId!
+        } : undefined
       };
+
       this.communications = new CommunicationManager(commsConfig);
+
+      // Initialize channels if enabled
+      if (commsConfig.enabled) {
+        this.communications.initialize();
+        console.log(`[MCP Server] CommunicationManager initialized - channels: ${this.communications.getConfiguredChannels().join(', ') || 'none'}`);
+      }
     }
     return this.communications;
   }
@@ -9126,6 +9295,7 @@ god_comms_setup mode="set" channel="email" config={
   private async handleSelfQuery(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = z.object({
       question: z.string(),
+      format: z.enum(['tokens', 'readable', 'full']).optional(),
       topK: z.number().optional()
     }).parse(args);
 
@@ -9139,13 +9309,33 @@ god_comms_setup mode="set" channel="email" config={
     }
 
     // Query self-knowledge
-    const answers = await bootstrap.querySelf(input.question, input.topK || 5);
+    const rawAnswers = await bootstrap.querySelf(input.question, input.topK || 5);
+
+    // Format based on requested format
+    const format = input.format || 'readable';
+    const answers = rawAnswers.map(answer => {
+      // Check if it's token format (starts with SYS: or similar)
+      if (answer.match(/^[A-Z]+:/m)) {
+        switch (format) {
+          case 'tokens':
+            return answer;
+          case 'full':
+            return SelfKnowledgeCompressor.decompressFull(answer);
+          case 'readable':
+          default:
+            return SelfKnowledgeCompressor.decompress(answer);
+        }
+      }
+      // Already readable, return as-is
+      return answer;
+    });
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           question: input.question,
+          format,
           answers,
           count: answers.length
         }, null, 2)

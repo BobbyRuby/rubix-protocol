@@ -1,0 +1,535 @@
+# RUBIX TOOL: PLAYWRIGHT
+# VERSION: 1.x
+# FOUNDATION: Microsoft|Node.js|Python|.NET|Java
+# PHILOSOPHY: auto_wait|multi_browser|reliable_e2e
+
+==============================================================================
+HISTORY
+==============================================================================
+2020:Microsoft>forked_Puppeteer_team>multi_browser_focus
+2020:v1.0>Chromium|Firefox|WebKit_support
+2021:v1.12>component_testing|React|Vue|Svelte
+2022:v1.20>API_testing|locator_improvements
+2023:v1.30>UI_mode|trace_viewer_improvements
+2024:v1.40>aria_snapshots|clock_API
+
+CREATORS
+Andrey_Lushnikov:ex_Puppeteer>lead
+Pavel_Feldman:DevTools_protocol_expert
+Yury_Semikhatsky:core_team
+
+WHY_OVER_ALTERNATIVES
++auto_wait:no_explicit_sleeps
++multi_browser:Chromium|Firefox|WebKit
++codegen:record_interactions
++trace_viewer:time_travel_debug
++parallel:fast_execution
++API_testing:built_in
+
+==============================================================================
+INSTALLATION_SETUP
+==============================================================================
+NODE
+npm init playwright@latest
+npx playwright install
+
+PYTHON
+pip install playwright
+playwright install
+
+PROJECT_STRUCTURE
+tests/
+  example.spec.ts
+playwright.config.ts
+
+CONFIG_ESSENTIALS
+import { defineConfig } from '@playwright/test';
+export default defineConfig({
+  testDir: './tests',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: 'html',
+  use: {
+    baseURL: 'http://localhost:3000',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ],
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+  },
+});
+
+==============================================================================
+LOCATOR_PATTERNS
+==============================================================================
+PREFERRED_LOCATORS_PRIORITY
+1:getByRole():accessibility|semantic|best
+2:getByText():visible_text
+3:getByLabel():form_inputs
+4:getByPlaceholder():inputs_without_label
+5:getByTestId():data-testid_fallback
+6:locator():CSS|XPath_last_resort
+
+ROLE_LOCATORS_BEST
+page.getByRole('button', { name: 'Submit' })
+page.getByRole('link', { name: 'Home' })
+page.getByRole('heading', { name: 'Welcome', level: 1 })
+page.getByRole('textbox', { name: 'Email' })
+page.getByRole('checkbox', { name: 'Remember me' })
+page.getByRole('combobox', { name: 'Country' })
+page.getByRole('listitem')
+page.getByRole('row')
+page.getByRole('cell')
+
+TEXT_LOCATORS
+page.getByText('Welcome')
+page.getByText('Welcome', { exact: true })
+page.getByText(/welcome/i)
+
+FORM_LOCATORS
+page.getByLabel('Email')
+page.getByPlaceholder('Enter email')
+
+TEST_ID_FALLBACK
+page.getByTestId('submit-btn')
+!use_when_no_accessible_name
+!configure:playwright.config.ts>use:{testIdAttribute:'data-cy'}
+
+CSS_XPATH_LAST_RESORT
+page.locator('.my-class')
+page.locator('#my-id')
+page.locator('[data-custom="value"]')
+page.locator('xpath=//button')
+
+CHAINING_FILTERING
+page.getByRole('listitem').filter({ hasText: 'Product 1' })
+page.getByRole('listitem').filter({ has: page.getByRole('button') })
+page.locator('article').getByRole('button', { name: 'Add' })
+
+NTH_LOCATORS
+page.getByRole('listitem').first()
+page.getByRole('listitem').last()
+page.getByRole('listitem').nth(2)
+
+ANTI_PATTERNS
+-page.locator('div > span:nth-child(3)'):fragile
+-page.$():legacy_API
+-hardcoded_waits:auto_wait_handles
+-XPath_for_simple:use_role|text
+
+==============================================================================
+ACTION_PATTERNS
+==============================================================================
+CLICKING
+await page.getByRole('button', { name: 'Submit' }).click()
+await page.getByRole('link', { name: 'Home' }).click()
+await locator.dblclick()
+await locator.click({ button: 'right' })
+await locator.click({ modifiers: ['Shift'] })
+await locator.click({ force: true })  // bypass actionability
+
+TYPING
+await page.getByLabel('Email').fill('test@example.com')
+await page.getByLabel('Email').clear()
+await page.getByLabel('Search').pressSequentially('hello', { delay: 100 })
+await page.keyboard.press('Enter')
+await page.keyboard.press('Control+a')
+
+SELECTING
+await page.getByLabel('Country').selectOption('us')
+await page.getByLabel('Country').selectOption({ label: 'United States' })
+await page.getByRole('checkbox').check()
+await page.getByRole('checkbox').uncheck()
+await page.getByRole('radio', { name: 'Option 1' }).check()
+
+FILE_UPLOAD
+await page.getByLabel('Upload').setInputFiles('file.pdf')
+await page.getByLabel('Upload').setInputFiles(['file1.pdf', 'file2.pdf'])
+await page.getByLabel('Upload').setInputFiles([])  // clear
+
+DRAG_DROP
+await page.locator('#source').dragTo(page.locator('#target'))
+
+HOVER
+await page.getByRole('link', { name: 'Menu' }).hover()
+
+FOCUS
+await page.getByLabel('Email').focus()
+await page.getByLabel('Email').blur()
+
+==============================================================================
+ASSERTION_PATTERNS
+==============================================================================
+AUTO_RETRY_ASSERTIONS
+await expect(page).toHaveTitle(/Home/)
+await expect(page).toHaveURL(/dashboard/)
+await expect(locator).toBeVisible()
+await expect(locator).toBeHidden()
+await expect(locator).toBeEnabled()
+await expect(locator).toBeDisabled()
+await expect(locator).toBeChecked()
+await expect(locator).toHaveText('Welcome')
+await expect(locator).toContainText('Welcome')
+await expect(locator).toHaveValue('test@example.com')
+await expect(locator).toHaveAttribute('href', '/home')
+await expect(locator).toHaveClass(/active/)
+await expect(locator).toHaveCount(5)
+await expect(locator).toHaveCSS('color', 'rgb(0, 0, 0)')
+
+NEGATION
+await expect(locator).not.toBeVisible()
+await expect(locator).not.toHaveText('Error')
+
+SOFT_ASSERTIONS
+await expect.soft(locator).toHaveText('A')
+await expect.soft(locator).toHaveText('B')
+// continues even if first fails
+
+POLLING_ASSERTIONS
+await expect.poll(async () => {
+  return await page.evaluate(() => window.loadComplete);
+}).toBe(true);
+
+SNAPSHOT_ASSERTIONS
+await expect(page).toHaveScreenshot('homepage.png')
+await expect(locator).toHaveScreenshot()
+
+NON_RETRY_ASSERTIONS
+expect(await locator.textContent()).toBe('Hello')
+!use_sparingly:no_auto_retry
+
+ANTI_PATTERNS
+-expect(await locator.isVisible()).toBe(true):use_toBeVisible()
+-manual_retry_loops:auto_retry_handles
+
+==============================================================================
+WAITING_PATTERNS
+==============================================================================
+AUTO_WAIT_BUILT_IN
++click():waits_for_actionable
++fill():waits_for_editable
++expect():retries_until_pass
+!explicit_waits_rarely_needed
+
+EXPLICIT_WAITS_WHEN_NEEDED
+await page.waitForURL('**/dashboard')
+await page.waitForLoadState('networkidle')
+await page.waitForLoadState('domcontentloaded')
+await page.waitForSelector('.loaded')
+await page.waitForFunction(() => window.appReady === true)
+await page.waitForResponse(resp => resp.url().includes('/api/data'))
+await page.waitForRequest(req => req.url().includes('/api/submit'))
+
+TIMEOUT_CONFIG
+await locator.click({ timeout: 10000 })
+await expect(locator).toBeVisible({ timeout: 30000 })
+
+test.setTimeout(60000)  // per test
+expect.setDefaultTimeout(10000)  // global assertions
+
+ANTI_PATTERNS
+-page.waitForTimeout(5000):fragile|slow
+-arbitrary_sleeps:use_proper_waits
+
+==============================================================================
+PAGE_OBJECT_MODEL
+==============================================================================
+POM_PATTERN
+// pages/login.page.ts
+export class LoginPage {
+  constructor(private page: Page) {}
+  
+  // Locators as getters
+  get emailInput() { return this.page.getByLabel('Email') }
+  get passwordInput() { return this.page.getByLabel('Password') }
+  get submitButton() { return this.page.getByRole('button', { name: 'Sign in' }) }
+  get errorMessage() { return this.page.getByRole('alert') }
+  
+  // Actions
+  async goto() {
+    await this.page.goto('/login')
+  }
+  
+  async login(email: string, password: string) {
+    await this.emailInput.fill(email)
+    await this.passwordInput.fill(password)
+    await this.submitButton.click()
+  }
+  
+  // Assertions
+  async expectError(message: string) {
+    await expect(this.errorMessage).toContainText(message)
+  }
+}
+
+// tests/login.spec.ts
+test('successful login', async ({ page }) => {
+  const loginPage = new LoginPage(page)
+  await loginPage.goto()
+  await loginPage.login('test@example.com', 'password')
+  await expect(page).toHaveURL('/dashboard')
+})
+
+FIXTURES_PATTERN
+// fixtures.ts
+import { test as base } from '@playwright/test'
+import { LoginPage } from './pages/login.page'
+
+export const test = base.extend<{ loginPage: LoginPage }>({
+  loginPage: async ({ page }, use) => {
+    await use(new LoginPage(page))
+  },
+})
+
+// usage
+test('login test', async ({ loginPage }) => {
+  await loginPage.goto()
+  await loginPage.login('test@example.com', 'password')
+})
+
+==============================================================================
+API_TESTING
+==============================================================================
+API_REQUEST_CONTEXT
+test('API test', async ({ request }) => {
+  const response = await request.get('/api/users')
+  expect(response.ok()).toBeTruthy()
+  expect(await response.json()).toContainEqual({ name: 'John' })
+})
+
+test('POST request', async ({ request }) => {
+  const response = await request.post('/api/users', {
+    data: { name: 'John', email: 'john@example.com' }
+  })
+  expect(response.status()).toBe(201)
+})
+
+AUTHENTICATED_API
+const context = await request.newContext({
+  extraHTTPHeaders: {
+    'Authorization': `Bearer ${token}`
+  }
+})
+
+MIXING_UI_AND_API
+test('create via API, verify in UI', async ({ page, request }) => {
+  // Create via API
+  await request.post('/api/posts', { data: { title: 'Test' } })
+  
+  // Verify in UI
+  await page.goto('/posts')
+  await expect(page.getByText('Test')).toBeVisible()
+})
+
+==============================================================================
+AUTHENTICATION_STATE
+==============================================================================
+GLOBAL_SETUP_AUTH
+// global-setup.ts
+async function globalSetup() {
+  const browser = await chromium.launch()
+  const page = await browser.newPage()
+  await page.goto('/login')
+  await page.getByLabel('Email').fill('admin@example.com')
+  await page.getByLabel('Password').fill('password')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.context().storageState({ path: 'auth.json' })
+  await browser.close()
+}
+
+// playwright.config.ts
+export default defineConfig({
+  globalSetup: require.resolve('./global-setup'),
+  use: {
+    storageState: 'auth.json',
+  },
+})
+
+PROJECT_BASED_AUTH
+projects: [
+  { name: 'setup', testMatch: /auth\.setup\.ts/ },
+  {
+    name: 'logged-in',
+    use: { storageState: 'auth.json' },
+    dependencies: ['setup'],
+  },
+  {
+    name: 'logged-out',
+    use: { storageState: { cookies: [], origins: [] } },
+  },
+]
+
+==============================================================================
+MOCKING_INTERCEPTION
+==============================================================================
+ROUTE_INTERCEPTION
+await page.route('**/api/users', route => {
+  route.fulfill({
+    status: 200,
+    body: JSON.stringify([{ id: 1, name: 'Mock User' }]),
+  })
+})
+
+await page.route('**/api/users', route => route.abort())
+
+MODIFY_RESPONSE
+await page.route('**/api/users', async route => {
+  const response = await route.fetch()
+  const json = await response.json()
+  json.push({ id: 999, name: 'Injected' })
+  route.fulfill({ response, json })
+})
+
+MOCK_PATTERNS
++mock_slow_APIs:faster_tests
++mock_third_party:stability
++mock_error_states:edge_case_testing
++mock_feature_flags:test_variations
+
+==============================================================================
+DEBUGGING
+==============================================================================
+DEBUG_COMMANDS
+npx playwright test --debug
+npx playwright test --ui
+npx playwright test --trace on
+PWDEBUG=1 npx playwright test
+
+TRACE_VIEWER
+npx playwright show-trace trace.zip
+
+CODEGEN
+npx playwright codegen localhost:3000
+npx playwright codegen --device="iPhone 13"
+
+CONSOLE_LOGGING
+page.on('console', msg => console.log(msg.text()))
+page.on('pageerror', err => console.log(err.message))
+
+SCREENSHOT_ON_FAILURE
+// playwright.config.ts
+use: {
+  screenshot: 'only-on-failure',
+  trace: 'retain-on-failure',
+}
+
+PAUSE_IN_TEST
+await page.pause()  // opens inspector
+
+==============================================================================
+PARALLEL_EXECUTION
+==============================================================================
+CONFIG
+fullyParallel: true  // tests in file run parallel
+workers: 4  // parallel workers
+
+SERIAL_WHEN_NEEDED
+test.describe.serial('ordered tests', () => {
+  test('first', async () => {})
+  test('second', async () => {})
+})
+
+ISOLATION
++each_test_gets_fresh_context
++no_shared_state_by_default
+!use_fixtures_for_shared_setup
+
+==============================================================================
+VISUAL_TESTING
+==============================================================================
+SCREENSHOT_COMPARISON
+await expect(page).toHaveScreenshot('homepage.png')
+await expect(page).toHaveScreenshot('homepage.png', { maxDiffPixels: 100 })
+await expect(locator).toHaveScreenshot()
+
+UPDATE_SNAPSHOTS
+npx playwright test --update-snapshots
+
+MASKING_DYNAMIC
+await expect(page).toHaveScreenshot({
+  mask: [page.locator('.timestamp'), page.locator('.random-id')]
+})
+
+==============================================================================
+COMPONENT_TESTING
+==============================================================================
+SETUP
+npm init playwright@latest -- --ct
+
+REACT_EXAMPLE
+// Button.spec.tsx
+import { test, expect } from '@playwright/experimental-ct-react'
+import { Button } from './Button'
+
+test('renders button', async ({ mount }) => {
+  const component = await mount(<Button label="Click me" />)
+  await expect(component).toContainText('Click me')
+  await component.click()
+})
+
+SUPPORTED_FRAMEWORKS
+React|Vue|Svelte|Solid
+
+==============================================================================
+SCRAPING_PATTERNS
+==============================================================================
+BASIC_SCRAPE
+const browser = await chromium.launch()
+const page = await browser.newPage()
+await page.goto('https://example.com')
+
+const titles = await page.locator('h2').allTextContents()
+const links = await page.locator('a').evaluateAll(
+  els => els.map(el => ({ text: el.textContent, href: el.href }))
+)
+
+await browser.close()
+
+PAGINATION_SCRAPE
+const allData = []
+while (true) {
+  const items = await page.locator('.item').allTextContents()
+  allData.push(...items)
+  
+  const nextBtn = page.getByRole('button', { name: 'Next' })
+  if (await nextBtn.isDisabled()) break
+  await nextBtn.click()
+  await page.waitForLoadState('networkidle')
+}
+
+STEALTH_MODE
+const browser = await chromium.launch({ headless: false })
+const context = await browser.newContext({
+  userAgent: 'Mozilla/5.0...',
+  viewport: { width: 1920, height: 1080 },
+})
+
+HANDLING_CAPTCHA
+!manual_intervention_needed
+!consider_official_APIs_instead
++use_headed_mode:headless:false
++slow_down_actions:delay
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Hardcoded_Waits         | waitForTimeout(5000)             | proper_waits|auto_wait
+Fragile_Selectors       | div>span:nth-child(3)            | getByRole|getByText
+No_POM                  | locators_repeated_everywhere     | Page_Object_Model
+Manual_Retry            | while_loop_checking_condition    | expect()_auto_retry
+isVisible()_Check       | expect(await x.isVisible())      | expect(x).toBeVisible()
+Test_Interdependence    | test_B_depends_on_test_A         | isolate|fixtures
+No_Base_URL             | full_URLs_everywhere             | baseURL_config
+Screenshot_Abuse        | screenshot_every_step            | only_on_failure
+Sync_Assertions         | textContent()_then_expect        | async_expect

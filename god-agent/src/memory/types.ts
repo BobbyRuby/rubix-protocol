@@ -17,6 +17,9 @@ export type MemoryType =
   | 'error_pattern'   // Known error + resolution
   | 'success_pattern' // Proven successful approach
   | 'system'          // System overview
+  | 'bug_fix'         // Bug discovered and fixed
+  | 'dev_feature'     // New feature/module developed
+  | 'arch_insight'    // Architecture lesson learned
   | 'generic';        // Fallback for untyped content
 
 /**
@@ -77,4 +80,7 @@ export const TYPE_PREFIXES: Record<string, MemoryType> = {
   'ERR:': 'error_pattern',
   'PAT:': 'success_pattern',
   'SYS:': 'system',
+  'BUG:': 'bug_fix',
+  'DEV:': 'dev_feature',
+  'ARCH:': 'arch_insight',
 };

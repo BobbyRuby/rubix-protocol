@@ -1,0 +1,474 @@
+# RUBIX TOOL: PACKAGE_MANAGERS_MONOREPOS
+# COVERAGE: npm|yarn|pnpm|Turborepo|Nx
+# PHILOSOPHY: dependency_management|workspace_efficiency|reproducible_builds
+
+==============================================================================
+NPM_PATTERNS
+==============================================================================
+HISTORY
+2010:Isaac_Schlueter>created_for_Node.js
+2012:v1.0>stable_release
+2020:v7.0>workspaces_support
+2022:v9.0>improved_lockfile
+2024:v10.0>faster_installs
+
+COMMANDS
+npm init -y                    # create package.json
+npm install                    # install from lockfile
+npm install package            # add dependency
+npm install -D package         # add devDependency
+npm install -g package         # global install
+npm uninstall package          # remove
+npm update                     # update all
+npm outdated                   # check outdated
+npm audit                      # security check
+npm audit fix                  # auto-fix vulnerabilities
+npm ls                         # list installed
+npm ls --depth=0               # top-level only
+npm cache clean --force        # clear cache
+npm ci                         # clean install (CI)
+npm run script                 # run script
+npm exec package               # run binary
+npx package                    # run without install
+
+PACKAGE_JSON_ESSENTIALS
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "vitest"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
+
+NPM_WORKSPACES
+// package.json (root)
+{
+  "name": "monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ]
+}
+
+npm install                    # installs all workspaces
+npm run build -w packages/ui   # run in specific workspace
+npm run build --workspaces     # run in all workspaces
+npm install lodash -w apps/web # add to specific workspace
+
+LOCKFILE
+package-lock.json:exact_versions
+!always_commit_lockfile
+!npm_ci_in_CI:uses_lockfile_exactly
+
+==============================================================================
+YARN_PATTERNS
+==============================================================================
+HISTORY
+2016:Facebook>created>faster_than_npm
+2020:Yarn_2_Berry>PnP|zero_installs
+2022:Yarn_3>improved_PnP
+2023:Yarn_4>hardened_mode
+
+YARN_CLASSIC_V1
+yarn init
+yarn                           # install
+yarn add package
+yarn add -D package            # dev
+yarn remove package
+yarn upgrade
+yarn upgrade-interactive
+yarn run script
+yarn script                    # shorthand
+
+YARN_BERRY_V2+
+yarn set version stable        # upgrade to berry
+yarn                           # install
+yarn add package
+yarn dlx package               # like npx
+
+PNP_PLUG_N_PLAY
++no_node_modules:faster
++zero_installs:commit_.yarn/cache
+-.pnp.cjs:resolution_file
+
+// .yarnrc.yml
+nodeLinker: pnp                # or node-modules
+
+YARN_WORKSPACES
+// package.json
+{
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}
+
+yarn workspace package-name add lodash
+yarn workspace package-name run build
+yarn workspaces foreach run build
+
+LOCKFILE
+yarn.lock:exact_versions
+!always_commit
+
+==============================================================================
+PNPM_PATTERNS
+==============================================================================
+HISTORY
+2017:Zoltan_Kochan>created
++content_addressable_storage
++hard_links:disk_efficient
++strict:no_phantom_deps
+
+WHY_PNPM
++fast:parallel_installs
++disk_efficient:single_copy_per_version
++strict:prevents_phantom_dependencies
++great_monorepo_support
+
+COMMANDS
+pnpm init
+pnpm install
+pnpm add package
+pnpm add -D package
+pnpm remove package
+pnpm update
+pnpm outdated
+pnpm exec package
+pnpm dlx package               # like npx
+pnpm store prune               # clean store
+
+PNPM_WORKSPACES
+// pnpm-workspace.yaml
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+pnpm install                   # all workspaces
+pnpm --filter package-name add lodash
+pnpm --filter package-name run build
+pnpm -r run build              # recursive all
+pnpm --filter "package-name..." run build  # with deps
+pnpm --filter "...package-name" run build  # dependents
+
+FILTERING
+--filter package-name          # exact
+--filter "package-*"           # glob
+--filter "./packages/**"       # path
+--filter "...package-name"     # package and dependents
+--filter "package-name..."     # package and dependencies
+--filter "...[origin/main]"    # changed since branch
+
+LOCKFILE
+pnpm-lock.yaml
+!always_commit
+
+NPMRC_CONFIG
+// .npmrc
+shamefully-hoist=true          # compatibility mode
+strict-peer-dependencies=false
+auto-install-peers=true
+
+==============================================================================
+PACKAGE_MANAGER_COMPARISON
+==============================================================================
+FEATURE          | NPM    | YARN   | PNPM
+-----------------|--------|--------|--------
+Speed            | slow   | fast   | fastest
+Disk_Usage       | high   | high   | low
+Monorepo         | basic  | good   | best
+Strictness       | loose  | loose  | strict
+Adoption         | highest| high   | growing
+Phantom_Deps     | allows | allows | prevents
+
+WHEN_TO_USE
+npm:default|simple_projects|max_compatibility
+yarn:existing_yarn_projects|PnP_wanted
+pnpm:monorepos|disk_constrained|strict_deps
+
+COREPACK
++Node_16.9+:built_in_manager_manager
+corepack enable
+corepack prepare pnpm@latest --activate
+
+// package.json
+{
+  "packageManager": "pnpm@9.0.0"
+}
+
+==============================================================================
+MONOREPO_PATTERNS
+==============================================================================
+STRUCTURE_BASIC
+monorepo/
+  package.json
+  packages/
+    shared/package.json
+    ui/package.json
+    utils/package.json
+  apps/
+    web/package.json
+    api/package.json
+
+STRUCTURE_ADVANCED
+monorepo/
+  package.json
+  turbo.json|nx.json
+  packages/
+    config-eslint/
+    config-typescript/
+    ui/
+    utils/
+  apps/
+    web/
+    api/
+    docs/
+  tooling/
+    scripts/
+
+INTERNAL_PACKAGES
+// packages/ui/package.json
+{
+  "name": "@repo/ui",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./button": "./src/button.tsx"
+  }
+}
+
+// apps/web/package.json
+{
+  "dependencies": {
+    "@repo/ui": "workspace:*"
+  }
+}
+
+WORKSPACE_PROTOCOL
+workspace:*                    # any version
+workspace:^                    # compatible
+workspace:~                    # patch
+
+==============================================================================
+TURBOREPO_PATTERNS
+==============================================================================
+WHY_TURBOREPO
++caching:local_and_remote
++parallel_execution
++dependency_aware_ordering
++Vercel_owned:good_integration
+
+SETUP
+npx create-turbo@latest
+
+// turbo.json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**"]
+    },
+    "test": {
+      "dependsOn": ["build"]
+    },
+    "lint": {},
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}
+
+COMMANDS
+turbo build                    # build all
+turbo build --filter=web       # specific package
+turbo build --filter=web...    # with dependencies
+turbo build --filter=...web    # dependents
+turbo dev                      # dev all
+turbo run lint test            # multiple tasks
+
+CACHING
+outputs:files_to_cache
+inputs:files_that_invalidate_cache
+
+// turbo.json
+{
+  "tasks": {
+    "build": {
+      "outputs": ["dist/**"],
+      "inputs": ["src/**", "package.json", "tsconfig.json"]
+    }
+  }
+}
+
+REMOTE_CACHING
+turbo login
+turbo link
+
+// or self-hosted
+TURBO_TEAM=my-team
+TURBO_TOKEN=xxx
+TURBO_API=https://my-cache.com
+
+==============================================================================
+NX_PATTERNS
+==============================================================================
+WHY_NX
++powerful_generators
++computation_caching
++affected_commands
++plugins_ecosystem
+
+SETUP
+npx create-nx-workspace@latest
+
+// nx.json
+{
+  "targetDefaults": {
+    "build": {
+      "dependsOn": ["^build"],
+      "cache": true
+    },
+    "test": {
+      "cache": true
+    }
+  }
+}
+
+COMMANDS
+nx build app-name
+nx test lib-name
+nx affected:build              # only changed
+nx affected:test
+nx graph                       # dependency graph
+nx generate @nx/react:library my-lib
+
+AFFECTED_COMMANDS
++only_run_on_changed_code
++CI_optimization
+
+nx affected --target=build --base=main --head=HEAD
+
+==============================================================================
+DEPENDENCY_MANAGEMENT
+==============================================================================
+VERSION_RANGES
+^1.2.3:minor_updates_ok       # >=1.2.3 <2.0.0
+~1.2.3:patch_updates_ok       # >=1.2.3 <1.3.0
+1.2.3:exact_version
+*:any_version
+>=1.2.3:minimum
+
+PEER_DEPENDENCIES
++host_provides_dependency
++plugin_pattern
++avoid_duplicate_packages
+
+// package.json (library)
+{
+  "peerDependencies": {
+    "react": "^18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": false }
+  }
+}
+
+OPTIONAL_DEPENDENCIES
+{
+  "optionalDependencies": {
+    "fsevents": "^2.3.0"
+  }
+}
+
+OVERRIDES_RESOLUTIONS
+// npm (package.json)
+{
+  "overrides": {
+    "vulnerable-package": "2.0.0"
+  }
+}
+
+// yarn (package.json)
+{
+  "resolutions": {
+    "vulnerable-package": "2.0.0"
+  }
+}
+
+// pnpm (package.json)
+{
+  "pnpm": {
+    "overrides": {
+      "vulnerable-package": "2.0.0"
+    }
+  }
+}
+
+==============================================================================
+PUBLISHING_PATTERNS
+==============================================================================
+PUBLISHING
+npm publish
+npm publish --access public    # scoped public
+npm version patch|minor|major
+npm pack                       # create tarball
+
+PREPUBLISH_CONFIG
+{
+  "scripts": {
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}
+
+CHANGESETS
++monorepo_versioning
++changelog_generation
+
+npx changeset init
+npx changeset                  # create changeset
+npx changeset version          # bump versions
+npx changeset publish          # publish all
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+No_Lockfile             | missing_lock_file                | commit_lockfile
+Mixed_Managers          | npm_and_yarn_lockfiles           | pick_one
+Phantom_Deps            | import_without_in_pkg.json       | use_pnpm|add_dep
+Star_Versions           | "dep":"*"                        | pin_versions
+No_Engine_Lock          | works_on_my_machine              | engines_field
+Hoisted_Conflicts       | wrong_version_resolved           | pnpm|overrides
+No_Private_Flag         | accidental_publish               | private:true
+Fat_Package             | publishing_src|tests             | files_field
+No_Caching              | slow_CI                          | turbo|nx
+Circular_Deps           | A>B>A                            | refactor_structure

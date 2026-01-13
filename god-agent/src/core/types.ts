@@ -235,14 +235,25 @@ export interface LScoreConfig {
 }
 
 export interface CodexLLMConfig {
-  /** Anthropic API key for code generation */
+  /** Anthropic API key for code generation (optional - only for API fallback) */
   apiKey?: string;
-  /** Claude model to use (default: claude-opus-4-5-20250514) */
+  /** Claude model to use for API calls (default: claude-opus-4-5-20251101) */
   model?: string;
   /** Maximum tokens for generation (default: 8192) */
   maxTokens?: number;
   /** Extended thinking (ultrathink) configuration */
   extendedThinking?: ExtendedThinkingConfig;
+  /**
+   * Execution mode:
+   * - cli-first: Try Claude Code CLI first (uses Max subscription), fall back to API (default)
+   * - api-only: Only use Anthropic API (requires ANTHROPIC_API_KEY)
+   * - cli-only: Only use Claude Code CLI, never fall back to API
+   */
+  executionMode?: 'cli-first' | 'api-only' | 'cli-only';
+  /** CLI model preference: opus (default), sonnet, haiku */
+  cliModel?: 'opus' | 'sonnet' | 'haiku';
+  /** CLI timeout in ms (default: 300000 = 5 minutes) */
+  cliTimeout?: number;
 }
 
 /**

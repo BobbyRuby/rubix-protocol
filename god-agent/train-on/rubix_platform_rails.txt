@@ -1,0 +1,422 @@
+# RUBIX PLATFORM: RUBY_ON_RAILS
+# VERSION: 7.x
+# FOUNDATION: Ruby|MIT_license
+# PHILOSOPHY: convention_over_configuration|DRY|programmer_happiness
+
+==============================================================================
+HISTORY
+==============================================================================
+2004:David_Heinemeier_Hansson>extracted_from_Basecamp
+2005:v1.0>MVC|ActiveRecord|ActionPack
+2007:v2.0>RESTful_resources|migrations
+2010:v3.0>Bundler|ARel|unobtrusive_JS
+2013:v4.0>Turbolinks|strong_params|Russian_doll_caching
+2016:v5.0>ActionCable|API_mode|Yarn
+2019:v6.0>ActionMailbox|ActionText|Webpacker
+2021:v7.0>Hotwire|import_maps|encrypted_DB
+2023:v7.1>Dockerfile_by_default|async_queries
+2024:v8.0>Kamal_deploy|Solid_adapters
+
+CORE_MAINTAINERS
+DHH:creator|Basecamp|HEY
+Rafael_França:core_team_lead
+Aaron_Patterson:tenderlove|performance
+Eileen_Uchitelle:database|GitHub
+Jeremy_Daer:core_team
+
+ARCHITECTURE:MVC
+
+==============================================================================
+ACTIVERECORD_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++scopes:reusable_query_chains
+scope :published, -> { where(published: true) }
+scope :recent, -> { order(created_at: :desc) }
+*Post.published.recent
+
++callbacks:lifecycle_hooks
+before_save :normalize_title
+after_create :send_notification
+!avoid_heavy_logic|use_service_objects
+
++validations:data_integrity
+validates :title, presence: true, length: { maximum: 100 }
+validates :email, uniqueness: true, format: { with: URI::MailTo::EMAIL_REGEXP }
+
++associations:relationship_definitions
+has_many :comments, dependent: :destroy
+belongs_to :author, class_name: 'User'
+has_many :tags, through: :taggings
+
+EAGER_LOADING
++includes():prevent_N+1|smart_choice
++preload():separate_queries
++eager_load():LEFT_OUTER_JOIN
++joins():INNER_JOIN|no_load
+
+*Post.includes(:author, :comments).where(published: true)
+
+ANTI_PATTERNS
+-fat_models:extract_concerns|services
+-callbacks_with_side_effects:use_service_objects
+-N+1_queries:use_includes|bullet_gem
+-default_scope:surprising_behavior|avoid
+
+==============================================================================
+CONTROLLER_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++RESTful_actions:index|show|new|create|edit|update|destroy
++strong_params:whitelist_input
++before_action:shared_setup
++respond_to:format_handling
+
+class PostsController < ApplicationController
+  before_action :set_post, only: [:show, :edit, :update, :destroy]
+  
+  def create
+    @post = Post.new(post_params)
+    if @post.save
+      redirect_to @post, notice: 'Created'
+    else
+      render :new, status: :unprocessable_entity
+    end
+  end
+  
+  private
+  def post_params
+    params.require(:post).permit(:title, :content, :published)
+  end
+end
+
+SERVICE_OBJECTS
++app/services/create_order.rb
++single_responsibility
++call_method_convention
+
+class CreateOrder
+  def initialize(user:, items:)
+    @user = user
+    @items = items
+  end
+  
+  def call
+    ActiveRecord::Base.transaction do
+      order = Order.create!(user: @user)
+      @items.each { |item| order.items.create!(item) }
+      OrderMailer.confirmation(order).deliver_later
+      order
+    end
+  end
+end
+
+*CreateOrder.new(user: current_user, items: cart_items).call
+
+ANTI_PATTERNS
+-fat_controllers:extract_to_service|model
+-business_logic_in_controller:service_object
+-not_using_strong_params:security_risk
+-too_many_instance_vars:presenter|decorator
+
+==============================================================================
+FORM_OBJECTS
+==============================================================================
++complex_form_logic
++multi_model_forms
++virtual_attributes
+
+class RegistrationForm
+  include ActiveModel::Model
+  attr_accessor :email, :password, :company_name
+  
+  validates :email, :password, :company_name, presence: true
+  
+  def save
+    return false unless valid?
+    ActiveRecord::Base.transaction do
+      user = User.create!(email: email, password: password)
+      Company.create!(name: company_name, owner: user)
+    end
+    true
+  end
+end
+
+==============================================================================
+QUERY_OBJECTS
+==============================================================================
++complex_queries_in_class
++chainable
++testable
+
+class SearchPosts
+  def initialize(scope = Post.all)
+    @scope = scope
+  end
+  
+  def call(params)
+    @scope = filter_by_status(params[:status]) if params[:status]
+    @scope = filter_by_author(params[:author_id]) if params[:author_id]
+    @scope = search_content(params[:q]) if params[:q]
+    @scope
+  end
+  
+  private
+  def filter_by_status(status)
+    @scope.where(status: status)
+  end
+end
+
+*SearchPosts.new.call(params)
+
+==============================================================================
+CONCERNS_PATTERNS
+==============================================================================
++shared_behavior_across_models
++app/models/concerns/
++include_in_model
+
+module Publishable
+  extend ActiveSupport::Concern
+  
+  included do
+    scope :published, -> { where(published: true) }
+    scope :draft, -> { where(published: false) }
+  end
+  
+  def publish!
+    update!(published: true, published_at: Time.current)
+  end
+end
+
+class Post < ApplicationRecord
+  include Publishable
+end
+
+ANTI_PATTERNS
+-concern_as_dumping_ground:single_responsibility
+-deeply_nested_concerns:hard_to_trace
+-concerns_with_callbacks:surprising_behavior
+
+==============================================================================
+VIEWS_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++partials:_partial.html.erb
++helpers:view_logic_extraction
++presenters|decorators:complex_view_logic
++ViewComponents:encapsulated_view_objects
+
+PRESENTERS
+class PostPresenter
+  def initialize(post, view_context)
+    @post = post
+    @h = view_context
+  end
+  
+  def formatted_date
+    @h.l(@post.created_at, format: :long)
+  end
+  
+  def author_link
+    @h.link_to(@post.author.name, @post.author)
+  end
+end
+
+VIEW_COMPONENTS
+class AlertComponent < ViewComponent::Base
+  def initialize(type:, message:)
+    @type = type
+    @message = message
+  end
+end
+
+ANTI_PATTERNS
+-logic_in_views:extract_to_helper|presenter
+-N+1_in_partials:pass_preloaded_data
+-fat_helpers:use_presenters
+
+==============================================================================
+HOTWIRE_TURBO_STIMULUS
+==============================================================================
+TURBO_FRAMES
++partial_page_updates
++<turbo-frame id="posts">
++turbo_frame_tag
+
+TURBO_STREAMS
++real_time_updates
++append|prepend|replace|remove|update
+
+respond_to do |format|
+  format.turbo_stream { render turbo_stream: turbo_stream.append('posts', @post) }
+  format.html { redirect_to posts_path }
+end
+
+STIMULUS
++JS_sprinkles
++data-controller|data-action|data-target
++controllers/hello_controller.js
+
+ANTI_PATTERNS
+-SPA_when_Hotwire_suffices:simpler_approach
+-not_using_turbo_frames:full_page_loads
+-heavy_JS_frameworks:Stimulus_for_sprinkles
+
+==============================================================================
+API_PATTERNS
+==============================================================================
+API_MODE
+rails new app --api
+
+SERIALIZERS
++ActiveModelSerializers
++Jbuilder
++fast_jsonapi|jsonapi-serializer
+
+class PostSerializer < ActiveModel::Serializer
+  attributes :id, :title, :content, :created_at
+  belongs_to :author
+  has_many :comments
+end
+
+VERSIONING
+namespace :api do
+  namespace :v1 do
+    resources :posts
+  end
+end
+
+ANTI_PATTERNS
+-no_versioning:breaking_changes
+-exposing_all_attributes:explicit_serializer
+-N+1_in_serializer:includes_in_controller
+-no_pagination:always_paginate
+
+==============================================================================
+BACKGROUND_JOBS
+==============================================================================
+GOOD_PATTERNS
++ActiveJob:adapter_agnostic
++Sidekiq:Redis_backend|performance
++perform_later:async_execution
++perform_in:delayed_execution
+
+class ProcessOrderJob < ApplicationJob
+  queue_as :default
+  retry_on StandardError, wait: :exponentially_longer, attempts: 3
+  
+  def perform(order_id)
+    order = Order.find(order_id)
+    OrderProcessor.new(order).process
+  end
+end
+
+*ProcessOrderJob.perform_later(order.id)
+
+ANTI_PATTERNS
+-passing_AR_objects:pass_ID|serialize_problems
+-no_error_handling:retry_on|discard_on
+-heavy_sync_work:move_to_job
+
+==============================================================================
+TESTING_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++RSpec:preferred_runner
++FactoryBot:test_data
++Capybara:integration_testing
++VCR|WebMock:external_API_stubbing
++SimpleCov:coverage
+
+RSpec.describe Post, type: :model do
+  describe 'validations' do
+    it { should validate_presence_of(:title) }
+  end
+  
+  describe '#publish!' do
+    let(:post) { create(:post, published: false) }
+    it 'sets published to true' do
+      post.publish!
+      expect(post.published).to be true
+    end
+  end
+end
+
+REQUEST_SPECS
+RSpec.describe 'Posts API', type: :request do
+  describe 'GET /posts' do
+    it 'returns posts' do
+      create_list(:post, 3)
+      get '/posts'
+      expect(response).to have_http_status(:ok)
+      expect(JSON.parse(response.body).size).to eq(3)
+    end
+  end
+end
+
+ANTI_PATTERNS
+-not_using_factories:verbose_setup
+-testing_rails_not_app
+-slow_feature_specs:balance_unit_integration
+-no_database_cleaner:test_pollution
+
+==============================================================================
+PROJECT_STRUCTURE
+==============================================================================
+STANDARD
+app/
+  controllers/
+  models/
+  views/
+  helpers/
+  jobs/
+  mailers/
+config/
+db/
+lib/
+spec|test/
+
+SCALABLE
+app/
+  controllers/
+  models/
+  services/
+  queries/
+  forms/
+  presenters/
+  validators/
+  policies/
+
+ENGINES_MODULAR
+engines/
+  authentication/
+  billing/
+  reporting/
+*mounted_in_routes
+
+==============================================================================
+GEMS_ESSENTIAL
+==============================================================================
+devise:authentication
+pundit|cancancan:authorization
+sidekiq:background_jobs
+rspec-rails:testing
+factory_bot_rails:test_data
+bullet:N+1_detection
+rubocop:linting
+brakeman:security_scanning
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Fat_Model               | 500+LOC|mixed_concerns           | concerns|services
+Fat_Controller          | business_logic_present           | service_objects
+N+1_Query               | queries_in_loop                  | includes|bullet
+Callback_Hell           | many_AR_callbacks                | service_objects
+Default_Scope           | default_scope_present            | remove|explicit_scope
+Logic_In_View           | complex_conditionals             | presenter|helper
+God_Service             | service_with_many_methods        | split_by_concern
+AR_Object_In_Job        | passing_model_to_job             | pass_ID_only

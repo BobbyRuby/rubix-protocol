@@ -1,0 +1,555 @@
+# RUBIX TOOL: TESTING_FRAMEWORKS
+# COVERAGE: Jest|Vitest|Pytest|RSpec|xUnit
+# PHILOSOPHY: TDD|fast_feedback|confidence
+
+==============================================================================
+TESTING_PYRAMID
+==============================================================================
+UNIT:70%:fast|isolated|many
+INTEGRATION:20%:module_boundaries|some
+E2E:10%:slow|brittle|few
+
+TDD_CYCLE
+RED:write_failing_test
+GREEN:minimal_code_to_pass
+REFACTOR:improve_without_breaking
+
+==============================================================================
+VITEST_PATTERNS
+==============================================================================
+WHY_VITEST
++Vite_native:same_config
++Jest_compatible_API
++ESM_first
++fast:esbuild|Vite
+
+SETUP
+npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom
+
+// vite.config.ts
+/// <reference types="vitest" />
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+    },
+  },
+})
+
+// src/test/setup.ts
+import '@testing-library/jest-dom'
+
+BASIC_TEST
+import { describe, it, expect, vi } from 'vitest'
+
+describe('Calculator', () => {
+  it('adds two numbers', () => {
+    expect(add(1, 2)).toBe(3)
+  })
+
+  it('throws on invalid input', () => {
+    expect(() => add('a', 2)).toThrow()
+  })
+})
+
+ASYNC_TESTS
+it('fetches user', async () => {
+  const user = await fetchUser(1)
+  expect(user.name).toBe('John')
+})
+
+MOCKING
+// Mock module
+vi.mock('./api', () => ({
+  fetchUser: vi.fn(() => Promise.resolve({ name: 'Mock' }))
+}))
+
+// Mock function
+const mockFn = vi.fn()
+mockFn.mockReturnValue(42)
+mockFn.mockResolvedValue({ data: 'async' })
+
+// Spy
+const spy = vi.spyOn(object, 'method')
+expect(spy).toHaveBeenCalledWith('arg')
+
+// Timer mocks
+vi.useFakeTimers()
+vi.advanceTimersByTime(1000)
+vi.useRealTimers()
+
+REACT_TESTING
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { Button } from './Button'
+
+it('handles click', async () => {
+  const onClick = vi.fn()
+  render(<Button onClick={onClick}>Click me</Button>)
+  
+  fireEvent.click(screen.getByRole('button', { name: /click me/i }))
+  
+  expect(onClick).toHaveBeenCalledTimes(1)
+})
+
+it('shows loading state', async () => {
+  render(<AsyncComponent />)
+  
+  expect(screen.getByText(/loading/i)).toBeInTheDocument()
+  
+  await waitFor(() => {
+    expect(screen.getByText(/loaded/i)).toBeInTheDocument()
+  })
+})
+
+COMMANDS
+npx vitest              # watch mode
+npx vitest run          # single run
+npx vitest --coverage   # with coverage
+npx vitest --ui         # UI mode
+
+==============================================================================
+JEST_PATTERNS
+==============================================================================
+SETUP
+npm install -D jest @types/jest ts-jest @testing-library/react @testing-library/jest-dom
+
+// jest.config.js
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'jsdom',
+  setupFilesAfterEnv: ['<rootDir>/src/test/setup.ts'],
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+  },
+  coverageThreshold: {
+    global: { branches: 80, functions: 80, lines: 80 },
+  },
+}
+
+MATCHERS
+expect(value).toBe(exact)
+expect(value).toEqual(deep_equal)
+expect(value).toBeTruthy()
+expect(value).toBeFalsy()
+expect(value).toBeNull()
+expect(value).toBeDefined()
+expect(value).toBeUndefined()
+expect(value).toContain(item)
+expect(value).toHaveLength(n)
+expect(value).toMatch(/regex/)
+expect(value).toThrow()
+expect(value).toThrowError('message')
+expect(value).toHaveBeenCalled()
+expect(value).toHaveBeenCalledWith(args)
+expect(value).toHaveBeenCalledTimes(n)
+expect(value).toMatchSnapshot()
+expect(value).toMatchInlineSnapshot()
+
+SETUP_TEARDOWN
+beforeAll(() => {})     // once before all tests
+beforeEach(() => {})    // before each test
+afterEach(() => {})     // after each test
+afterAll(() => {})      // once after all tests
+
+MOCKING
+// Mock module
+jest.mock('./api')
+const { fetchUser } = require('./api')
+fetchUser.mockResolvedValue({ name: 'Mock' })
+
+// Mock implementation
+jest.mock('./api', () => ({
+  fetchUser: jest.fn(() => Promise.resolve({ name: 'Mock' }))
+}))
+
+// Spy
+const spy = jest.spyOn(object, 'method')
+
+// Timer mocks
+jest.useFakeTimers()
+jest.advanceTimersByTime(1000)
+jest.useRealTimers()
+
+COMMANDS
+npx jest
+npx jest --watch
+npx jest --coverage
+npx jest --updateSnapshot
+
+==============================================================================
+PYTEST_PATTERNS
+==============================================================================
+SETUP
+pip install pytest pytest-cov pytest-asyncio
+
+# pyproject.toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --cov=src --cov-report=html"
+
+BASIC_TEST
+def test_add():
+    assert add(1, 2) == 3
+
+def test_raises():
+    with pytest.raises(ValueError):
+        divide(1, 0)
+
+class TestCalculator:
+    def test_add(self):
+        calc = Calculator()
+        assert calc.add(1, 2) == 3
+
+FIXTURES
+@pytest.fixture
+def user():
+    return User(name="Test", email="test@example.com")
+
+@pytest.fixture
+def db_session():
+    session = create_session()
+    yield session
+    session.rollback()
+
+def test_user_name(user):
+    assert user.name == "Test"
+
+FIXTURE_SCOPES
+@pytest.fixture(scope="function")  # default, per test
+@pytest.fixture(scope="class")     # per class
+@pytest.fixture(scope="module")    # per file
+@pytest.fixture(scope="session")   # entire run
+
+PARAMETRIZE
+@pytest.mark.parametrize("a,b,expected", [
+    (1, 2, 3),
+    (0, 0, 0),
+    (-1, 1, 0),
+])
+def test_add(a, b, expected):
+    assert add(a, b) == expected
+
+ASYNC_TESTS
+@pytest.mark.asyncio
+async def test_async_fetch():
+    result = await fetch_data()
+    assert result["status"] == "ok"
+
+MOCKING
+from unittest.mock import Mock, patch, MagicMock
+
+def test_with_mock():
+    mock_api = Mock()
+    mock_api.fetch.return_value = {"name": "Test"}
+    
+    result = service.get_user(mock_api)
+    
+    mock_api.fetch.assert_called_once()
+
+@patch('module.external_api')
+def test_with_patch(mock_api):
+    mock_api.return_value = {"data": "mocked"}
+    result = function_under_test()
+    assert result == "mocked"
+
+MARKERS
+@pytest.mark.skip(reason="Not implemented")
+@pytest.mark.skipif(sys.version < "3.10", reason="Requires 3.10+")
+@pytest.mark.xfail(reason="Known bug")
+@pytest.mark.slow
+@pytest.mark.integration
+
+# pytest.ini or pyproject.toml
+markers = [
+    "slow: marks tests as slow",
+    "integration: integration tests",
+]
+
+# Run specific markers
+pytest -m "not slow"
+pytest -m integration
+
+COMMANDS
+pytest
+pytest -v                    # verbose
+pytest -x                    # stop on first fail
+pytest --lf                  # last failed
+pytest -k "test_add"         # filter by name
+pytest --cov=src             # coverage
+
+==============================================================================
+RSPEC_PATTERNS
+==============================================================================
+SETUP
+# Gemfile
+group :test do
+  gem 'rspec-rails'
+  gem 'factory_bot_rails'
+  gem 'faker'
+end
+
+# rails generate rspec:install
+
+BASIC_SPEC
+RSpec.describe Calculator do
+  describe '#add' do
+    it 'adds two numbers' do
+      calc = Calculator.new
+      expect(calc.add(1, 2)).to eq(3)
+    end
+
+    it 'handles negative numbers' do
+      calc = Calculator.new
+      expect(calc.add(-1, 1)).to eq(0)
+    end
+  end
+end
+
+MATCHERS
+expect(value).to eq(expected)
+expect(value).to be(exact_object)
+expect(value).to be_truthy
+expect(value).to be_falsy
+expect(value).to be_nil
+expect(value).to include(item)
+expect(value).to match(/regex/)
+expect(value).to be_valid
+expect(value).to have_key(:key)
+expect(value).to have_attributes(name: 'Test')
+expect { block }.to raise_error(ErrorClass)
+expect { block }.to change { value }.by(1)
+expect { block }.to change { value }.from(0).to(1)
+
+LET_AND_SUBJECT
+RSpec.describe User do
+  let(:user) { User.new(name: 'Test') }
+  let!(:eager_user) { User.create!(name: 'Eager') }  # created immediately
+  
+  subject { described_class.new(name: 'Subject') }
+  
+  it { is_expected.to be_valid }
+end
+
+BEFORE_AFTER
+RSpec.describe User do
+  before(:each) { @user = User.new }
+  before(:all) { setup_database }
+  after(:each) { cleanup }
+  after(:all) { teardown_database }
+end
+
+CONTEXT_GROUPING
+RSpec.describe Order do
+  context 'when user is logged in' do
+    before { login_user }
+    
+    it 'creates order' do
+      expect { create_order }.to change(Order, :count).by(1)
+    end
+  end
+
+  context 'when user is guest' do
+    it 'requires email' do
+      expect { create_order }.to raise_error(ValidationError)
+    end
+  end
+end
+
+FACTORY_BOT
+# spec/factories/users.rb
+FactoryBot.define do
+  factory :user do
+    name { Faker::Name.name }
+    email { Faker::Internet.email }
+    
+    trait :admin do
+      role { 'admin' }
+    end
+  end
+end
+
+# usage
+let(:user) { create(:user) }
+let(:admin) { create(:user, :admin) }
+let(:users) { create_list(:user, 3) }
+
+MOCKING
+allow(object).to receive(:method).and_return(value)
+allow(object).to receive(:method).with(arg).and_return(value)
+expect(object).to receive(:method).once
+expect(object).to have_received(:method)
+
+double = double('API', fetch: { data: 'mock' })
+instance_double(User, name: 'Test')
+
+COMMANDS
+rspec
+rspec spec/models
+rspec --format documentation
+rspec --fail-fast
+
+==============================================================================
+XUNIT_.NET_PATTERNS
+==============================================================================
+SETUP
+dotnet add package xunit
+dotnet add package xunit.runner.visualstudio
+dotnet add package Moq
+dotnet add package FluentAssertions
+
+BASIC_TEST
+public class CalculatorTests
+{
+    [Fact]
+    public void Add_TwoNumbers_ReturnsSum()
+    {
+        var calc = new Calculator();
+        var result = calc.Add(1, 2);
+        Assert.Equal(3, result);
+    }
+
+    [Theory]
+    [InlineData(1, 2, 3)]
+    [InlineData(0, 0, 0)]
+    [InlineData(-1, 1, 0)]
+    public void Add_WithParameters_ReturnsExpected(int a, int b, int expected)
+    {
+        var calc = new Calculator();
+        Assert.Equal(expected, calc.Add(a, b));
+    }
+}
+
+FLUENT_ASSERTIONS
+result.Should().Be(3);
+result.Should().BeGreaterThan(0);
+list.Should().HaveCount(3);
+list.Should().Contain(item);
+action.Should().Throw<ArgumentException>();
+obj.Should().BeEquivalentTo(expected);
+
+FIXTURES
+public class DatabaseFixture : IDisposable
+{
+    public DbContext Context { get; }
+    
+    public DatabaseFixture()
+    {
+        Context = CreateTestContext();
+    }
+    
+    public void Dispose() => Context.Dispose();
+}
+
+public class UserTests : IClassFixture<DatabaseFixture>
+{
+    private readonly DatabaseFixture _fixture;
+    
+    public UserTests(DatabaseFixture fixture)
+    {
+        _fixture = fixture;
+    }
+}
+
+MOCKING_MOQ
+[Fact]
+public async Task GetUser_ReturnsUser()
+{
+    var mockRepo = new Mock<IUserRepository>();
+    mockRepo.Setup(r => r.GetByIdAsync(1))
+           .ReturnsAsync(new User { Id = 1, Name = "Test" });
+    
+    var service = new UserService(mockRepo.Object);
+    var result = await service.GetUserAsync(1);
+    
+    Assert.Equal("Test", result.Name);
+    mockRepo.Verify(r => r.GetByIdAsync(1), Times.Once);
+}
+
+COMMANDS
+dotnet test
+dotnet test --filter "Category=Unit"
+dotnet test --collect:"XPlat Code Coverage"
+
+==============================================================================
+TESTING_BEST_PRACTICES
+==============================================================================
+NAMING_CONVENTIONS
+MethodName_Scenario_ExpectedBehavior
+test_add_positive_numbers_returns_sum
+should_return_user_when_valid_id
+it('returns user when given valid id')
+
+ARRANGE_ACT_ASSERT
+def test_user_creation():
+    # Arrange
+    data = {"name": "Test", "email": "test@example.com"}
+    
+    # Act
+    user = User.create(data)
+    
+    # Assert
+    assert user.name == "Test"
+
+TEST_ISOLATION
++each_test_independent
++no_shared_mutable_state
++setup_teardown_per_test
++mock_external_dependencies
+
+WHAT_TO_TEST
++business_logic
++edge_cases
++error_handling
++integration_points
+-private_methods:test_via_public
+-framework_code:trust_framework
+
+ANTI_PATTERNS
+-testing_implementation:test_behavior
+-flaky_tests:fix_or_delete
+-slow_tests:mock_IO|optimize
+-test_interdependence:isolate
+-no_assertions:every_test_asserts
+-excessive_mocking:test_real_behavior
+
+==============================================================================
+COVERAGE
+==============================================================================
+GOOD_TARGETS
+statements:80%
+branches:80%
+functions:80%
+lines:80%
+
+!100%_not_goal
+!meaningful_tests>coverage_number
+
+COVERAGE_COMMANDS
+vitest --coverage
+jest --coverage
+pytest --cov=src --cov-report=html
+rspec --format html --out coverage/index.html
+dotnet test --collect:"XPlat Code Coverage"
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Test_Implementation     | testing_private_methods          | test_public_API
+Flaky_Tests             | random_failures                  | fix_timing|mock
+Slow_Tests              | >100ms_unit_test                 | mock_IO|optimize
+No_Assertions           | test_without_expect              | add_assertions
+Test_Logic              | if_statements_in_test            | parameterize
+Shared_State            | tests_affect_each_other          | isolate
+Mock_Everything         | no_real_code_tested              | integration_tests
+God_Test                | 100+_lines                       | split_tests
+Test_Names              | test1_test2                      | descriptive_names

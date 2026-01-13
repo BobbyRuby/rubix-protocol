@@ -4,7 +4,8 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite dev"
+        "dev": "vite dev",
+        "clean:temp": "node scripts/clean-temp.cjs"
     },
     "devDependencies": {
         "@tailwindcss/forms": "^0.5.2",

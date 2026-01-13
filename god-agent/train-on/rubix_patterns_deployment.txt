@@ -1,0 +1,776 @@
+# RUBIX PATTERNS: DEPLOYMENT
+# COVERAGE: Vercel|Railway|Fly.io|Render|Netlify|Cloudflare
+# PHILOSOPHY: zero_config|git_push_deploy|edge_first
+
+==============================================================================
+DEPLOYMENT_FUNDAMENTALS
+==============================================================================
+DEPLOYMENT_TYPES
+static:HTML|CSS|JS|CDN
+serverless:functions|scale_to_zero
+containers:Docker|persistent
+edge:distributed_globally|low_latency
+
+BUILD_VS_RUNTIME
+build_time:SSG|assets|optimization
+runtime:SSR|API|dynamic
+
+ENVIRONMENT_VARIABLES
++never_commit_secrets
++different_per_environment
++injected_at_build_or_runtime
+
+.env.local:local_development
+.env.production:production_values
+!gitignore_all_.env*_except_.env.example
+
+==============================================================================
+VERCEL_PATTERNS
+==============================================================================
+WHAT_IS_VERCEL
++Next.js_creators
++edge_network
++serverless_functions
++preview_deployments
+
+SETUP
+# Install CLI
+npm i -g vercel
+
+# Deploy
+vercel
+
+# Production deploy
+vercel --prod
+
+# Link to project
+vercel link
+
+PROJECT_CONFIG
+// vercel.json
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "regions": ["iad1", "sfo1"],
+  "functions": {
+    "api/**/*.ts": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    }
+  ]
+}
+
+ENVIRONMENT_VARIABLES
+# Via CLI
+vercel env add VARIABLE_NAME
+
+# Via dashboard
+Settings > Environment Variables
+
+# Access in code
+process.env.VARIABLE_NAME
+
+PREVIEW_DEPLOYMENTS
++every_PR_gets_unique_URL
++automatic_comments_on_PR
++protection_rules_available
+
+EDGE_FUNCTIONS
+// middleware.ts (Next.js)
+import { NextResponse } from 'next/server'
+export const config = { matcher: ['/api/:path*'] }
+
+export function middleware(request) {
+  // Runs at edge, globally distributed
+  return NextResponse.next()
+}
+
+// Edge API route
+export const runtime = 'edge'
+export async function GET(request) {
+  return new Response('Hello from edge')
+}
+
+SERVERLESS_FUNCTIONS
+// api/hello.ts
+export default function handler(req, res) {
+  res.status(200).json({ message: 'Hello' })
+}
+
+// App Router: app/api/hello/route.ts
+export async function GET() {
+  return Response.json({ message: 'Hello' })
+}
+
+CRON_JOBS
+// vercel.json
+{
+  "crons": [
+    {
+      "path": "/api/cron/daily",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}
+
+MONOREPO_SETUP
+// vercel.json (root)
+{
+  "ignoreCommand": "git diff HEAD^ HEAD --quiet -- apps/web"
+}
+
+# Or via dashboard
+Settings > Root Directory > apps/web
+
+LIMITS
+hobby:100GB_bandwidth|10s_functions
+pro:1TB_bandwidth|60s_functions
+enterprise:custom
+
+BEST_FOR
++Next.js_apps
++React_SPAs
++static_sites
++edge_functions
++preview_deployments
+
+==============================================================================
+RAILWAY_PATTERNS
+==============================================================================
+WHAT_IS_RAILWAY
++container_based
++databases_included
++simple_pricing
++good_DX
+
+SETUP
+# Install CLI
+npm i -g @railway/cli
+
+# Login
+railway login
+
+# Init project
+railway init
+
+# Deploy
+railway up
+
+# Open dashboard
+railway open
+
+RAILWAY_CONFIG
+# railway.toml
+[build]
+builder = "nixpacks"
+buildCommand = "npm run build"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[service]
+internalPort = 3000
+
+NIXPACKS_DETECTION
++auto_detects:Node|Python|Go|Rust|Ruby
++reads:package.json|requirements.txt|Cargo.toml
++no_Dockerfile_needed
+
+DOCKERFILE_OVERRIDE
+# If you need custom build
+railway.toml:
+[build]
+dockerfilePath = "./Dockerfile"
+
+DATABASES
+# Add via CLI
+railway add --database postgres
+railway add --database redis
+railway add --database mysql
+railway add --database mongodb
+
+# Connection string auto-injected
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://...
+
+ENVIRONMENT_VARIABLES
+# Via CLI
+railway variables set KEY=value
+
+# Via dashboard
+Variables tab
+
+# Reference other vars
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+
+PRIVATE_NETWORKING
++services_communicate_internally
++no_public_exposure_needed
++automatic_DNS:service_name.railway.internal
+
+VOLUMES
++persistent_storage
++attach_to_service
+railway volume create
+railway volume attach
+
+CRON_JOBS
+# Use Railway's cron service
+# Or scheduled tasks via code
++separate_service_for_cron
+
+SCALING
+# Horizontal
+Settings > Instances > Scale
+
+# Vertical
+Settings > Resources > Memory/CPU
+
+LIMITS
+trial:$5_free_credit
+hobby:$5/month+usage
+pro:$20/month+usage|team_features
+
+BEST_FOR
++full_stack_apps
++databases_needed
++background_jobs
++monorepos
++Docker_flexibility
+
+==============================================================================
+FLY_IO_PATTERNS
+==============================================================================
+WHAT_IS_FLY
++run_apps_close_to_users
++micro_VMs:Firecracker
++global_distribution
++persistent_storage
+
+SETUP
+# Install CLI
+# macOS
+brew install flyctl
+
+# Login
+fly auth login
+
+# Launch new app
+fly launch
+
+# Deploy
+fly deploy
+
+FLY_CONFIG
+# fly.toml
+app = "my-app"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3000
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    path = "/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+DOCKERFILE_EXAMPLE
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY package*.json ./
+EXPOSE 3000
+CMD ["npm", "start"]
+
+MULTI_REGION
+# Scale to multiple regions
+fly scale count 2 --region iad,cdg,sin
+
+# Or in fly.toml
+[env]
+  PRIMARY_REGION = "iad"
+
+# Read replica regions for DB
+fly postgres create --region iad,cdg
+
+DATABASES
+# Postgres (managed)
+fly postgres create
+fly postgres attach
+
+# Redis (managed via Upstash)
+fly redis create
+
+# SQLite with LiteFS
++distributed_SQLite
++edge_friendly
+
+LITEFS_PATTERN
+# fly.toml
+[mounts]
+  source = "litefs"
+  destination = "/var/lib/litefs"
+
+SECRETS
+fly secrets set DATABASE_URL=postgres://...
+fly secrets list
+fly secrets unset KEY
+
+VOLUMES
+# Persistent storage
+fly volumes create mydata --region iad --size 10
+
+# Mount in fly.toml
+[mounts]
+  source = "mydata"
+  destination = "/data"
+
+MACHINES_API
++programmatic_VM_control
++scale_to_zero
++wake_on_request
+
+SSH_ACCESS
+fly ssh console
+
+LOGS
+fly logs
+fly logs --app my-app
+
+SCALING
+# Horizontal
+fly scale count 3
+
+# Vertical
+fly scale memory 1024
+fly scale vm shared-cpu-2x
+
+LIMITS
+hobby:free_tier_available
+launch:$29/month_included_usage
+scale:custom
+
+BEST_FOR
++global_distribution
++low_latency_required
++Docker_native
++SQLite_apps
++WebSocket_apps
+
+==============================================================================
+RENDER_PATTERNS
+==============================================================================
+WHAT_IS_RENDER
++simple_cloud_platform
++auto_deploys_from_git
++managed_databases
++background_workers
+
+SETUP
+# Connect GitHub repo via dashboard
+# Or use render.yaml (IaC)
+
+RENDER_YAML
+# render.yaml
+services:
+  - type: web
+    name: my-api
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: my-db
+          property: connectionString
+
+  - type: worker
+    name: my-worker
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run worker
+
+databases:
+  - name: my-db
+    plan: free
+    databaseName: myapp
+    user: myapp
+
+SERVICE_TYPES
+web:HTTP_services
+worker:background_jobs
+cron:scheduled_tasks
+static:static_sites
+private:internal_services
+
+AUTO_DEPLOY
++push_to_branch>auto_deploy
++preview_environments
++deploy_hooks
+
+LIMITS
+free:750_hours/month|spin_down
+starter:$7/month|no_spin_down
+standard:$25/month|more_resources
+
+BEST_FOR
++simple_deployments
++background_workers
++managed_databases
++Rails|Django_apps
+
+==============================================================================
+NETLIFY_PATTERNS
+==============================================================================
+WHAT_IS_NETLIFY
++static_site_pioneer
++serverless_functions
++edge_functions
++forms_handling
+
+SETUP
+# Install CLI
+npm i -g netlify-cli
+
+# Login
+netlify login
+
+# Init
+netlify init
+
+# Deploy
+netlify deploy --prod
+
+NETLIFY_CONFIG
+# netlify.toml
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+SERVERLESS_FUNCTIONS
+// netlify/functions/hello.ts
+import { Handler } from '@netlify/functions'
+
+export const handler: Handler = async (event, context) => {
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: 'Hello' })
+  }
+}
+
+EDGE_FUNCTIONS
+// netlify/edge-functions/hello.ts
+export default async (request: Request, context) => {
+  return new Response('Hello from edge')
+}
+
+// netlify.toml
+[[edge_functions]]
+  path = "/edge/*"
+  function = "hello"
+
+FORMS
+<!-- Netlify auto-detects -->
+<form name="contact" method="POST" data-netlify="true">
+  <input name="email" type="email" />
+  <button type="submit">Submit</button>
+</form>
+
+IDENTITY
++built_in_auth
++JWT_tokens
++role_based_access
+
+LIMITS
+free:100GB_bandwidth|125k_function_calls
+pro:$19/month|more_everything
+
+BEST_FOR
++static_sites
++JAMstack
++form_handling
++simple_functions
+
+==============================================================================
+CLOUDFLARE_PAGES_WORKERS
+==============================================================================
+WHAT_IS_CLOUDFLARE
++edge_computing_pioneer
++massive_global_network
++Workers:serverless_at_edge
++Pages:static+SSR
+
+WORKERS_SETUP
+# Install CLI
+npm i -g wrangler
+
+# Login
+wrangler login
+
+# Create worker
+wrangler init my-worker
+
+# Deploy
+wrangler deploy
+
+WRANGLER_CONFIG
+# wrangler.toml
+name = "my-worker"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+[[kv_namespaces]]
+binding = "MY_KV"
+id = "abc123"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "my-db"
+database_id = "def456"
+
+WORKER_EXAMPLE
+// src/index.ts
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url)
+    
+    if (url.pathname === '/api/hello') {
+      return Response.json({ message: 'Hello' })
+    }
+    
+    return new Response('Not found', { status: 404 })
+  }
+}
+
+HONO_FRAMEWORK
+// Modern framework for Workers
+import { Hono } from 'hono'
+
+const app = new Hono()
+
+app.get('/api/hello', (c) => c.json({ message: 'Hello' }))
+app.get('/api/users/:id', (c) => {
+  const id = c.req.param('id')
+  return c.json({ id })
+})
+
+export default app
+
+PAGES_SETUP
+# Connect repo via dashboard
+# Or CLI
+wrangler pages project create my-site
+wrangler pages deploy dist
+
+PAGES_FUNCTIONS
+// functions/api/hello.ts
+export async function onRequest(context) {
+  return Response.json({ message: 'Hello' })
+}
+
+D1_DATABASE
+# Create
+wrangler d1 create my-db
+
+# Migrate
+wrangler d1 execute my-db --file=schema.sql
+
+# In code
+const result = await env.DB.prepare(
+  'SELECT * FROM users WHERE id = ?'
+).bind(userId).first()
+
+KV_STORAGE
+# Create namespace
+wrangler kv:namespace create MY_KV
+
+# In code
+await env.MY_KV.put('key', 'value')
+const value = await env.MY_KV.get('key')
+
+R2_OBJECT_STORAGE
+# S3-compatible storage
+await env.MY_BUCKET.put('file.txt', data)
+const object = await env.MY_BUCKET.get('file.txt')
+
+DURABLE_OBJECTS
++stateful_serverless
++single_instance_globally
++WebSocket_coordination
+
+LIMITS
+free:100k_requests/day|10ms_CPU
+paid:$5/month+usage|50ms_CPU
+
+BEST_FOR
++edge_computing
++low_latency
++static_sites
++API_proxies
++global_distribution
+
+==============================================================================
+PLATFORM_COMPARISON
+==============================================================================
+FEATURE          | VERCEL | RAILWAY | FLY    | RENDER | NETLIFY | CF
+-----------------|--------|---------|--------|--------|---------|----
+Static_Sites     | +++    | +       | +      | ++     | +++     | +++
+Serverless       | +++    | ++      | +      | ++     | ++      | +++
+Containers       | -      | +++     | +++    | +++    | -       | -
+Databases        | +      | +++     | ++     | ++     | -       | ++
+Edge             | +++    | -       | ++     | -      | ++      | +++
+Preview_Deploy   | +++    | ++      | +      | ++     | +++     | ++
+Free_Tier        | ++     | +       | ++     | ++     | ++      | +++
+Simplicity       | +++    | ++      | +      | ++     | +++     | ++
+
+SELECTION_GUIDE
+Next.js:Vercel|Cloudflare
+Full_Stack_with_DB:Railway|Render
+Global_Low_Latency:Fly.io|Cloudflare
+Static_JAMstack:Netlify|Vercel
+Docker_Required:Railway|Fly.io
+Budget_Conscious:Cloudflare|Fly.io
+
+==============================================================================
+DEPLOYMENT_BEST_PRACTICES
+==============================================================================
+ENVIRONMENT_MANAGEMENT
++separate:dev|staging|production
++never_share_secrets_across_envs
++use_platform_secret_management
+
+CI_CD_INTEGRATION
++GitHub_Actions:build>test>deploy
++branch_protection:require_passing_CI
++preview_deployments:every_PR
+
+HEALTH_CHECKS
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: Date.now() })
+})
+
+// Deep health check
+app.get('/health/deep', async (req, res) => {
+  const dbOk = await checkDatabase()
+  const redisOk = await checkRedis()
+  
+  const status = dbOk && redisOk ? 200 : 503
+  res.status(status).json({ db: dbOk, redis: redisOk })
+})
+
+GRACEFUL_SHUTDOWN
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully')
+  
+  // Stop accepting new requests
+  server.close()
+  
+  // Finish existing requests
+  await closeConnections()
+  
+  process.exit(0)
+})
+
+ZERO_DOWNTIME_DEPLOYS
++rolling_updates:one_instance_at_a_time
++health_check_before_traffic
++automatic_rollback_on_failure
+
+MONITORING
++structured_logging
++error_tracking:Sentry
++uptime_monitoring
++performance_metrics
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Secrets_In_Code         | hardcoded_API_keys               | env_vars
+No_Health_Check         | can't_detect_failures            | /health_endpoint
+No_Graceful_Shutdown    | dropped_requests                 | SIGTERM_handler
+Single_Region           | high_latency_globally            | multi_region
+No_Preview_Deploy       | can't_test_before_prod           | enable_previews
+Manual_Deploys          | error_prone|slow                 | git_push_deploy
+No_Rollback_Plan        | stuck_with_bad_deploy            | instant_rollback
+Oversized_Functions     | cold_start_slow                  | optimize_bundle
+No_Caching              | unnecessary_compute              | CDN|edge_cache
+Missing_HTTPS           | insecure                         | force_HTTPS

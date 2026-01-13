@@ -109,43 +109,137 @@ export function mergeConfig(
 /**
  * Get RUBIX LLM configuration for code generation
  *
- * Environment variables:
- * - ANTHROPIC_API_KEY: Required API key for Claude
- * - CODEX_MODEL: Claude model to use (default: claude-opus-4-5-20251101)
- * - CODEX_MAX_TOKENS: Max generation tokens (default: 8192)
- * - CODEX_ULTRATHINK: Enable ultrathink (default: true)
- * - CODEX_THINK_BASE: Base thinking budget tokens (default: 5000)
- * - CODEX_THINK_INCREMENT: Additional tokens per retry (default: 5000)
- * - CODEX_THINK_MAX: Maximum thinking budget (default: 16000)
- * - CODEX_THINK_START_ATTEMPT: First attempt to enable thinking (default: 2)
+ * Environment variables (RUBIX_ preferred, CODEX_ for backwards compat):
+ * - ANTHROPIC_API_KEY: API key for Claude (optional - only for API fallback)
+ * - RUBIX_MODEL: Claude model to use (default: claude-opus-4-5-20251101)
+ * - RUBIX_MAX_TOKENS: Max generation tokens (default: 8192)
+ * - RUBIX_ULTRATHINK: Enable ultrathink (default: true)
+ * - RUBIX_THINK_BASE: Base thinking budget tokens (default: 5000)
+ * - RUBIX_THINK_INCREMENT: Additional tokens per retry (default: 5000)
+ * - RUBIX_THINK_MAX: Maximum thinking budget (default: 16000)
+ * - RUBIX_THINK_START_ATTEMPT: First attempt to enable thinking (default: 2)
+ * - RUBIX_EXECUTION_MODE: 'cli-first' (default), 'api-only', or 'cli-only'
+ * - RUBIX_CLI_MODEL: CLI model preference: 'opus' (default), 'sonnet', 'haiku'
+ * - RUBIX_CLI_TIMEOUT: CLI timeout in ms (default: 300000 = 5 minutes)
+ *
+ * Execution modes:
+ * - cli-first: Try Claude Code CLI first (uses Max subscription), fall back to API
+ * - api-only: Only use Anthropic API (requires ANTHROPIC_API_KEY)
+ * - cli-only: Only use Claude Code CLI, never fall back to API
  */
-export function getCodexLLMConfig(): CodexLLMConfig {
+export function getRubixLLMConfig(): CodexLLMConfig {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  console.log(`[Config] getCodexLLMConfig called. ANTHROPIC_API_KEY: ${apiKey ? `${apiKey.substring(0, 10)}...` : 'NOT SET'}`);
-  console.log(`[Config] .env path was: ${join(godAgentRoot, '.env')}`);
+  const executionMode = (process.env.RUBIX_EXECUTION_MODE ?? 'cli-first') as 'cli-first' | 'api-only' | 'cli-only';
+  const cliModel = (process.env.RUBIX_CLI_MODEL ?? 'opus') as 'opus' | 'sonnet' | 'haiku';
+
+  console.log(`[Config] getRubixLLMConfig called.`);
+  console.log(`[Config] Execution mode: ${executionMode}`);
+  console.log(`[Config] CLI model: ${cliModel}`);
+  console.log(`[Config] ANTHROPIC_API_KEY: ${apiKey ? `${apiKey.substring(0, 10)}...` : 'NOT SET (API fallback disabled)'}`);
 
   return {
     apiKey,
-    model: process.env.CODEX_MODEL ?? 'claude-opus-4-5-20251101',
-    maxTokens: parseInt(process.env.CODEX_MAX_TOKENS ?? '8192', 10),
+    model: process.env.RUBIX_MODEL ?? process.env.CODEX_MODEL ?? 'claude-opus-4-5-20251101',
+    maxTokens: parseInt(process.env.RUBIX_MAX_TOKENS ?? process.env.CODEX_MAX_TOKENS ?? '8192', 10),
     extendedThinking: {
-      enabled: process.env.CODEX_ULTRATHINK !== 'false',
-      baseBudget: parseInt(process.env.CODEX_THINK_BASE ?? '5000', 10),
-      budgetIncrement: parseInt(process.env.CODEX_THINK_INCREMENT ?? '5000', 10),
-      maxBudget: parseInt(process.env.CODEX_THINK_MAX ?? '16000', 10),
-      enableOnAttempt: parseInt(process.env.CODEX_THINK_START_ATTEMPT ?? '2', 10)
-    }
+      enabled: (process.env.RUBIX_ULTRATHINK ?? process.env.CODEX_ULTRATHINK) !== 'false',
+      baseBudget: parseInt(process.env.RUBIX_THINK_BASE ?? process.env.CODEX_THINK_BASE ?? '5000', 10),
+      budgetIncrement: parseInt(process.env.RUBIX_THINK_INCREMENT ?? process.env.CODEX_THINK_INCREMENT ?? '5000', 10),
+      maxBudget: parseInt(process.env.RUBIX_THINK_MAX ?? process.env.CODEX_THINK_MAX ?? '16000', 10),
+      enableOnAttempt: parseInt(process.env.RUBIX_THINK_START_ATTEMPT ?? process.env.CODEX_THINK_START_ATTEMPT ?? '2', 10)
+    },
+    executionMode,
+    cliModel,
+    cliTimeout: parseInt(process.env.RUBIX_CLI_TIMEOUT ?? '300000', 10)
   };
 }
+
+// Backwards compatibility alias
+export const getCodexLLMConfig = getRubixLLMConfig;
 
 /**
  * Validate RUBIX LLM configuration
  */
-export function validateCodexConfig(config: CodexLLMConfig): string[] {
+export function validateRubixConfig(config: CodexLLMConfig): string[] {
   const errors: string[] = [];
 
-  if (!config.apiKey) {
-    errors.push('ANTHROPIC_API_KEY environment variable is required for RUBIX code generation');
+  // API key only required for api-only mode
+  if (config.executionMode === 'api-only' && !config.apiKey) {
+    errors.push('ANTHROPIC_API_KEY environment variable is required for api-only execution mode');
+  }
+
+  // Warning (not error) if cli-first without API key (no fallback available)
+  if (config.executionMode === 'cli-first' && !config.apiKey) {
+    console.warn('[Config] Warning: ANTHROPIC_API_KEY not set - API fallback disabled. CLI-only mode will be used.');
+  }
+
+  return errors;
+}
+
+// Backwards compatibility alias
+export const validateCodexConfig = validateRubixConfig;
+
+/**
+ * Get RUBIX execution configuration
+ */
+export function getRubixExecutionConfig(): { maxParallel: number; failFast: boolean } {
+  return {
+    maxParallel: parseInt(process.env.RUBIX_MAX_PARALLEL ?? process.env.CODEX_MAX_PARALLEL ?? '5', 10),
+    failFast: (process.env.RUBIX_FAIL_FAST ?? process.env.CODEX_FAIL_FAST) !== 'false'
+  };
+}
+
+// Backwards compatibility alias
+export const getCodexExecutionConfig = getRubixExecutionConfig;
+
+/**
+ * Curiosity configuration for autonomous exploration
+ *
+ * Environment variables:
+ * - RUBIX_TOKENS_PER_PROBE: Max tokens per exploration probe (default: 100000)
+ * - RUBIX_PROBES_PER_WEEK: Weekly probe limit (default: 5)
+ * - RUBIX_HIGH_PRIORITY_RATIO: High-priority probes before moderate (default: 3)
+ * - RUBIX_DISCOVERY_CRON: Discovery schedule (default: "0 8 * * 1,3,5")
+ * - RUBIX_WEEKLY_RESET_DAY: Day to reset budget, 0=Sunday (default: 0)
+ */
+export interface CuriosityConfig {
+  tokensPerProbe: number;
+  probesPerWeek: number;
+  highPriorityRatio: number;
+  discoveryCron: string;
+  weeklyResetDay: number;
+}
+
+export function getCuriosityConfig(): CuriosityConfig {
+  return {
+    tokensPerProbe: parseInt(process.env.RUBIX_TOKENS_PER_PROBE ?? '100000', 10),
+    probesPerWeek: parseInt(process.env.RUBIX_PROBES_PER_WEEK ?? '5', 10),
+    highPriorityRatio: parseInt(process.env.RUBIX_HIGH_PRIORITY_RATIO ?? '3', 10),
+    discoveryCron: process.env.RUBIX_DISCOVERY_CRON ?? '0 8 * * 1,3,5',
+    weeklyResetDay: parseInt(process.env.RUBIX_WEEKLY_RESET_DAY ?? '0', 10)
+  };
+}
+
+/**
+ * Validate curiosity configuration
+ */
+export function validateCuriosityConfig(config: CuriosityConfig): string[] {
+  const errors: string[] = [];
+
+  if (config.tokensPerProbe <= 0) {
+    errors.push('RUBIX_TOKENS_PER_PROBE must be positive');
+  }
+
+  if (config.probesPerWeek <= 0) {
+    errors.push('RUBIX_PROBES_PER_WEEK must be positive');
+  }
+
+  if (config.highPriorityRatio <= 0) {
+    errors.push('RUBIX_HIGH_PRIORITY_RATIO must be positive');
+  }
+
+  if (config.weeklyResetDay < 0 || config.weeklyResetDay > 6) {
+    errors.push('RUBIX_WEEKLY_RESET_DAY must be 0-6 (Sunday-Saturday)');
   }
 
   return errors;

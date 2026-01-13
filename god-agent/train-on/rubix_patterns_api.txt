@@ -1,0 +1,538 @@
+# RUBIX PATTERNS: API_DESIGN
+# COVERAGE: REST|GraphQL|tRPC|gRPC
+# PHILOSOPHY: consistency|discoverability|evolvability
+
+==============================================================================
+REST_PATTERNS
+==============================================================================
+HISTORY
+2000:Roy_Fielding>PhD_dissertation
++Representational_State_Transfer
++resource_oriented
++stateless
++HTTP_native
+
+RESOURCE_NAMING
++nouns_not_verbs
++plural_for_collections
++lowercase_hyphens
+
+GOOD
+GET /users
+GET /users/123
+GET /users/123/posts
+POST /users
+PUT /users/123
+PATCH /users/123
+DELETE /users/123
+
+BAD
+GET /getUsers
+GET /user/123
+POST /createUser
+GET /users/123/getPosts
+
+HTTP_METHODS
+GET:read|idempotent|cacheable
+POST:create|not_idempotent
+PUT:replace|idempotent
+PATCH:partial_update|idempotent
+DELETE:remove|idempotent
+
+STATUS_CODES
+200:OK:successful_GET|PUT|PATCH
+201:Created:successful_POST
+204:No_Content:successful_DELETE
+400:Bad_Request:invalid_input
+401:Unauthorized:no_auth
+403:Forbidden:no_permission
+404:Not_Found:resource_missing
+409:Conflict:state_conflict
+422:Unprocessable_Entity:validation_failed
+429:Too_Many_Requests:rate_limited
+500:Internal_Server_Error:server_bug
+
+QUERY_PARAMETERS
+GET /users?page=1&limit=20           # pagination
+GET /users?sort=created_at:desc      # sorting
+GET /users?filter[status]=active     # filtering
+GET /users?include=posts,comments    # includes
+GET /users?fields=id,name,email      # sparse fields
+
+PAGINATION_PATTERNS
+OFFSET_BASED
+{
+  "data": [...],
+  "meta": {
+    "total": 100,
+    "page": 1,
+    "per_page": 20,
+    "total_pages": 5
+  }
+}
+
+CURSOR_BASED
+{
+  "data": [...],
+  "meta": {
+    "next_cursor": "abc123",
+    "has_more": true
+  }
+}
++better_for_large_datasets
++no_skipped_items
+
+HATEOAS
+{
+  "id": 123,
+  "name": "John",
+  "_links": {
+    "self": { "href": "/users/123" },
+    "posts": { "href": "/users/123/posts" },
+    "delete": { "href": "/users/123", "method": "DELETE" }
+  }
+}
+
+VERSIONING
+URI:/api/v1/users
+Header:Accept:application/vnd.api+json;version=1
+Query:/api/users?version=1
+
+!URI_versioning_most_common
+!header_versioning_cleaner
+
+ERROR_RESPONSE
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": [
+      { "field": "email", "message": "Invalid email format" },
+      { "field": "age", "message": "Must be positive" }
+    ]
+  }
+}
+
+RFC7807_PROBLEM_DETAILS
+{
+  "type": "https://api.example.com/errors/validation",
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "One or more fields failed validation",
+  "instance": "/users",
+  "errors": [...]
+}
+
+==============================================================================
+GRAPHQL_PATTERNS
+==============================================================================
+HISTORY
+2012:Facebook>internal_development
+2015:open_sourced
++query_language_for_APIs
++single_endpoint
++client_specifies_shape
+
+WHY_GRAPHQL
++no_over_fetching:request_only_needed
++no_under_fetching:single_request
++strong_typing:schema
++introspection:self_documenting
+-complexity:N+1_queries|caching
+
+SCHEMA_DEFINITION
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  posts: [Post!]!
+  createdAt: DateTime!
+}
+
+type Post {
+  id: ID!
+  title: String!
+  content: String!
+  author: User!
+}
+
+type Query {
+  user(id: ID!): User
+  users(limit: Int, offset: Int): [User!]!
+  post(id: ID!): Post
+}
+
+type Mutation {
+  createUser(input: CreateUserInput!): User!
+  updateUser(id: ID!, input: UpdateUserInput!): User!
+  deleteUser(id: ID!): Boolean!
+}
+
+input CreateUserInput {
+  name: String!
+  email: String!
+}
+
+QUERY_EXAMPLES
+query GetUser {
+  user(id: "123") {
+    id
+    name
+    email
+    posts {
+      id
+      title
+    }
+  }
+}
+
+mutation CreateUser {
+  createUser(input: { name: "John", email: "john@example.com" }) {
+    id
+    name
+  }
+}
+
+RESOLVER_PATTERNS
+// User resolver
+const resolvers = {
+  Query: {
+    user: (_, { id }, context) => context.dataSources.users.getById(id),
+    users: (_, args, context) => context.dataSources.users.getAll(args),
+  },
+  Mutation: {
+    createUser: (_, { input }, context) => context.dataSources.users.create(input),
+  },
+  User: {
+    posts: (parent, _, context) => context.dataSources.posts.getByUserId(parent.id),
+  },
+}
+
+DATALOADER_N+1_FIX
++batches_requests
++caches_per_request
+
+const userLoader = new DataLoader(async (ids) => {
+  const users = await User.findByIds(ids)
+  return ids.map(id => users.find(u => u.id === id))
+})
+
+// In resolver
+User: {
+  author: (post, _, { loaders }) => loaders.user.load(post.authorId)
+}
+
+SUBSCRIPTIONS
+type Subscription {
+  postCreated: Post!
+  userUpdated(id: ID!): User!
+}
+
+subscription {
+  postCreated {
+    id
+    title
+    author { name }
+  }
+}
+
+PAGINATION_RELAY_STYLE
+type Query {
+  users(first: Int, after: String, last: Int, before: String): UserConnection!
+}
+
+type UserConnection {
+  edges: [UserEdge!]!
+  pageInfo: PageInfo!
+}
+
+type UserEdge {
+  node: User!
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+TOOLS
+Apollo_Server:Node.js
+Apollo_Client:React|Vue
+Relay:Facebook_client
+graphql-yoga:lightweight_server
+Pothos:schema_builder
+GraphQL_Code_Generator:types
+
+==============================================================================
+TRPC_PATTERNS
+==============================================================================
+HISTORY
+2021:Alex_KATT>created
++TypeScript_native
++end_to_end_type_safety
++no_code_generation
++RPC_over_HTTP
+
+WHY_TRPC
++full_type_inference
++no_schema_files
++autocomplete_client_server
++smaller_bundle:no_runtime_schema
+-TypeScript_only
+-same_repo_required
+
+SETUP
+npm install @trpc/server @trpc/client @trpc/react-query
+
+ROUTER_DEFINITION
+// server/trpc.ts
+import { initTRPC } from '@trpc/server'
+
+const t = initTRPC.context<Context>().create()
+
+export const router = t.router
+export const publicProcedure = t.procedure
+export const protectedProcedure = t.procedure.use(authMiddleware)
+
+// server/routers/user.ts
+export const userRouter = router({
+  getById: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ input, ctx }) => {
+      return ctx.db.user.findUnique({ where: { id: input.id } })
+    }),
+    
+  create: protectedProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      email: z.string().email(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      return ctx.db.user.create({ data: input })
+    }),
+    
+  list: publicProcedure
+    .input(z.object({
+      limit: z.number().min(1).max(100).default(10),
+      cursor: z.string().optional(),
+    }))
+    .query(async ({ input, ctx }) => {
+      const items = await ctx.db.user.findMany({
+        take: input.limit + 1,
+        cursor: input.cursor ? { id: input.cursor } : undefined,
+      })
+      // ... pagination logic
+    }),
+})
+
+// server/routers/_app.ts
+export const appRouter = router({
+  user: userRouter,
+  post: postRouter,
+})
+
+export type AppRouter = typeof appRouter
+
+CLIENT_USAGE
+// React
+import { trpc } from '@/utils/trpc'
+
+function UserProfile({ id }: { id: string }) {
+  const { data, isLoading } = trpc.user.getById.useQuery({ id })
+  const createUser = trpc.user.create.useMutation()
+  
+  if (isLoading) return <div>Loading...</div>
+  
+  return <div>{data?.name}</div>
+}
+
+// Direct client
+const user = await trpc.user.getById.query({ id: '123' })
+
+MIDDLEWARE
+const authMiddleware = t.middleware(async ({ ctx, next }) => {
+  if (!ctx.session?.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED' })
+  }
+  return next({
+    ctx: { ...ctx, user: ctx.session.user }
+  })
+})
+
+export const protectedProcedure = t.procedure.use(authMiddleware)
+
+ERROR_HANDLING
+import { TRPCError } from '@trpc/server'
+
+throw new TRPCError({
+  code: 'NOT_FOUND',
+  message: 'User not found',
+})
+
+// Codes: PARSE_ERROR, BAD_REQUEST, UNAUTHORIZED, FORBIDDEN, 
+// NOT_FOUND, CONFLICT, INTERNAL_SERVER_ERROR
+
+==============================================================================
+GRPC_PATTERNS
+==============================================================================
+HISTORY
+2015:Google>open_sourced
++Protocol_Buffers
++HTTP/2
++bidirectional_streaming
++high_performance
+
+WHY_GRPC
++fast:binary_protocol
++streaming:bidirectional
++strong_typing:protobuf
++code_generation:multi_language
+-browser_support:needs_proxy
+-debugging:binary_format
+
+PROTOBUF_DEFINITION
+syntax = "proto3";
+
+package user;
+
+service UserService {
+  rpc GetUser(GetUserRequest) returns (User);
+  rpc ListUsers(ListUsersRequest) returns (stream User);
+  rpc CreateUser(CreateUserRequest) returns (User);
+  rpc UpdateUser(UpdateUserRequest) returns (User);
+  rpc DeleteUser(DeleteUserRequest) returns (Empty);
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  int64 created_at = 4;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message ListUsersRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+}
+
+STREAMING_TYPES
+unary:single_request>single_response
+server_streaming:single_request>stream_response
+client_streaming:stream_request>single_response
+bidirectional:stream_request>stream_response
+
+==============================================================================
+API_DESIGN_PRINCIPLES
+==============================================================================
+CONSISTENCY
++same_naming_conventions_throughout
++same_error_format
++same_pagination_format
++same_authentication_method
+
+DOCUMENTATION
++OpenAPI/Swagger:REST
++GraphQL_introspection:GraphQL
++Protobuf_files:gRPC
++TypeScript_types:tRPC
+
+OPENAPI_EXAMPLE
+openapi: 3.0.0
+info:
+  title: User API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      summary: List users
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+
+RATE_LIMITING
+X-RateLimit-Limit:1000
+X-RateLimit-Remaining:999
+X-RateLimit-Reset:1640000000
+Retry-After:60
+
+IDEMPOTENCY
++Idempotency-Key_header
++safe_retries
++exactly_once_semantics
+
+POST /payments
+Idempotency-Key: abc-123-unique
+
+==============================================================================
+API_SELECTION_GUIDE
+==============================================================================
+USE_REST_WHEN
++simple_CRUD
++public_API
++caching_important
++wide_client_support
++team_familiarity
+
+USE_GRAPHQL_WHEN
++complex_data_relationships
++mobile_apps:bandwidth
++multiple_clients:different_needs
++rapid_iteration
+
+USE_TRPC_WHEN
++TypeScript_fullstack
++same_repo_frontend_backend
++type_safety_priority
++small_team
+
+USE_GRPC_WHEN
++microservices_internal
++high_performance_needed
++streaming_needed
++polyglot_services
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Verbs_In_URLs           | /getUsers|/createUser            | nouns_only
+Inconsistent_Naming     | /users_/Posts_/user-comments     | pick_convention
+No_Versioning           | breaking_changes_break_clients   | version_API
+N+1_GraphQL             | resolver_per_item                | DataLoader
+Over_Fetching           | unused_fields_returned           | GraphQL|sparse_fields
+Chatty_API              | many_calls_for_one_view          | aggregation|GraphQL
+No_Pagination           | returning_all_records            | always_paginate
+Leaking_Internals       | DB_IDs|internal_errors           | DTOs|error_handling
+No_Rate_Limiting        | DDoS_vulnerable                  | add_limits
+Missing_CORS            | browser_blocked                  | configure_CORS

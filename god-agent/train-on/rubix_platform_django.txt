@@ -1,0 +1,367 @@
+# RUBIX PLATFORM: DJANGO
+# VERSION: 5.x
+# FOUNDATION: Python|BSD_license
+# PHILOSOPHY: batteries_included|DRY|explicit_better_than_implicit
+
+==============================================================================
+HISTORY
+==============================================================================
+2003:Adrian_Holovaty+Simon_Willison>Lawrence_Journal-World_newspaper
+2005:open_sourced|named_after_Django_Reinhardt
+2008:v1.0>stable_API
+2013:v1.5>Python_3_support
+2017:v2.0>simplified_URL_routing
+2019:v3.0>ASGI_support
+2021:v4.0>Redis_cache_backend|timezone_aware
+2023:v5.0>async_enhancements|facet_filters_admin
+2024:v5.1>LoginRequiredMiddleware|inline_formsets
+
+CORE_MAINTAINERS
+Adrian_Holovaty:co-creator
+Simon_Willison:co-creator
+Jacob_Kaplan-Moss:co-BDFL
+Andrew_Godwin:migrations_channels
+Carlton_Gibson:fellow
+
+ARCHITECTURE:MTV:Model_Template_View
+Django_View=other_Controller
+
+==============================================================================
+MODEL_PATTERNS
+==============================================================================
+FAT_MODELS_THIN_VIEWS
++business_logic_in_models
++managers_for_query_logic
++model_methods_for_business_ops
+-logic_in_views:move_to_model
+
+MODEL_MANAGERS
+class PublishedManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(status='published')
+
+class Post(models.Model):
+    objects=models.Manager()
+    published=PublishedManager()
+
+*Post.published.all()
+
+CUSTOM_QUERYSETS
+class PostQuerySet(models.QuerySet):
+    def published(self):return self.filter(status='published')
+    def by_author(self,user):return self.filter(author=user)
+
+class Post(models.Model):
+    objects=PostQuerySet.as_manager()
+
+*Post.objects.published().by_author(user)
+
+MODEL_METHODS
++clean():validation_logic
++save():pre_post_save_logic
++get_absolute_url():URL_generation
++__str__():admin_display
+
+ANTI_PATTERNS
+-anemic_models:all_logic_in_views
+-fat_views:move_to_model|service
+-N+1_queries:select_related|prefetch_related
+-raw_SQL_everywhere:use_ORM
+
+==============================================================================
+VIEW_PATTERNS
+==============================================================================
+FUNCTION_BASED_VIEWS
+def post_list(request):
+    posts=Post.objects.all()
+    return render(request,'blog/list.html',{'posts':posts})
+
+CLASS_BASED_VIEWS
+class PostListView(ListView):
+    model=Post
+    template_name='blog/list.html'
+    context_object_name='posts'
+    paginate_by=10
+
+CBV_MIXINS
+LoginRequiredMixin:require_auth
+PermissionRequiredMixin:require_perms
+UserPassesTestMixin:custom_test
+FormMixin:form_handling
+SingleObjectMixin:detail_views
+
+WHEN_FBV_VS_CBV
+FBV:simple_views|complex_conditional_logic|one_off
+CBV:CRUD|standard_patterns|inheritance_needed|DRY
+
+SERVICE_LAYER_PATTERN
++app/services.py
++complex_business_logic
++inject_into_views
+class OrderService:
+    def create_order(self,user,items):
+        with transaction.atomic():
+            order=Order.objects.create(user=user)
+            for item in items:
+                OrderItem.objects.create(order=order,**item)
+            self._send_confirmation(order)
+        return order
+
+ANTI_PATTERNS
+-fat_views:extract_to_model|service
+-logic_in_templates:move_to_view|model
+-not_using_get_object_or_404
+-manual_pagination:use_Paginator|ListView
+
+==============================================================================
+URL_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++path():modern_syntax
++include():app_namespacing
++app_name:URL_namespacing
++name:reverse_URL_lookup
+
+path('posts/',include('blog.urls',namespace='blog'))
+path('posts/<int:pk>/',PostDetailView.as_view(),name='post_detail')
+
+ANTI_PATTERNS
+-hardcoded_URLs:use_reverse|{% url %}
+-no_namespacing:collisions
+-regex_when_path_suffices:path()_simpler
+
+==============================================================================
+TEMPLATE_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++template_inheritance:{% extends %}{% block %}
++template_includes:{% include 'partial.html' %}
++custom_template_tags:reusable_logic
++filters:data_transformation
+
+BASE_TEMPLATE_PATTERN
+base.html>defines_blocks
+page.html>{% extends 'base.html' %}{% block content %}...{% endblock %}
+
+CUSTOM_TAGS_FILTERS
+@register.simple_tag
+def current_time(format_string):
+    return datetime.now().strftime(format_string)
+
+@register.filter
+def truncate_words(value,num):
+    return ' '.join(value.split()[:num])
+
+ANTI_PATTERNS
+-logic_in_templates:move_to_view
+-database_queries_in_templates:pass_from_view
+-not_using_static_tag:{% static 'path' %}
+-hardcoded_URLs:{% url 'name' %}
+
+==============================================================================
+ORM_PATTERNS
+==============================================================================
+QUERY_OPTIMIZATION
++select_related():FK_OneToOne|single_query_JOIN
+*Post.objects.select_related('author').all()
+
++prefetch_related():ManyToMany|reverse_FK|separate_query
+*Post.objects.prefetch_related('tags','comments').all()
+
++Prefetch():custom_prefetch_querysets
+*Post.objects.prefetch_related(
+    Prefetch('comments',queryset=Comment.objects.filter(approved=True))
+)
+
++only()|defer():limit_fields
++values()|values_list():dict_tuple_return
++annotate()|aggregate():database_calculations
+
+N+1_DETECTION
+*django-debug-toolbar:query_panel
+*nplusone:automatic_detection
+*django-silk:profiling
+
+ANTI_PATTERNS
+-loop_with_FK_access:select_related
+-loop_with_M2M_access:prefetch_related
+-all()_then_filter_python:filter_in_ORM
+-count()_after_list():use_queryset.count()
+
+==============================================================================
+FORM_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++ModelForm:DRY_form_from_model
++Form_class:custom_forms
++formsets:multiple_forms
++crispy-forms:rendering_helper
+
+class PostForm(forms.ModelForm):
+    class Meta:
+        model=Post
+        fields=['title','content','status']
+    def clean_title(self):
+        title=self.cleaned_data['title']
+        if 'spam' in title.lower():
+            raise ValidationError('No spam')
+        return title
+
+ANTI_PATTERNS
+-manual_HTML_forms:use_Form_class
+-validation_in_view:use_clean_methods
+-not_using_csrf_token:{% csrf_token %}
+
+==============================================================================
+AUTHENTICATION_AUTHORIZATION
+==============================================================================
+AUTHENTICATION
++django.contrib.auth:built_in
++custom_user_model:AbstractUser|AbstractBaseUser
+!always_custom_user_from_start
+
++django-allauth:social_auth
++djangorestframework-simplejwt:JWT
+
+AUTHORIZATION
++@login_required:decorator
++LoginRequiredMixin:CBV
++@permission_required:specific_perms
++PermissionRequiredMixin:CBV
++object_level:django-guardian
+
+ANTI_PATTERNS
+-not_custom_user_model:hard_to_change_later
+-manual_auth_logic:use_decorators_mixins
+-permissions_in_templates_only:check_in_view
+
+==============================================================================
+REST_API_PATTERNS_DRF
+==============================================================================
+GOOD_PATTERNS
++ModelSerializer:DRY_serialization
++ViewSet:CRUD_endpoints
++Router:automatic_URL_conf
++Permissions:object_level
++Throttling:rate_limiting
++Filtering:django-filter
+
+class PostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model=Post
+        fields=['id','title','content','author']
+
+class PostViewSet(viewsets.ModelViewSet):
+    queryset=Post.objects.all()
+    serializer_class=PostSerializer
+    permission_classes=[IsAuthenticatedOrReadOnly]
+    filter_backends=[DjangoFilterBackend,SearchFilter]
+
+SERVICE_LAYER_WITH_DRF
++serializer_for_IO_only
++service_for_business_logic
++viewset_calls_service
+
+ANTI_PATTERNS
+-fat_serializers:move_to_service
+-logic_in_viewset:extract_to_service
+-no_pagination:always_paginate
+-exposing_all_fields:explicit_fields_list
+
+==============================================================================
+ASYNC_PATTERNS
+==============================================================================
+ASYNC_VIEWS
+async def my_view(request):
+    results=await some_async_operation()
+    return JsonResponse(results)
+
+ASYNC_ORM_DJANGO_4.1+
+async for post in Post.objects.all():
+    process(post)
+
+await Post.objects.aget(pk=1)
+await Post.objects.acreate(...)
+await Post.objects.acount()
+
+CHANNELS
++WebSocket_support
++async_consumers
++channel_layers:Redis_backend
+
+!sync_to_async:wrap_sync_in_async
+!async_to_sync:wrap_async_in_sync
+
+==============================================================================
+TESTING_PATTERNS
+==============================================================================
+GOOD_PATTERNS
++TestCase:database_transactions
++Client:HTTP_testing
++RequestFactory:unit_test_views
++pytest-django:preferred_runner
+
+class PostTestCase(TestCase):
+    def setUp(self):
+        self.user=User.objects.create_user('test')
+        self.post=Post.objects.create(title='Test',author=self.user)
+    
+    def test_post_list(self):
+        response=self.client.get('/posts/')
+        self.assertEqual(response.status_code,200)
+        self.assertContains(response,'Test')
+
+FACTORY_BOY
+class PostFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model=Post
+    title=factory.Faker('sentence')
+    author=factory.SubFactory(UserFactory)
+
+ANTI_PATTERNS
+-not_using_factories:manual_setup_verbose
+-testing_django_not_app
+-no_transaction_rollback:slow_tests
+
+==============================================================================
+PROJECT_STRUCTURE
+==============================================================================
+STANDARD
+project/
+    manage.py
+    project/settings.py|urls.py|wsgi.py
+    app1/models.py|views.py|urls.py|admin.py
+    app2/...
+
+SCALABLE
+project/
+    config/settings/base.py|local.py|production.py
+    apps/
+        core/
+        users/
+        blog/
+    templates/
+    static/
+    requirements/base.txt|local.txt|production.txt
+
+DOMAIN_DRIVEN
+project/
+    domain/
+        users/models.py|services.py|selectors.py
+        orders/models.py|services.py|selectors.py
+    api/
+    infrastructure/
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Fat_View                | 50+LOC|multiple_concerns         | model|service
+Anemic_Model            | model_only_has_fields            | add_methods
+N+1_Query               | queries_in_loop                  | select_related|prefetch
+Logic_In_Template       | {% if complex %}                 | move_to_view
+No_Custom_User          | using_default_User               | AbstractUser
+Hardcoded_URLs          | href="/posts/"                   | {% url 'name' %}
+Raw_SQL                 | cursor.execute_with_user_input   | ORM|params
+No_Pagination           | returning_all_objects            | Paginator|ListView

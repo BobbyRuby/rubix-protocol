@@ -341,6 +341,14 @@ export class PlanningSession {
     return this.currentPlan || null;
   }
 
+  /**
+   * Inject an exchange into the session
+   * Used by ConversationSession when converting to PlanningSession
+   */
+  async injectExchange(role: 'user' | 'assistant', content: string): Promise<void> {
+    await this.storeExchange(content, role);
+  }
+
   // ===========================================================================
   // STATIC METHODS
   // ===========================================================================

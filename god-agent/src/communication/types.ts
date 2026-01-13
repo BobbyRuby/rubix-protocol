@@ -141,13 +141,17 @@ export interface IChannel {
   getStatus(): ChannelStatus;
   hasPendingRequests(): boolean;
   test(): Promise<boolean>;
+
+  // Timeout extension (for /wait command)
+  extendTimeout(additionalMs?: number): { extended: boolean; newTimeout?: Date; requestId?: string };
+  getPendingInfo(): Array<{ requestId: string; title: string; waitingSince: Date }>;
 }
 
 // Default config
 export const DEFAULT_COMMUNICATION_CONFIG: CommunicationConfig = {
   enabled: false,
   fallbackOrder: ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
-  timeoutMs: 300000,  // 5 minutes
+  timeoutMs: 600000,  // 10 minutes (extendable with /wait command)
   retryAttempts: 1,
   webhookServer: {
     port: 3456
@@ -162,7 +166,7 @@ export function createEscalationRequest(
   title: string,
   message: string,
   options?: EscalationRequest['options'],
-  timeout: number = 300000
+  timeout: number = 600000  // 10 minutes default
 ): EscalationRequest {
   return {
     id: randomUUID(),

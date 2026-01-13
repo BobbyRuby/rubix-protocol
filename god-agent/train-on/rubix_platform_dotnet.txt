@@ -1,0 +1,521 @@
+# RUBIX PLATFORM: .NET
+# VERSION: 8.x|9.x
+# FOUNDATION: C#|Microsoft|MIT_License
+# PHILOSOPHY: cross_platform|high_performance|enterprise_ready
+
+==============================================================================
+HISTORY
+==============================================================================
+2002:.NET_Framework_1.0>Windows_only
+2009:ASP.NET_MVC>web_framework
+2014:Satya_Nadella>open_source_pivot
+2016:.NET_Core_1.0>cross_platform|open_source
+2017:ASP.NET_Core_2.0>Razor_Pages
+2019:.NET_Core_3.0>Windows_Desktop|gRPC
+2020:.NET_5>unified_platform|single_SDK
+2021:.NET_6>LTS|Minimal_APIs|Hot_Reload
+2022:.NET_7>Native_AOT|rate_limiting
+2023:.NET_8>LTS|Native_AOT_web|Blazor_SSR
+2024:.NET_9>AI_integration|hybrid_cache
+
+CORE_MAINTAINERS
+Scott_Hunter:VP_Product
+David_Fowler:architect|SignalR_creator
+Damian_Edwards:ASP.NET_team
+Steve_Smith:Ardalis|patterns_advocate
+
+ARCHITECTURE:MVC|Minimal_API|Clean_Architecture
+
+==============================================================================
+DEPENDENCY_INJECTION_PATTERNS
+==============================================================================
+SERVICE_REGISTRATION
+//Program.cs
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+builder.Services.AddTransient<IEmailService, SmtpEmailService>();
+
+LIFETIMES
+Transient:new_instance_per_request
+Scoped:same_instance_per_HTTP_request
+Singleton:same_instance_app_lifetime
+
+KEYED_SERVICES_.NET8
+builder.Services.AddKeyedScoped<INotifier, EmailNotifier>("email");
+builder.Services.AddKeyedScoped<INotifier, SmsNotifier>("sms");
+
+public class OrderService([FromKeyedServices("email")] INotifier notifier)
+
+REGISTRATION_PATTERNS
++interface_to_impl:AddScoped<IService,Impl>()
++self_registration:AddScoped<ConcreteService>()
++factory:AddScoped(sp => new Service(sp.GetRequired<IDep>()))
++options_pattern:Configure<MyOptions>(config.GetSection("My"))
+
+ANTI_PATTERNS
+-service_locator:IServiceProvider.GetService_everywhere
+-captive_dependency:Singleton_holding_Scoped
+-too_many_deps:class_doing_too_much>5_deps_smell
+
+==============================================================================
+CONTROLLER_PATTERNS
+==============================================================================
+API_CONTROLLER
+[ApiController]
+[Route("api/[controller]")]
+public class OrdersController : ControllerBase
+{
+    private readonly IOrderService _orderService;
+    
+    public OrdersController(IOrderService orderService)
+        => _orderService = orderService;
+    
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<OrderDto>>> GetOrders()
+        => Ok(await _orderService.GetAllAsync());
+    
+    [HttpGet("{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<OrderDto>> GetOrder(int id)
+    {
+        var order = await _orderService.GetByIdAsync(id);
+        return order is null ? NotFound() : Ok(order);
+    }
+    
+    [HttpPost]
+    public async Task<ActionResult<OrderDto>> CreateOrder(CreateOrderDto dto)
+    {
+        var order = await _orderService.CreateAsync(dto);
+        return CreatedAtAction(nameof(GetOrder), new { id = order.Id }, order);
+    }
+}
+
+APICONTROLLER_FEATURES
++automatic_model_validation
++automatic_400_on_invalid
++binding_source_inference
++problem_details_errors
+
+MINIMAL_API_PATTERN
+var app = builder.Build();
+
+app.MapGet("/orders", async (IOrderService svc) => await svc.GetAllAsync());
+app.MapGet("/orders/{id}", async (int id, IOrderService svc) => 
+    await svc.GetByIdAsync(id) is {} order ? Results.Ok(order) : Results.NotFound());
+app.MapPost("/orders", async (CreateOrderDto dto, IOrderService svc) => 
+{
+    var order = await svc.CreateAsync(dto);
+    return Results.Created($"/orders/{order.Id}", order);
+});
+
+ENDPOINT_GROUPING
+var orders = app.MapGroup("/api/orders").RequireAuthorization();
+orders.MapGet("/", GetOrders);
+orders.MapPost("/", CreateOrder);
+
+ANTI_PATTERNS
+-business_logic_in_controller:service_layer
+-returning_entities:use_DTOs
+-no_async:async_all_the_way
+-Task.Result|.Wait():deadlock_risk
+
+==============================================================================
+SERVICE_PATTERNS
+==============================================================================
+SERVICE_IMPLEMENTATION
+public interface IOrderService
+{
+    Task<IEnumerable<OrderDto>> GetAllAsync();
+    Task<OrderDto?> GetByIdAsync(int id);
+    Task<OrderDto> CreateAsync(CreateOrderDto dto);
+}
+
+public class OrderService : IOrderService
+{
+    private readonly IOrderRepository _repo;
+    private readonly IMapper _mapper;
+    private readonly IPublisher _publisher;
+    
+    public async Task<OrderDto> CreateAsync(CreateOrderDto dto)
+    {
+        var order = _mapper.Map<Order>(dto);
+        await _repo.AddAsync(order);
+        await _repo.SaveChangesAsync();
+        await _publisher.Publish(new OrderCreatedEvent(order.Id));
+        return _mapper.Map<OrderDto>(order);
+    }
+}
+
+RESULT_PATTERN
+public class Result<T>
+{
+    public bool IsSuccess { get; }
+    public T? Value { get; }
+    public string? Error { get; }
+    
+    public static Result<T> Success(T value) => new(true, value, null);
+    public static Result<T> Failure(string error) => new(false, default, error);
+}
+
+ANTI_PATTERNS
+-throwing_for_business_errors:Result_pattern
+-sync_over_async:async_all_the_way
+-god_service:split_by_concern
+
+==============================================================================
+REPOSITORY_PATTERNS
+==============================================================================
+GENERIC_REPOSITORY
+public interface IRepository<T> where T : class
+{
+    Task<T?> GetByIdAsync(int id);
+    Task<IEnumerable<T>> GetAllAsync();
+    Task AddAsync(T entity);
+    void Update(T entity);
+    void Remove(T entity);
+}
+
+SPECIFICATION_PATTERN
+public interface ISpecification<T>
+{
+    Expression<Func<T, bool>> Criteria { get; }
+    List<Expression<Func<T, object>>> Includes { get; }
+}
+
+public class OrdersByStatusSpec : BaseSpecification<Order>
+{
+    public OrdersByStatusSpec(OrderStatus status) 
+        : base(o => o.Status == status)
+    {
+        AddInclude(o => o.Items);
+    }
+}
+
+UNIT_OF_WORK
+public interface IUnitOfWork
+{
+    IOrderRepository Orders { get; }
+    ICustomerRepository Customers { get; }
+    Task<int> SaveChangesAsync();
+}
+
+ANTI_PATTERNS
+-repository_per_entity_always:sometimes_DbContext_direct_ok
+-leaky_abstraction:IQueryable_exposure
+-N+1_queries:Include|eager_load
+
+==============================================================================
+ENTITY_FRAMEWORK_PATTERNS
+==============================================================================
+DBCONTEXT
+public class AppDbContext : DbContext
+{
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<Customer> Customers => Set<Customer>();
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+    }
+}
+
+ENTITY_CONFIGURATION
+public class OrderConfiguration : IEntityTypeConfiguration<Order>
+{
+    public void Configure(EntityTypeBuilder<Order> builder)
+    {
+        builder.HasKey(o => o.Id);
+        builder.Property(o => o.Status).HasConversion<string>();
+        builder.HasMany(o => o.Items).WithOne(i => i.Order).OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(o => o.Status);
+    }
+}
+
+QUERY_OPTIMIZATION
++AsNoTracking():read_only_queries
++AsSplitQuery():multiple_collections
++Include().ThenInclude():eager_load
++Select():projection
+
+var orders = await _context.Orders
+    .AsNoTracking()
+    .Include(o => o.Items)
+    .Where(o => o.Status == OrderStatus.Pending)
+    .Select(o => new OrderDto(o.Id, o.Status))
+    .ToListAsync();
+
+ANTI_PATTERNS
+-tracking_for_reads:AsNoTracking
+-loading_entire_entity:projection
+-N+1:Include|AsSplitQuery
+-SaveChanges_in_loop:batch
+
+==============================================================================
+CQRS_MEDIATR_PATTERN
+==============================================================================
+COMMAND
+public record CreateOrderCommand(int CustomerId, List<OrderItemDto> Items) : IRequest<OrderDto>;
+
+public class CreateOrderHandler : IRequestHandler<CreateOrderCommand, OrderDto>
+{
+    public async Task<OrderDto> Handle(CreateOrderCommand request, CancellationToken ct)
+    {
+        // create order logic
+    }
+}
+
+QUERY
+public record GetOrderQuery(int Id) : IRequest<OrderDto?>;
+
+PIPELINE_BEHAVIORS
++logging
++validation
++transaction
++caching
+
+public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+{
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        // validate
+        return await next();
+    }
+}
+
+ANTI_PATTERNS
+-CQRS_everywhere:simple_CRUD_doesnt_need
+-fat_handlers:extract_to_services
+-no_validation:pipeline_behavior
+
+==============================================================================
+VALIDATION_PATTERNS
+==============================================================================
+DATA_ANNOTATIONS
+public class CreateOrderDto
+{
+    [Required]
+    public int CustomerId { get; set; }
+    
+    [Required, MinLength(1)]
+    public List<OrderItemDto> Items { get; set; } = [];
+}
+
+FLUENT_VALIDATION
+public class CreateOrderValidator : AbstractValidator<CreateOrderDto>
+{
+    public CreateOrderValidator()
+    {
+        RuleFor(x => x.CustomerId).GreaterThan(0);
+        RuleFor(x => x.Items).NotEmpty();
+        RuleForEach(x => x.Items).SetValidator(new OrderItemValidator());
+    }
+}
+
+//Registration
+builder.Services.AddValidatorsFromAssemblyContaining<CreateOrderValidator>();
+
+ANTI_PATTERNS
+-validation_in_controller:validator_class
+-no_validation:always_validate_input
+-trusting_client:server_side_validation
+
+==============================================================================
+AUTHENTICATION_AUTHORIZATION
+==============================================================================
+JWT_CONFIGURATION
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = config["Jwt:Issuer"],
+            ValidAudience = config["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Key"]!))
+        };
+    });
+
+POLICY_BASED_AUTH
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    options.AddPolicy("OrderOwner", policy => policy.Requirements.Add(new OrderOwnerRequirement()));
+});
+
+[Authorize(Policy = "OrderOwner")]
+public async Task<ActionResult> UpdateOrder(int id, UpdateOrderDto dto)
+
+RESOURCE_BASED
+public class OrderAuthorizationHandler : AuthorizationHandler<OrderOwnerRequirement, Order>
+{
+    protected override Task HandleRequirementAsync(
+        AuthorizationHandlerContext context, 
+        OrderOwnerRequirement requirement, 
+        Order resource)
+    {
+        if (context.User.FindFirstValue(ClaimTypes.NameIdentifier) == resource.OwnerId.ToString())
+            context.Succeed(requirement);
+        return Task.CompletedTask;
+    }
+}
+
+ANTI_PATTERNS
+-role_checks_in_code:use_policies
+-authorization_in_controller_only:resource_based
+-storing_secrets_in_code:user_secrets|KeyVault
+
+==============================================================================
+MIDDLEWARE_PATTERNS
+==============================================================================
+CUSTOM_MIDDLEWARE
+public class RequestLoggingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<RequestLoggingMiddleware> _logger;
+    
+    public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+    
+    public async Task InvokeAsync(HttpContext context)
+    {
+        _logger.LogInformation("Request: {Method} {Path}", context.Request.Method, context.Request.Path);
+        await _next(context);
+        _logger.LogInformation("Response: {StatusCode}", context.Response.StatusCode);
+    }
+}
+
+//Registration
+app.UseMiddleware<RequestLoggingMiddleware>();
+
+EXCEPTION_MIDDLEWARE
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        context.Response.StatusCode = 500;
+        context.Response.ContentType = "application/problem+json";
+        var error = context.Features.Get<IExceptionHandlerFeature>();
+        await context.Response.WriteAsJsonAsync(new ProblemDetails { ... });
+    });
+});
+
+==============================================================================
+TESTING_PATTERNS
+==============================================================================
+UNIT_TESTS
+public class OrderServiceTests
+{
+    private readonly Mock<IOrderRepository> _repoMock = new();
+    private readonly OrderService _sut;
+    
+    public OrderServiceTests()
+    {
+        _sut = new OrderService(_repoMock.Object, Mock.Of<IMapper>());
+    }
+    
+    [Fact]
+    public async Task CreateAsync_ShouldSaveOrder()
+    {
+        // Arrange
+        var dto = new CreateOrderDto { CustomerId = 1 };
+        
+        // Act
+        var result = await _sut.CreateAsync(dto);
+        
+        // Assert
+        _repoMock.Verify(r => r.AddAsync(It.IsAny<Order>()), Times.Once);
+    }
+}
+
+INTEGRATION_TESTS
+public class OrdersControllerTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly HttpClient _client;
+    
+    public OrdersControllerTests(WebApplicationFactory<Program> factory)
+    {
+        _client = factory.CreateClient();
+    }
+    
+    [Fact]
+    public async Task GetOrders_ReturnsOk()
+    {
+        var response = await _client.GetAsync("/api/orders");
+        response.EnsureSuccessStatusCode();
+    }
+}
+
+TESTCONTAINERS
+[Collection("Database")]
+public class OrderRepositoryTests : IAsyncLifetime
+{
+    private readonly MsSqlContainer _container = new MsSqlBuilder().Build();
+    
+    public async Task InitializeAsync() => await _container.StartAsync();
+    public async Task DisposeAsync() => await _container.DisposeAsync();
+}
+
+==============================================================================
+PROJECT_STRUCTURE
+==============================================================================
+CLEAN_ARCHITECTURE
+src/
+    Domain/
+        Entities/
+        ValueObjects/
+        Interfaces/
+    Application/
+        Commands/
+        Queries/
+        DTOs/
+        Interfaces/
+    Infrastructure/
+        Persistence/
+        Services/
+    WebApi/
+        Controllers/
+        Middleware/
+
+VERTICAL_SLICE
+src/
+    Features/
+        Orders/
+            CreateOrder/Command|Handler|Endpoint
+            GetOrders/Query|Handler|Endpoint
+        Customers/
+            ...
+
+==============================================================================
+PACKAGES_ESSENTIAL
+==============================================================================
+MediatR:CQRS
+FluentValidation:validation
+AutoMapper:object_mapping
+Serilog:structured_logging
+Polly:resilience
+EFCore:ORM
+xUnit|NUnit:testing
+Moq|NSubstitute:mocking
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Service_Locator         | GetService_calls_everywhere      | constructor_DI
+Captive_Dependency      | Singleton_with_Scoped_dep        | fix_lifetime
+Fat_Controller          | business_logic_present           | service_layer
+Sync_Over_Async         | .Result|.Wait()                  | async_await
+Entity_As_DTO           | returning_EF_entity              | DTO_projection
+N+1_Queries             | lazy_load_in_loop                | Include|projection
+No_Cancellation         | no_CancellationToken             | pass_through
+God_Service             | service_with_many_methods        | split_by_concern
+Validation_In_Controller| manual_if_checks                 | FluentValidation

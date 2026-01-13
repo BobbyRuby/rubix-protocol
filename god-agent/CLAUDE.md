@@ -187,7 +187,77 @@ daemon.start();  // Runs cron jobs, file watchers, event triggers
 
 ---
 
-## CODEX Execution Flow
+## RUBIX Department Head System (NEW)
+
+```
+                    ┌─────────────────┐
+                    │     CLAUDE      │
+                    │  (Head of Ops)  │
+                    └────────┬────────┘
+                             │
+        ┌────────┬───────────┼───────────┬────────┐
+        ▼        ▼           ▼           ▼        ▼
+   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
+   │RESEARCHER│ │ARCHITECT│ │ENGINEER │ │VALIDATOR│ │GUARDIAN │
+   └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘
+        │           │           │           │           │
+     ┌──┴──┐     ┌──┴──┐     ┌──┴──┐     ┌──┴──┐     ┌──┴──┐
+     │█ █ █│     │█ █ █│     │█ █ █│     │█ █ █│     │█ █ █│
+     └─────┘     └─────┘     └─────┘     └─────┘     └─────┘
+    Sub-agents  Sub-agents  Sub-agents  Sub-agents  Sub-agents
+```
+
+### The 5 Departments
+
+| Department | Role | Responsibilities |
+|------------|------|------------------|
+| **RESEARCHER** | VP of Discovery | Codebase analysis, pattern detection, dependency mapping |
+| **ARCHITECT** | VP of Design | Solution structure, interfaces, data models |
+| **ENGINEER** | VP of Implementation | Code writing, component building (highest parallelism) |
+| **VALIDATOR** | VP of Quality | Unit tests, integration tests, edge cases |
+| **GUARDIAN** | VP of Reliability | Security scanning, performance, code review |
+
+### Enable RUBIX Mode
+
+```typescript
+// In TaskExecutor
+executor.enableRubixMode({
+  model: 'claude-sonnet-4-20250514',
+  maxSubAgentsPerDepartment: 5,
+  codebaseRoot: process.cwd()
+});
+```
+
+### RUBIX Execution Flow
+
+```
+User submits task
+    │
+    ▼
+RubixOrchestrator.execute()
+    │
+    ▼
+Create Plan → Phases with parallel departments
+    │
+    ▼
+Phase 1: RESEARCHER (understand problem)
+    │
+    ▼
+Phase 2: ARCHITECT (design solution)
+    │
+    ▼
+Phase 3: ENGINEER (build code - parallel per file)
+    │
+    ▼
+Phase 4: VALIDATOR + GUARDIAN (verify in parallel)
+    │
+    ▼
+Synthesize Results → Return artifacts
+```
+
+---
+
+## Legacy CODEX Execution Flow
 
 ```
 User submits task (MCP, Telegram, CLI, or API)
@@ -228,14 +298,15 @@ For each subtask (up to 3 attempts):
 ```env
 # Required
 OPENAI_API_KEY=sk-...           # For embeddings (768-dim)
-ANTHROPIC_API_KEY=sk-ant-...    # For CODEX code generation
+ANTHROPIC_API_KEY=sk-ant-...    # For RUBIX code generation
 
 # Optional
 GOD_AGENT_DATA_DIR=./data       # Database location
-CODEX_MODEL=claude-opus-4-5-20250514
-CODEX_ULTRATHINK=true           # Extended thinking
-CODEX_THINK_BASE=5000           # Initial thinking budget
-CODEX_THINK_MAX=16000           # Max thinking budget
+RUBIX_MODEL=claude-opus-4-5-20250514  # Claude model
+RUBIX_MAX_PARALLEL=5            # Parallel department heads
+RUBIX_ULTRATHINK=true           # Extended thinking
+RUBIX_THINK_BASE=5000           # Initial thinking budget
+RUBIX_THINK_MAX=16000           # Max thinking budget
 TELEGRAM_BOT_TOKEN=...          # Telegram integration
 ```
 
@@ -425,3 +496,32 @@ TELEGRAM_BOT_TOKEN=... node dist/telegram/standalone.js
 4. **Single task at a time** - CODEX only runs one task; must cancel or wait before submitting another
 
 5. **Async execution** - `god_codex_do` returns immediately; poll with `god_codex_status`
+
+---
+
+## Housekeeping
+
+### Temporary Directory Cleanup
+
+Claude Code creates `tmpclaude-*-cwd` directories during execution. These should auto-cleanup but get left behind when sessions crash or are force-killed.
+
+**IMPORTANT: Always check for and clean up these temp directories:**
+
+```bash
+# Clean temp directories
+npm run clean:temp
+
+# Or dry-run to see what would be deleted
+node scripts/clean-temp.cjs --dry-run
+```
+
+The cleanup script is at `scripts/clean-temp.cjs` and scans:
+- Project root for `tmpclaude-*-cwd/`
+- Subdirectories up to 2 levels deep
+
+These directories are already in `.gitignore` so they won't be committed, but they can accumulate and waste disk space.
+
+**When to clean:**
+- After multiple crashed sessions
+- When git status shows many `tmpclaude-*` entries
+- Periodically as maintenance
