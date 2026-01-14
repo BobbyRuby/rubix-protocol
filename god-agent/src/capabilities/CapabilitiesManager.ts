@@ -86,12 +86,16 @@ export const DEFAULT_CAPABILITIES_CONFIG: Partial<CapabilitiesConfig> = {
 
 /**
  * CapabilitiesManager - Unified interface for all coding capabilities
+ *
+ * LAZY INITIALIZATION: Each capability is initialized on first use,
+ * not during the main initialize() call. This prevents timeouts and
+ * allows capabilities to be used even if others fail.
  */
 export class CapabilitiesManager {
   private config: CapabilitiesConfig;
   private initialized: boolean = false;
 
-  // Capability managers
+  // Capability managers (lazy initialized)
   private lsp: LSPManager | null = null;
   private git: GitManager | null = null;
   private analyzer: StaticAnalyzer | null = null;
@@ -102,6 +106,10 @@ export class CapabilitiesManager {
   private stack: StackParser | null = null;
   private db: SchemaIntrospector | null = null;
   private docs: DocMiner | null = null;
+
+  // Track initialization state per capability
+  private initState: Map<string, 'pending' | 'initializing' | 'ready' | 'failed'> = new Map();
+  private initErrors: Map<string, string> = new Map();
 
   constructor(config: CapabilitiesConfig) {
     this.config = {
@@ -118,175 +126,339 @@ export class CapabilitiesManager {
       database: { ...DEFAULT_CAPABILITIES_CONFIG.database, ...config.database },
       docs: { ...DEFAULT_CAPABILITIES_CONFIG.docs, ...config.docs }
     };
+
+    // Initialize all capabilities as pending
+    ['lsp', 'git', 'analysis', 'ast', 'deps', 'repl', 'profiler', 'stacktrace', 'database', 'docs'].forEach(cap => {
+      this.initState.set(cap, 'pending');
+    });
+  }
+
+  // ===========================================================================
+  // Lazy Initialization Methods - Each capability is initialized on first use
+  // ===========================================================================
+
+  /**
+   * Ensure Git is initialized (lazy)
+   */
+  private async ensureGit(): Promise<GitManager> {
+    if (this.git && this.initState.get('git') === 'ready') {
+      return this.git;
+    }
+
+    if (this.initState.get('git') === 'failed') {
+      throw new Error(`Git initialization failed: ${this.initErrors.get('git')}`);
+    }
+
+    if (!this.config.git?.enabled) {
+      throw new Error('Git capability is disabled in configuration');
+    }
+
+    this.initState.set('git', 'initializing');
+    try {
+      this.git = new GitManager(this.config.projectRoot, this.config.git);
+      await this.git.initialize();
+      this.initState.set('git', 'ready');
+      return this.git;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('git', 'failed');
+      this.initErrors.set('git', msg);
+      throw new Error(`Git initialization failed: ${msg}`);
+    }
   }
 
   /**
-   * Initialize all enabled capabilities
+   * Ensure AST manager is initialized (lazy)
+   */
+  private async ensureAst(): Promise<ASTManager> {
+    if (this.ast && this.initState.get('ast') === 'ready') {
+      return this.ast;
+    }
+
+    if (this.initState.get('ast') === 'failed') {
+      throw new Error(`AST initialization failed: ${this.initErrors.get('ast')}`);
+    }
+
+    if (!this.config.ast?.enabled) {
+      throw new Error('AST capability is disabled in configuration');
+    }
+
+    this.initState.set('ast', 'initializing');
+    try {
+      this.ast = new ASTManager(this.config.projectRoot, this.config.ast);
+      this.initState.set('ast', 'ready');
+      return this.ast;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('ast', 'failed');
+      this.initErrors.set('ast', msg);
+      throw new Error(`AST initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure Static Analyzer is initialized (lazy)
+   */
+  private async ensureAnalyzer(): Promise<StaticAnalyzer> {
+    if (this.analyzer && this.initState.get('analysis') === 'ready') {
+      return this.analyzer;
+    }
+
+    if (this.initState.get('analysis') === 'failed') {
+      throw new Error(`Static analyzer initialization failed: ${this.initErrors.get('analysis')}`);
+    }
+
+    if (!this.config.analysis?.enabled) {
+      throw new Error('Static analysis capability is disabled in configuration');
+    }
+
+    this.initState.set('analysis', 'initializing');
+    try {
+      this.analyzer = new StaticAnalyzer(this.config.projectRoot, this.config.analysis);
+      await this.analyzer.initialize();
+      this.initState.set('analysis', 'ready');
+      return this.analyzer;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('analysis', 'failed');
+      this.initErrors.set('analysis', msg);
+      throw new Error(`Static analyzer initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure LSP is initialized (lazy)
+   */
+  private async ensureLsp(): Promise<LSPManager> {
+    if (this.lsp && this.initState.get('lsp') === 'ready') {
+      return this.lsp;
+    }
+
+    if (this.initState.get('lsp') === 'failed') {
+      throw new Error(`LSP initialization failed: ${this.initErrors.get('lsp')}`);
+    }
+
+    if (!this.config.lsp?.enabled) {
+      throw new Error('LSP capability is disabled in configuration');
+    }
+
+    this.initState.set('lsp', 'initializing');
+    try {
+      this.lsp = new LSPManager(this.config.projectRoot, this.config.lsp);
+      await this.lsp.initialize();
+      this.initState.set('lsp', 'ready');
+      return this.lsp;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('lsp', 'failed');
+      this.initErrors.set('lsp', msg);
+      throw new Error(`LSP initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure Dependency Graph is initialized (lazy)
+   */
+  private async ensureDeps(): Promise<DependencyGraphManager> {
+    if (this.deps && this.initState.get('deps') === 'ready') {
+      return this.deps;
+    }
+
+    if (this.initState.get('deps') === 'failed') {
+      throw new Error(`Dependency graph initialization failed: ${this.initErrors.get('deps')}`);
+    }
+
+    if (!this.config.deps?.enabled) {
+      throw new Error('Dependency graph capability is disabled in configuration');
+    }
+
+    this.initState.set('deps', 'initializing');
+    try {
+      this.deps = new DependencyGraphManager(this.config.projectRoot, this.config.deps);
+      this.initState.set('deps', 'ready');
+      return this.deps;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('deps', 'failed');
+      this.initErrors.set('deps', msg);
+      throw new Error(`Dependency graph initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure REPL is initialized (lazy)
+   */
+  private async ensureRepl(): Promise<REPLManager> {
+    if (this.repl && this.initState.get('repl') === 'ready') {
+      return this.repl;
+    }
+
+    if (this.initState.get('repl') === 'failed') {
+      throw new Error(`REPL initialization failed: ${this.initErrors.get('repl')}`);
+    }
+
+    if (!this.config.repl?.enabled) {
+      throw new Error('REPL capability is disabled in configuration');
+    }
+
+    this.initState.set('repl', 'initializing');
+    try {
+      this.repl = new REPLManager(this.config.projectRoot, this.config.repl);
+      this.initState.set('repl', 'ready');
+      return this.repl;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('repl', 'failed');
+      this.initErrors.set('repl', msg);
+      throw new Error(`REPL initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure Profiler is initialized (lazy)
+   */
+  private async ensureProfiler(): Promise<ProfilerManager> {
+    if (this.profiler && this.initState.get('profiler') === 'ready') {
+      return this.profiler;
+    }
+
+    if (this.initState.get('profiler') === 'failed') {
+      throw new Error(`Profiler initialization failed: ${this.initErrors.get('profiler')}`);
+    }
+
+    if (!this.config.profiler?.enabled) {
+      throw new Error('Profiler capability is disabled in configuration');
+    }
+
+    this.initState.set('profiler', 'initializing');
+    try {
+      this.profiler = new ProfilerManager(this.config.projectRoot, this.config.profiler);
+      this.initState.set('profiler', 'ready');
+      return this.profiler;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('profiler', 'failed');
+      this.initErrors.set('profiler', msg);
+      throw new Error(`Profiler initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure Stack Parser is initialized (lazy)
+   */
+  private async ensureStack(): Promise<StackParser> {
+    if (this.stack && this.initState.get('stacktrace') === 'ready') {
+      return this.stack;
+    }
+
+    if (this.initState.get('stacktrace') === 'failed') {
+      throw new Error(`Stack parser initialization failed: ${this.initErrors.get('stacktrace')}`);
+    }
+
+    if (!this.config.stacktrace?.enabled) {
+      throw new Error('Stack trace capability is disabled in configuration');
+    }
+
+    this.initState.set('stacktrace', 'initializing');
+    try {
+      this.stack = new StackParser(this.config.projectRoot, this.config.stacktrace);
+      this.initState.set('stacktrace', 'ready');
+      return this.stack;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('stacktrace', 'failed');
+      this.initErrors.set('stacktrace', msg);
+      throw new Error(`Stack parser initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure Database introspector is initialized (lazy)
+   */
+  private async ensureDb(): Promise<SchemaIntrospector> {
+    if (this.db && this.initState.get('database') === 'ready') {
+      return this.db;
+    }
+
+    if (this.initState.get('database') === 'failed') {
+      throw new Error(`Database initialization failed: ${this.initErrors.get('database')}`);
+    }
+
+    if (!this.config.database?.enabled) {
+      throw new Error('Database capability is disabled in configuration');
+    }
+
+    this.initState.set('database', 'initializing');
+    try {
+      this.db = new SchemaIntrospector(this.config.database);
+      await this.db.initialize();
+      this.initState.set('database', 'ready');
+      return this.db;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('database', 'failed');
+      this.initErrors.set('database', msg);
+      throw new Error(`Database initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Ensure Doc Miner is initialized (lazy)
+   */
+  private async ensureDocs(): Promise<DocMiner> {
+    if (this.docs && this.initState.get('docs') === 'ready') {
+      return this.docs;
+    }
+
+    if (this.initState.get('docs') === 'failed') {
+      throw new Error(`Doc miner initialization failed: ${this.initErrors.get('docs')}`);
+    }
+
+    if (!this.config.docs?.enabled) {
+      throw new Error('Documentation capability is disabled in configuration');
+    }
+
+    this.initState.set('docs', 'initializing');
+    try {
+      this.docs = new DocMiner(this.config.projectRoot, this.config.docs);
+      this.initState.set('docs', 'ready');
+      return this.docs;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.initState.set('docs', 'failed');
+      this.initErrors.set('docs', msg);
+      throw new Error(`Doc miner initialization failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Initialize all enabled capabilities (DEPRECATED - capabilities now lazy init)
+   * This method is kept for backwards compatibility but does minimal work.
+   * Each capability will initialize on first use instead.
    */
   async initialize(): Promise<CapabilitiesStatus> {
-    const statuses: CapabilityStatus[] = [];
-
-    // Initialize LSP
-    if (this.config.lsp?.enabled) {
-      try {
-        this.lsp = new LSPManager(this.config.projectRoot, this.config.lsp);
-        await this.lsp.initialize();
-        statuses.push({ name: 'lsp', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'lsp',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Git
-    if (this.config.git?.enabled) {
-      try {
-        this.git = new GitManager(this.config.projectRoot, this.config.git);
-        await this.git.initialize();
-        statuses.push({ name: 'git', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'git',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Static Analyzer
-    if (this.config.analysis?.enabled) {
-      try {
-        this.analyzer = new StaticAnalyzer(this.config.projectRoot, this.config.analysis);
-        await this.analyzer.initialize();
-        statuses.push({ name: 'analysis', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'analysis',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize AST Manager
-    if (this.config.ast?.enabled) {
-      try {
-        this.ast = new ASTManager(this.config.projectRoot, this.config.ast);
-        statuses.push({ name: 'ast', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'ast',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Dependency Graph
-    if (this.config.deps?.enabled) {
-      try {
-        this.deps = new DependencyGraphManager(this.config.projectRoot, this.config.deps);
-        statuses.push({ name: 'deps', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'deps',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize REPL/Debug
-    if (this.config.repl?.enabled) {
-      try {
-        this.repl = new REPLManager(this.config.projectRoot, this.config.repl);
-        statuses.push({ name: 'repl', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'repl',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Profiler
-    if (this.config.profiler?.enabled) {
-      try {
-        this.profiler = new ProfilerManager(this.config.projectRoot, this.config.profiler);
-        statuses.push({ name: 'profiler', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'profiler',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Stack Parser
-    if (this.config.stacktrace?.enabled) {
-      try {
-        this.stack = new StackParser(this.config.projectRoot, this.config.stacktrace);
-        statuses.push({ name: 'stacktrace', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'stacktrace',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Database Introspector
-    if (this.config.database?.enabled) {
-      try {
-        this.db = new SchemaIntrospector(this.config.database);
-        await this.db.initialize();
-        statuses.push({ name: 'database', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'database',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    // Initialize Doc Miner
-    if (this.config.docs?.enabled) {
-      try {
-        this.docs = new DocMiner(this.config.projectRoot, this.config.docs);
-        statuses.push({ name: 'docs', enabled: true, initialized: true });
-      } catch (error) {
-        statuses.push({
-          name: 'docs',
-          enabled: true,
-          initialized: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
+    // Mark as initialized - actual capability init happens on first use
     this.initialized = true;
+
+    // Return status showing all as pending (will init on first use)
+    const statuses: CapabilityStatus[] = [
+      { name: 'lsp', enabled: !!this.config.lsp?.enabled, initialized: false },
+      { name: 'git', enabled: !!this.config.git?.enabled, initialized: false },
+      { name: 'analysis', enabled: !!this.config.analysis?.enabled, initialized: false },
+      { name: 'ast', enabled: !!this.config.ast?.enabled, initialized: false },
+      { name: 'deps', enabled: !!this.config.deps?.enabled, initialized: false },
+      { name: 'repl', enabled: !!this.config.repl?.enabled, initialized: false },
+      { name: 'profiler', enabled: !!this.config.profiler?.enabled, initialized: false },
+      { name: 'stacktrace', enabled: !!this.config.stacktrace?.enabled, initialized: false },
+      { name: 'database', enabled: !!this.config.database?.enabled, initialized: false },
+      { name: 'docs', enabled: !!this.config.docs?.enabled, initialized: false }
+    ];
 
     return {
       projectRoot: this.config.projectRoot,
       capabilities: statuses,
-      ready: statuses.every(s => !s.enabled || s.initialized),
-      errors: statuses.filter(s => s.error).map(s => `${s.name}: ${s.error}`)
+      ready: true, // Ready to accept requests (lazy init will handle the rest)
+      errors: []
     };
   }
 
@@ -328,18 +500,92 @@ export class CapabilitiesManager {
     };
   }
 
+  /**
+   * Pre-warm heavy capabilities in the background (non-blocking)
+   *
+   * This starts initialization of LSP, REPL, and Profiler without waiting.
+   * Subsequent calls to these capabilities will be fast once pre-warming completes.
+   *
+   * @returns Promise that resolves when all pre-warming attempts complete
+   */
+  async prewarm(): Promise<{ lsp: boolean; repl: boolean; profiler: boolean }> {
+    const results = { lsp: false, repl: false, profiler: false };
+
+    // Install temporary unhandled rejection handler to catch LSP stream errors
+    // These can occur after the initial catch due to async connection cleanup
+    const rejectionHandler = (reason: unknown) => {
+      const msg = reason instanceof Error ? reason.message : String(reason);
+      if (msg.includes('stream') || msg.includes('LSP') || msg.includes('ERR_STREAM')) {
+        console.warn('[Prewarm] Suppressed async error:', msg);
+        // Don't rethrow - this is expected during LSP cleanup
+      } else {
+        // Re-emit for other unhandled rejections
+        throw reason;
+      }
+    };
+    process.on('unhandledRejection', rejectionHandler);
+
+    // Pre-warm in parallel, catching errors individually
+    const prewarmTasks: Promise<void>[] = [];
+
+    // LSP (heavy - takes 10-30s, may fail if typescript-language-server not installed)
+    if (this.config.lsp?.enabled && this.initState.get('lsp') === 'pending') {
+      prewarmTasks.push(
+        this.ensureLsp()
+          .then(() => { results.lsp = true; })
+          .catch(err => {
+            console.warn('[Prewarm] LSP failed:', err.message);
+            // Mark as failed so we don't retry
+            this.initState.set('lsp', 'failed');
+            this.initErrors.set('lsp', err.message);
+          })
+      );
+    }
+
+    // REPL/Debug (moderate)
+    if (this.config.repl?.enabled && this.initState.get('repl') === 'pending') {
+      prewarmTasks.push(
+        this.ensureRepl()
+          .then(() => { results.repl = true; })
+          .catch(err => {
+            console.warn('[Prewarm] REPL failed:', err.message);
+          })
+      );
+    }
+
+    // Profiler (moderate)
+    if (this.config.profiler?.enabled && this.initState.get('profiler') === 'pending') {
+      prewarmTasks.push(
+        this.ensureProfiler()
+          .then(() => { results.profiler = true; })
+          .catch(err => {
+            console.warn('[Prewarm] Profiler failed:', err.message);
+          })
+      );
+    }
+
+    // Wait for all pre-warming to complete (or fail)
+    await Promise.all(prewarmTasks);
+
+    // Give async cleanup a moment, then remove handler
+    await new Promise(resolve => setTimeout(resolve, 500));
+    process.removeListener('unhandledRejection', rejectionHandler);
+
+    return results;
+  }
+
   // ===========================================================================
-  // LSP Operations
+  // LSP Operations (lazy initialized)
   // ===========================================================================
 
   async startLspServer(languageId?: string): Promise<void> {
-    if (!this.lsp) throw new Error('LSP not initialized');
-    await this.lsp.startServer(languageId ?? 'typescript');
+    const lsp = await this.ensureLsp();
+    await lsp.startServer(languageId ?? 'typescript');
   }
 
   async stopLspServer(): Promise<void> {
-    if (!this.lsp) throw new Error('LSP not initialized');
-    await this.lsp.shutdown();
+    const lsp = await this.ensureLsp();
+    await lsp.shutdown();
   }
 
   getLspStatus(): Array<{ languageId: string; running: boolean; capabilities: { definitionProvider: boolean; referencesProvider: boolean; documentSymbolProvider: boolean; workspaceSymbolProvider: boolean; diagnosticProvider: boolean; hoverProvider: boolean; completionProvider: boolean; renameProvider: boolean }; error?: string }> {
@@ -348,76 +594,76 @@ export class CapabilitiesManager {
   }
 
   async gotoDefinition(file: string, line: number, column: number): Promise<DefinitionResult | null> {
-    if (!this.lsp) throw new Error('LSP not initialized');
-    return this.lsp.gotoDefinition(file, line, column);
+    const lsp = await this.ensureLsp();
+    return lsp.gotoDefinition(file, line, column);
   }
 
   async findReferences(file: string, line: number, column: number): Promise<ReferencesResult> {
-    if (!this.lsp) throw new Error('LSP not initialized');
-    return this.lsp.findReferences(file, line, column);
+    const lsp = await this.ensureLsp();
+    return lsp.findReferences(file, line, column);
   }
 
   async getDiagnostics(file?: string): Promise<DiagnosticsResult[]> {
-    if (!this.lsp) throw new Error('LSP not initialized');
-    return this.lsp.getDiagnostics(file);
+    const lsp = await this.ensureLsp();
+    return lsp.getDiagnostics(file);
   }
 
   async searchSymbols(query: string): Promise<SymbolSearchResult> {
-    if (!this.lsp) throw new Error('LSP not initialized');
-    return this.lsp.searchSymbols(query);
+    const lsp = await this.ensureLsp();
+    return lsp.searchSymbols(query);
   }
 
   // ===========================================================================
-  // Git Operations
+  // Git Operations (lazy initialized)
   // ===========================================================================
 
   async gitBlame(file: string, startLine?: number, endLine?: number): Promise<GitBlameResult> {
-    if (!this.git) throw new Error('Git not initialized');
-    return this.git.blame(file, startLine, endLine);
+    const git = await this.ensureGit();
+    return git.blame(file, startLine, endLine);
   }
 
   async gitBisect(goodCommit: string, badCommit: string, testCommand: string): Promise<GitBisectResult> {
-    if (!this.git) throw new Error('Git not initialized');
-    return this.git.bisect(goodCommit, badCommit, testCommand);
+    const git = await this.ensureGit();
+    return git.bisect(goodCommit, badCommit, testCommand);
   }
 
   async gitHistory(file?: string, limit?: number): Promise<GitHistoryEntry[]> {
-    if (!this.git) throw new Error('Git not initialized');
-    return this.git.history(file, limit);
+    const git = await this.ensureGit();
+    return git.history(file, limit);
   }
 
   async gitDiff(file?: string, staged?: boolean): Promise<GitDiffResult[]> {
-    if (!this.git) throw new Error('Git not initialized');
-    return this.git.diff(file, staged);
+    const git = await this.ensureGit();
+    return git.diff(file, staged);
   }
 
   async gitBranches(): Promise<GitBranchInfo[]> {
-    if (!this.git) throw new Error('Git not initialized');
-    return this.git.branches();
+    const git = await this.ensureGit();
+    return git.branches();
   }
 
   async gitRecentChanges(file: string, options?: { limit?: number }): Promise<GitHistoryEntry[]> {
-    if (!this.git) throw new Error('Git not initialized');
-    return this.git.history(file, options?.limit ?? 5);
+    const git = await this.ensureGit();
+    return git.history(file, options?.limit ?? 5);
   }
 
   // ===========================================================================
-  // Static Analysis Operations
+  // Static Analysis Operations (lazy initialized)
   // ===========================================================================
 
   async runLint(files?: string[]): Promise<LintResult[]> {
-    if (!this.analyzer) throw new Error('Static analyzer not initialized');
-    return this.analyzer.runLint(files);
+    const analyzer = await this.ensureAnalyzer();
+    return analyzer.runLint(files);
   }
 
   async runTypeCheck(files?: string[]): Promise<TypeCheckResult[]> {
-    if (!this.analyzer) throw new Error('Static analyzer not initialized');
-    return this.analyzer.runTypeCheck(files);
+    const analyzer = await this.ensureAnalyzer();
+    return analyzer.runTypeCheck(files);
   }
 
   async analyze(files?: string[]): Promise<AnalysisSummary> {
-    if (!this.analyzer) throw new Error('Static analyzer not initialized');
-    return this.analyzer.analyze(files);
+    const analyzer = await this.ensureAnalyzer();
+    return analyzer.analyze(files);
   }
 
   /**
@@ -426,134 +672,132 @@ export class CapabilitiesManager {
    * @returns Object with count of fixed issues and remaining error count
    */
   async fixLintIssues(files?: string[]): Promise<{ fixedCount: number; remainingErrors: number }> {
-    if (!this.analyzer) {
-      return { fixedCount: 0, remainingErrors: 0 };
-    }
-    return this.analyzer.fixLintIssues(files);
+    const analyzer = await this.ensureAnalyzer();
+    return analyzer.fixLintIssues(files);
   }
 
   // ===========================================================================
-  // AST Operations
+  // AST Operations (lazy initialized)
   // ===========================================================================
 
   async parseAST(file: string): Promise<ASTParseResult> {
-    if (!this.ast) throw new Error('AST manager not initialized');
-    return this.ast.parse(file);
+    const ast = await this.ensureAst();
+    return ast.parse(file);
   }
 
   async queryAST(file: string, nodeType: string): Promise<ASTQueryResult> {
-    if (!this.ast) throw new Error('AST manager not initialized');
-    return this.ast.query(file, nodeType);
+    const ast = await this.ensureAst();
+    return ast.query(file, nodeType);
   }
 
   async refactor(operation: RefactorOperation): Promise<RefactorResult> {
-    if (!this.ast) throw new Error('AST manager not initialized');
-    return this.ast.refactor(operation);
+    const ast = await this.ensureAst();
+    return ast.refactor(operation);
   }
 
   async getSymbols(file: string): Promise<Array<{ name: string; kind: string; location: { file: string; line: number; column: number }; scope: string; exported: boolean }>> {
-    if (!this.ast) throw new Error('AST manager not initialized');
-    return this.ast.getSymbols(file);
+    const ast = await this.ensureAst();
+    return ast.getSymbols(file);
   }
 
   // ===========================================================================
-  // Dependency Graph Operations
+  // Dependency Graph Operations (lazy initialized)
   // ===========================================================================
 
   async buildDependencyGraph(entryPoint: string): Promise<DependencyGraph> {
-    if (!this.deps) throw new Error('Dependency graph not initialized');
-    return this.deps.build(entryPoint);
+    const deps = await this.ensureDeps();
+    return deps.build(entryPoint);
   }
 
   async analyzeImpact(file: string): Promise<ImpactAnalysis> {
-    if (!this.deps) throw new Error('Dependency graph not initialized');
-    return this.deps.analyzeImpact(file);
+    const deps = await this.ensureDeps();
+    return deps.analyzeImpact(file);
   }
 
   // ===========================================================================
-  // REPL/Debug Operations
+  // REPL/Debug Operations (lazy initialized)
   // ===========================================================================
 
   async startDebugSession(script: string): Promise<DebugSession> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    return this.repl.startSession(script);
+    const repl = await this.ensureRepl();
+    return repl.startSession(script);
   }
 
   async stopAllDebugSessions(): Promise<void> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    await this.repl.shutdown();
+    const repl = await this.ensureRepl();
+    await repl.shutdown();
   }
 
   async setBreakpoint(file: string, line: number, condition?: string): Promise<Breakpoint> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    return this.repl.setBreakpoint(file, line, condition);
+    const repl = await this.ensureRepl();
+    return repl.setBreakpoint(file, line, condition);
   }
 
   async removeBreakpoint(breakpointId: string): Promise<void> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    await this.repl.removeBreakpoint(breakpointId);
+    const repl = await this.ensureRepl();
+    await repl.removeBreakpoint(breakpointId);
   }
 
   async step(action: 'into' | 'over' | 'out' | 'continue'): Promise<void> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    await this.repl.step(action);
+    const repl = await this.ensureRepl();
+    await repl.step(action);
   }
 
   async inspectVariable(name: string): Promise<VariableInspection> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    return this.repl.inspectVariable(name);
+    const repl = await this.ensureRepl();
+    return repl.inspectVariable(name);
   }
 
   async evalExpression(expression: string): Promise<EvalResult> {
-    if (!this.repl) throw new Error('REPL not initialized');
-    return this.repl.eval(expression);
+    const repl = await this.ensureRepl();
+    return repl.eval(expression);
   }
 
   // ===========================================================================
-  // Profiler Operations
+  // Profiler Operations (lazy initialized)
   // ===========================================================================
 
   async startProfiling(): Promise<void> {
-    if (!this.profiler) throw new Error('Profiler not initialized');
-    return this.profiler.start();
+    const profiler = await this.ensureProfiler();
+    return profiler.start();
   }
 
   async stopProfiling(): Promise<ProfileResult> {
-    if (!this.profiler) throw new Error('Profiler not initialized');
-    return this.profiler.stop();
+    const profiler = await this.ensureProfiler();
+    return profiler.stop();
   }
 
   async findHotspots(): Promise<HotspotResult> {
-    if (!this.profiler) throw new Error('Profiler not initialized');
-    return this.profiler.findHotspots();
+    const profiler = await this.ensureProfiler();
+    return profiler.findHotspots();
   }
 
   // ===========================================================================
-  // Stack Trace Operations
+  // Stack Trace Operations (lazy initialized)
   // ===========================================================================
 
   async parseStackTrace(error: Error | string): Promise<ParsedStackTrace> {
-    if (!this.stack) throw new Error('Stack parser not initialized');
-    return this.stack.parse(error);
+    const stack = await this.ensureStack();
+    return stack.parse(error);
   }
 
   async getStackContext(file: string, line: number): Promise<StackContext> {
-    if (!this.stack) throw new Error('Stack parser not initialized');
-    return this.stack.getContext(file, line);
+    const stack = await this.ensureStack();
+    return stack.getContext(file, line);
   }
 
   // ===========================================================================
-  // Database Operations
+  // Database Operations (lazy initialized)
   // ===========================================================================
 
   async getSchema(): Promise<DatabaseSchema> {
-    if (!this.db) throw new Error('Database not initialized');
-    return this.db.getSchema();
+    const db = await this.ensureDb();
+    return db.getSchema();
   }
 
   async shutdownDatabase(): Promise<void> {
-    if (!this.db) throw new Error('Database not initialized');
-    await this.db.shutdown();
+    const db = await this.ensureDb();
+    await db.shutdown();
   }
 
   async generateTypes(options?: {
@@ -561,22 +805,22 @@ export class CapabilitiesManager {
     addNullable?: boolean;
     addOptional?: boolean;
   }): Promise<GeneratedTypes> {
-    if (!this.db) throw new Error('Database not initialized');
-    return this.db.generateTypes(options);
+    const db = await this.ensureDb();
+    return db.generateTypes(options);
   }
 
   // ===========================================================================
-  // Documentation Operations
+  // Documentation Operations (lazy initialized)
   // ===========================================================================
 
   async fetchDocs(url: string): Promise<DocFetchResult> {
-    if (!this.docs) throw new Error('Doc miner not initialized');
-    return this.docs.fetch(url);
+    const docs = await this.ensureDocs();
+    return docs.fetch(url);
   }
 
   async searchDocs(query: string): Promise<DocSearchResult> {
-    if (!this.docs) throw new Error('Doc miner not initialized');
-    return this.docs.search(query);
+    const docs = await this.ensureDocs();
+    return docs.search(query);
   }
 
   // ===========================================================================

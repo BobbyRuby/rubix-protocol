@@ -57,6 +57,9 @@ import { createRuntimeContext } from './context/RuntimeContext.js';
 
 const StoreInputSchema = z.object({
   content: z.string().describe('The content to store in memory'),
+  type: z.enum(['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'bug_fix', 'dev_feature', 'arch_insight', 'generic'])
+    .optional()
+    .describe('Memory type for compression schema (auto-detected if not provided)'),
   tags: z.array(z.string()).optional().describe('Tags for categorization'),
   source: z.enum(['user_input', 'agent_inference', 'tool_output', 'system', 'external'])
     .optional()
@@ -736,19 +739,27 @@ const DeepWorkCheckpointInputSchema = z.object({
 const TOOLS: Tool[] = [
   {
     name: 'god_store',
-    description: `Store information in Rubix memory with provenance tracking.
+    description: `Store information in Rubix memory with automatic compression.
+
+    ALL content is compressed to pure positional tokens for efficiency.
+    Machine stores tokens, humans get decoded output via god_query_expanded.
 
     Use this to save:
     - Session context and learnings
-    - Security events and patterns
-    - Codebase architecture decisions
+    - Security events and patterns (use type: 'error_pattern' or 'bug_fix')
+    - Codebase architecture decisions (use type: 'arch_insight')
     - User preferences and patterns
 
-    L-Score will be calculated automatically based on lineage depth and confidence.`,
+    L-Score calculated automatically based on lineage depth and confidence.`,
     inputSchema: {
       type: 'object',
       properties: {
-        content: { type: 'string', description: 'The content to store' },
+        content: { type: 'string', description: 'The content to store (human-readable, will be compressed)' },
+        type: {
+          type: 'string',
+          enum: ['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'bug_fix', 'dev_feature', 'arch_insight', 'generic'],
+          description: 'Memory type for compression schema (auto-detected if not provided)'
+        },
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
         source: {
           type: 'string',
@@ -3321,12 +3332,10 @@ const TOOLS: Tool[] = [
   // ==========================================
   {
     name: 'god_store_compressed',
-    description: `Store memory with automatic compression.
+    description: `[DEPRECATED] Use god_store instead - ALL storage now compresses by default.
 
-    Compresses human-readable content to pure tokens for efficient storage.
-    Different schemas for: component, department, mcp_tool, capability, workflow, config, error_pattern, success_pattern.
-
-    Returns compression stats including tokens saved.`,
+    This tool forwards to god_store for backwards compatibility.
+    god_store now auto-compresses using positional tokens.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -3336,7 +3345,7 @@ const TOOLS: Tool[] = [
         },
         type: {
           type: 'string',
-          enum: ['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'generic'],
+          enum: ['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'bug_fix', 'dev_feature', 'arch_insight', 'generic'],
           description: 'Memory type for schema selection'
         },
         tags: {
@@ -3443,6 +3452,39 @@ const TOOLS: Tool[] = [
         runBootstrap: {
           type: 'boolean',
           description: 'If true and not bootstrapped, run bootstrap now'
+        }
+      }
+    }
+  },
+  {
+    name: 'god_recompress_all',
+    description: `Compress all uncompressed memory entries.
+
+    Finds all entries WITHOUT the 'compressed' tag and runs them through
+    the compression engine. Already-compressed entries are skipped.
+
+    Options:
+    - dryRun: true = Preview what would be compressed without actually doing it
+    - batchSize: Number of entries to process per batch (default: 50)
+
+    Returns:
+    - totalEntries: Total entries in database
+    - alreadyCompressed: Entries skipped (already have 'compressed' tag)
+    - newlyCompressed: Entries compressed this run
+    - failed: Entries that failed to compress
+    - tokensSaved: Estimated tokens saved from new compressions`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dryRun: {
+          type: 'boolean',
+          description: 'If true, only report what would be compressed without actually compressing'
+        },
+        batchSize: {
+          type: 'number',
+          description: 'Entries to process per batch (default: 50)',
+          minimum: 1,
+          maximum: 200
         }
       }
     }
@@ -3562,9 +3604,29 @@ class GodAgentMCPServer {
     return this.verificationService;
   }
 
-  private getCapabilities(): CapabilitiesManager {
+  private async getCapabilities(): Promise<CapabilitiesManager> {
     if (!this.capabilities) {
-      this.capabilities = new CapabilitiesManager({ projectRoot: process.cwd() });
+      this.capabilities = new CapabilitiesManager({
+        projectRoot: process.cwd(),
+        // Enable all capabilities for full functionality
+        lsp: { enabled: true, timeout: 30000 },
+        git: { enabled: true },
+        analysis: { enabled: true, eslint: true, typescript: true },
+        ast: { enabled: true },
+        deps: { enabled: true },
+        repl: { enabled: true },      // Enable debug/REPL
+        profiler: { enabled: true },  // Enable profiler
+        stacktrace: { enabled: true },
+        database: { enabled: false }, // Requires explicit connection
+        docs: { enabled: true, cacheTTL: 3600 }
+      });
+      await this.capabilities.initialize();
+
+      // Start background pre-warming of heavy capabilities
+      // This is non-blocking - capabilities initialize in background
+      this.capabilities.prewarm().catch(err => {
+        console.error('[MCP] Capability prewarm error:', err.message);
+      });
     }
     return this.capabilities;
   }
@@ -3572,7 +3634,7 @@ class GodAgentMCPServer {
   private async getReviewer(): Promise<CodeReviewer> {
     if (!this.reviewer) {
       const engine = await this.getEngine();
-      const caps = this.getCapabilities();
+      const caps = await this.getCapabilities();
       this.reviewer = new CodeReviewer(
         engine,
         process.cwd(),
@@ -3947,6 +4009,8 @@ class GodAgentMCPServer {
             return await this.handleCompressionStats();
           case 'god_bootstrap_status':
             return await this.handleBootstrapStatus(args);
+          case 'god_recompress_all':
+            return await this.handleRecompressAll(args);
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -3965,14 +4029,28 @@ class GodAgentMCPServer {
     const input = StoreInputSchema.parse(args);
     const engine = await this.getEngine();
 
-    const entry = await engine.store(input.content, {
-      tags: input.tags,
+    // Compress content using the specified or auto-detected type
+    const compressionResult = memoryCompressor.encode(
+      input.content,
+      input.type as MemoryType | undefined
+    );
+    const detectedType = input.type || memoryCompressor.detectTypeFromContent(input.content);
+
+    // Store the compressed content
+    const entry = await engine.store(compressionResult.compressed, {
+      tags: [...(input.tags || []), 'compressed', `type:${detectedType}`],
       source: parseSource(input.source),
       importance: input.importance,
       parentIds: input.parentIds,
       confidence: input.confidence,
       sessionId: input.sessionId,
-      agentId: input.agentId
+      agentId: input.agentId,
+      context: {
+        compressed: true,
+        originalType: detectedType,
+        compressionRatio: compressionResult.ratio,
+        tokensSaved: compressionResult.tokensSaved
+      }
     });
 
     return {
@@ -3983,7 +4061,11 @@ class GodAgentMCPServer {
           id: entry.id,
           lScore: entry.provenance.lScore,
           lineageDepth: entry.provenance.lineageDepth,
-          message: `Stored with L-Score: ${entry.provenance.lScore?.toFixed(4) ?? 'pending'}`
+          compressed: compressionResult.compressed,
+          type: detectedType,
+          ratio: Math.round(compressionResult.ratio * 100) + '%',
+          tokensSaved: compressionResult.tokensSaved,
+          message: `Stored with compression (${Math.round(compressionResult.ratio * 100)}% saved, ${compressionResult.tokensSaved} tokens)`
         }, null, 2)
       }]
     };
@@ -5374,7 +5456,7 @@ class GodAgentMCPServer {
   // RUBIX Handlers
   // ==========================================
 
-  private getTaskExecutor(): TaskExecutor {
+  private async getTaskExecutor(): Promise<TaskExecutor> {
     if (!this.taskExecutor) {
       // Lazy initialization
       const engine = this.engine;
@@ -5440,7 +5522,7 @@ class GodAgentMCPServer {
           // Wire CodeReviewer for self-review after code generation
           // Create synchronously since engine is already available
           if (!this.reviewer) {
-            const caps = this.getCapabilities();
+            const caps = await this.getCapabilities();
             this.reviewer = new CodeReviewer(
               engine,
               process.cwd(),
@@ -5476,6 +5558,11 @@ class GodAgentMCPServer {
           console.log(`[MCP Server] RuntimeContext generated (${runtimeCtx.tokenEstimate} tokens):`);
           console.log(runtimeCtx.compressed);
 
+          // Enable Phased Execution by default (6-phase tokenized flow with Ollama)
+          // Reduces Claude API calls from 15-25 to 2-3 (90% reduction)
+          this.taskExecutor.enablePhasedExecution(process.cwd());
+          console.log('[MCP Server] PhasedExecution enabled - using 6-phase tokenized flow');
+
           console.log('[MCP Server] CodeGenerator initialized - RUBIX can now write real code');
         } catch (error) {
           console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
@@ -5492,7 +5579,7 @@ class GodAgentMCPServer {
 
     // Ensure engine is initialized
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
 
     // Check if already executing
     if (executor.isRunning()) {
@@ -5563,7 +5650,7 @@ class GodAgentMCPServer {
   private async handleCodexStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const status: StatusReport = executor.getStatus();
 
       return {
@@ -5623,7 +5710,7 @@ class GodAgentMCPServer {
   private async handleCodexAnswer(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = CodexAnswerInputSchema.parse(args);
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
 
     const resolved = executor.resolveEscalation(input.escalationId, input.answer);
 
@@ -5665,7 +5752,7 @@ class GodAgentMCPServer {
   private async handleCodexDecision(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = CodexDecisionInputSchema.parse(args);
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
 
     const success = executor.answerDecision(input.decisionId, input.answer, input.optionIndex);
 
@@ -5697,7 +5784,7 @@ class GodAgentMCPServer {
   private async handleCodexCancel(): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
 
       // Check if there's a task (running OR stuck)
       const status = executor.getStatus();
@@ -5750,7 +5837,7 @@ class GodAgentMCPServer {
   private async handleCodexLog(): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const log: WorkLogEntry[] = executor.getWorkLog();
 
       return {
@@ -5790,7 +5877,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
 
       // Check if there's a communication manager to extend timeout
       const communications = executor.getCommunications?.();
@@ -5858,7 +5945,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -5928,7 +6015,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -5998,7 +6085,7 @@ class GodAgentMCPServer {
   private async handlePartnerStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6060,7 +6147,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6113,7 +6200,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6185,7 +6272,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6258,7 +6345,7 @@ class GodAgentMCPServer {
 
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6319,7 +6406,7 @@ class GodAgentMCPServer {
   private async handleContainmentStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6381,7 +6468,7 @@ class GodAgentMCPServer {
   private async handleContainmentSession(args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text: string }> }> {
     try {
       await this.getEngine();
-      const executor = this.getTaskExecutor();
+      const executor = await this.getTaskExecutor();
       const partner = executor.getCollaborativePartner();
 
       if (!partner) {
@@ -6530,7 +6617,7 @@ class GodAgentMCPServer {
   // LSP Handlers
   private async handleLspStart(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = LSPStartInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       await caps.startLspServer(input.languageId);
@@ -6560,7 +6647,7 @@ class GodAgentMCPServer {
   }
 
   private async handleLspStop(): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       await caps.stopLspServer();
@@ -6588,7 +6675,7 @@ class GodAgentMCPServer {
 
   private async handleLspDefinition(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = LSPDefinitionInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.gotoDefinition(input.file, input.line, input.column);
@@ -6618,7 +6705,7 @@ class GodAgentMCPServer {
 
   private async handleLspReferences(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = LSPReferencesInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.findReferences(input.file, input.line, input.column);
@@ -6650,7 +6737,7 @@ class GodAgentMCPServer {
 
   private async handleLspDiagnostics(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = LSPDiagnosticsInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.getDiagnostics(input.file);
@@ -6685,7 +6772,7 @@ class GodAgentMCPServer {
 
   private async handleLspSymbols(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = LSPSymbolsInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.searchSymbols(input.query);
@@ -6717,7 +6804,7 @@ class GodAgentMCPServer {
   // Git Handlers
   private async handleGitBlame(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = GitBlameInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.gitBlame(input.file, input.startLine, input.endLine);
@@ -6748,7 +6835,7 @@ class GodAgentMCPServer {
 
   private async handleGitBisect(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = GitBisectInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.gitBisect(input.good, input.bad, input.testCommand);
@@ -6784,7 +6871,7 @@ class GodAgentMCPServer {
 
   private async handleGitHistory(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = GitHistoryInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const commits = await caps.gitHistory(input.file, input.limit);
@@ -6815,7 +6902,7 @@ class GodAgentMCPServer {
 
   private async handleGitDiff(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = GitDiffInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const diffs = await caps.gitDiff(input.file, input.staged);
@@ -6849,7 +6936,7 @@ class GodAgentMCPServer {
   }
 
   private async handleGitBranches(): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const branches = await caps.gitBranches();
@@ -6883,7 +6970,7 @@ class GodAgentMCPServer {
   // AST Handlers
   private async handleAstParse(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = ASTParseInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.parseAST(input.file);
@@ -6917,7 +7004,7 @@ class GodAgentMCPServer {
 
   private async handleAstQuery(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = ASTQueryInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.queryAST(input.file, input.nodeType);
@@ -6950,7 +7037,7 @@ class GodAgentMCPServer {
 
   private async handleAstRefactor(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = ASTRefactorInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const operation: RefactorOperation = {
@@ -6995,7 +7082,7 @@ class GodAgentMCPServer {
 
   private async handleAstSymbols(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = ASTSymbolsInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.getSymbols(input.file);
@@ -7028,7 +7115,7 @@ class GodAgentMCPServer {
   // Analysis Handlers
   private async handleAnalyzeLint(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = AnalyzeLintInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const results = await caps.runLint(input.files);
@@ -7062,7 +7149,7 @@ class GodAgentMCPServer {
 
   private async handleAnalyzeTypes(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = AnalyzeTypesInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const results = await caps.runTypeCheck(input.files);
@@ -7096,7 +7183,7 @@ class GodAgentMCPServer {
 
   private async handleAnalyzeDeps(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = AnalyzeDepsInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.buildDependencyGraph(input.entryPoint);
@@ -7130,7 +7217,7 @@ class GodAgentMCPServer {
 
   private async handleAnalyzeImpact(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = AnalyzeImpactInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.analyzeImpact(input.file);
@@ -7166,7 +7253,7 @@ class GodAgentMCPServer {
   // Debug Handlers
   private async handleDebugStart(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DebugStartInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.startDebugSession(input.script);
@@ -7196,7 +7283,7 @@ class GodAgentMCPServer {
   }
 
   private async handleDebugStop(): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       await caps.stopAllDebugSessions();
@@ -7225,7 +7312,7 @@ class GodAgentMCPServer {
 
   private async handleDebugBreakpoint(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DebugBreakpointInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       if (input.remove && input.breakpointId) {
@@ -7271,7 +7358,7 @@ class GodAgentMCPServer {
 
   private async handleDebugStep(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DebugStepInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       await caps.step(input.action as 'into' | 'over' | 'out' | 'continue');
@@ -7301,7 +7388,7 @@ class GodAgentMCPServer {
 
   private async handleDebugEval(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DebugEvalInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.evalExpression(input.expression);
@@ -7335,7 +7422,7 @@ class GodAgentMCPServer {
   // Stack Trace Handlers
   private async handleStackParse(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = StackParseInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.parseStackTrace(input.error);
@@ -7367,7 +7454,7 @@ class GodAgentMCPServer {
 
   private async handleStackContext(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = StackContextInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.getStackContext(input.file, input.line);
@@ -7399,7 +7486,7 @@ class GodAgentMCPServer {
   // Database Handlers
   private async handleDbSchema(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     DBSchemaInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.getSchema();
@@ -7440,7 +7527,7 @@ class GodAgentMCPServer {
 
   private async handleDbTypes(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DBTypesInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.generateTypes({
@@ -7477,7 +7564,7 @@ class GodAgentMCPServer {
   // Profiler Handlers
   private async handleProfileStart(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     ProfileStartInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       await caps.startProfiling();
@@ -7505,7 +7592,7 @@ class GodAgentMCPServer {
   }
 
   private async handleProfileStop(): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.stopProfiling();
@@ -7538,7 +7625,7 @@ class GodAgentMCPServer {
   }
 
   private async handleProfileHotspots(): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.findHotspots();
@@ -7571,7 +7658,7 @@ class GodAgentMCPServer {
   // Documentation Handlers
   private async handleDocsFetch(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DocsFetchInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.fetchDocs(input.url);
@@ -7605,7 +7692,7 @@ class GodAgentMCPServer {
 
   private async handleDocsSearch(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DocsSearchInputSchema.parse(args);
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
 
     try {
       const result = await caps.searchDocs(input.query);
@@ -7850,7 +7937,7 @@ class GodAgentMCPServer {
 
   // Capabilities Status Handler
   private async handleCapabilitiesStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const caps = this.getCapabilities();
+    const caps = await this.getCapabilities();
     const status = caps.getStatus();
 
     return {
@@ -9007,7 +9094,7 @@ god_comms_setup mode="set" channel="email" config={
   private async handleDeepWorkStart(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DeepWorkStartInputSchema.parse(args);
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
     const deepWork = executor.getDeepWorkManager();
     const notificationPolicy: Record<string, boolean> = {};
     if (input.allowProgress !== undefined) notificationPolicy.allowProgress = input.allowProgress;
@@ -9020,21 +9107,21 @@ god_comms_setup mode="set" channel="email" config={
   }
   private async handleDeepWorkPause(): Promise<{ content: Array<{ type: string; text: string }> }> {
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
     const session = executor.pauseDeepWork();
     if (!session) return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No active deep work session to pause' }) }] };
     return { content: [{ type: 'text', text: JSON.stringify({ success: true, sessionId: session.id, status: session.status, activeTimeMs: session.activeTimeMs, message: 'Deep work session paused' }, null, 2) }] };
   }
   private async handleDeepWorkResume(): Promise<{ content: Array<{ type: string; text: string }> }> {
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
     const session = executor.resumeDeepWork();
     if (!session) return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No paused deep work session to resume' }) }] };
     return { content: [{ type: 'text', text: JSON.stringify({ success: true, sessionId: session.id, status: session.status, message: 'Deep work session resumed' }, null, 2) }] };
   }
   private async handleDeepWorkStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
     await this.getEngine();
-    const executor = this.getTaskExecutor();
+    const executor = await this.getTaskExecutor();
     const status = executor.getDeepWorkStatus();
     if (!status) return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No deep work session active', hasActiveSession: false }) }] };
     return { content: [{ type: 'text', text: JSON.stringify({ success: true, hasActiveSession: true, session: { id: status.session.id, taskId: status.session.taskId, status: status.session.status, focusLevel: status.session.focusLevel, startedAt: status.session.startedAt.toISOString() }, currentTask: status.currentTask, progress: status.progress, eta: status.eta, activeTime: status.activeTimeFormatted, pendingDecisions: status.pendingDecisions, blockers: status.blockers, batchedNotifications: status.batchedNotifications, recentActivity: status.recentActivity.slice(-5).map(a => ({ type: a.type, message: a.message, timestamp: a.timestamp.toISOString() })), checkpointCount: status.session.checkpoints.length, logEntryCount: status.session.workLog.length }, null, 2) }] };
@@ -9042,7 +9129,7 @@ god_comms_setup mode="set" channel="email" config={
   private async handleDeepWorkLog(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DeepWorkLogInputSchema.parse(args);
     await this.getEngine();
-    const deepWork = this.getTaskExecutor().getDeepWorkManager();
+    const deepWork = (await this.getTaskExecutor()).getDeepWorkManager();
     const log = deepWork.getWorkLog(input.sessionId, input.limit);
     if (log.length === 0) return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: 0, entries: [], message: input.sessionId ? 'No log entries for this session' : 'No active session or empty log' }) }] };
     return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: log.length, entries: log.map(e => ({ id: e.id, type: e.type, message: e.message, timestamp: e.timestamp.toISOString(), subtaskId: e.subtaskId, details: e.details })) }, null, 2) }] };
@@ -9050,7 +9137,7 @@ god_comms_setup mode="set" channel="email" config={
   private async handleDeepWorkCheckpoint(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DeepWorkCheckpointInputSchema.parse(args);
     await this.getEngine();
-    const checkpoint = this.getTaskExecutor().createDeepWorkCheckpoint(input.summary);
+    const checkpoint = (await this.getTaskExecutor()).createDeepWorkCheckpoint(input.summary);
     if (!checkpoint) return { content: [{ type: 'text', text: JSON.stringify({ success: false, error: 'No active deep work session or task' }) }] };
     return { content: [{ type: 'text', text: JSON.stringify({ success: true, checkpointId: checkpoint.id, timestamp: checkpoint.timestamp.toISOString(), subtasksComplete: checkpoint.subtasksComplete, subtasksRemaining: checkpoint.subtasksRemaining, summary: checkpoint.summary, message: `Checkpoint created: ${checkpoint.summary}` }, null, 2) }] };
   }
@@ -9205,42 +9292,32 @@ god_comms_setup mode="set" channel="email" config={
   // ==========================================
 
   private async handleStoreCompressed(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    // DEPRECATED: Forward to handleStore which now compresses by default
     const input = z.object({
       content: z.string(),
-      type: z.enum(['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'generic']),
+      type: z.enum(['component', 'department', 'mcp_tool', 'capability', 'workflow', 'config', 'error_pattern', 'success_pattern', 'system', 'bug_fix', 'dev_feature', 'arch_insight', 'generic']),
       tags: z.array(z.string()).optional(),
       importance: z.number().min(0).max(1).optional()
     }).parse(args);
 
-    const engine = await this.getEngine();
-
-    // Compress the content
-    const compressionResult = memoryCompressor.encode(input.content, input.type as MemoryType);
-
-    // Store the compressed content
-    const entry = await engine.store(compressionResult.compressed, {
-      tags: [...(input.tags || []), 'compressed', `type:${input.type}`],
-      source: MemorySource.AGENT_INFERENCE,
-      importance: input.importance || 0.5,
-      context: {
-        compressed: true,
-        originalType: input.type,
-        compressionRatio: compressionResult.ratio,
-        tokensSaved: compressionResult.tokensSaved
-      }
+    // Forward to unified handleStore
+    const result = await this.handleStore({
+      content: input.content,
+      type: input.type,
+      tags: input.tags,
+      importance: input.importance,
+      source: 'agent_inference'
     });
+
+    // Add deprecation notice to response
+    const parsed = JSON.parse(result.content[0].text);
+    parsed.deprecated = true;
+    parsed.notice = 'god_store_compressed is deprecated. Use god_store instead - all storage now compresses by default.';
 
     return {
       content: [{
         type: 'text',
-        text: JSON.stringify({
-          id: entry.id,
-          compressed: compressionResult.compressed,
-          originalLength: compressionResult.originalLength,
-          compressedLength: compressionResult.compressedLength,
-          ratio: Math.round(compressionResult.ratio * 100) + '%',
-          tokensSaved: compressionResult.tokensSaved
-        }, null, 2)
+        text: JSON.stringify(parsed, null, 2)
       }]
     };
   }
@@ -9407,6 +9484,114 @@ god_comms_setup mode="set" channel="email" config={
           categories: status.categories,
           bootstrapRan: bootstrapResult !== null,
           bootstrapStats: bootstrapResult
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleRecompressAll(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      dryRun: z.boolean().optional().default(false),
+      batchSize: z.number().min(1).max(200).optional().default(50)
+    }).parse(args);
+
+    const engine = await this.getEngine();
+    const storage = engine.getStorage();
+    const db = storage.getDb();
+
+    // Get ALL entries from database (better-sqlite3 is synchronous)
+    const allEntries = db.prepare(`
+      SELECT e.id, e.content, GROUP_CONCAT(t.tag) as tags
+      FROM memory_entries e
+      LEFT JOIN memory_tags t ON e.id = t.entry_id
+      GROUP BY e.id
+    `).all() as Array<{ id: string; content: string; tags: string | null }>;
+
+    const stats = {
+      totalEntries: allEntries.length,
+      alreadyCompressed: 0,
+      newlyCompressed: 0,
+      failed: 0,
+      tokensSaved: 0,
+      samples: [] as Array<{ id: string; before: string; after: string; type: string }>
+    };
+
+    // Prepare statements for updates
+    const updateContent = db.prepare('UPDATE memory_entries SET content = ? WHERE id = ?');
+    const insertTag = db.prepare('INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)');
+
+    // Process entries
+    for (const entry of allEntries) {
+      const tags = entry.tags ? entry.tags.split(',') : [];
+
+      // Skip if already has 'compressed' tag
+      if (tags.includes('compressed')) {
+        stats.alreadyCompressed++;
+        continue;
+      }
+
+      // Skip if content looks already compressed (pipe-delimited short segments)
+      if (memoryCompressor.isCompressed(entry.content)) {
+        stats.alreadyCompressed++;
+        continue;
+      }
+
+      try {
+        // Detect type and compress
+        const detectedType = memoryCompressor.detectTypeFromContent(entry.content);
+        const result = memoryCompressor.encode(entry.content, detectedType);
+
+        // Only update if we actually achieved compression
+        if (result.ratio > 0.1) {
+          if (!input.dryRun) {
+            // Update content in database
+            updateContent.run(result.compressed, entry.id);
+
+            // Add compressed tag
+            insertTag.run(entry.id, 'compressed');
+
+            // Add type tag
+            insertTag.run(entry.id, `type:${detectedType}`);
+          }
+
+          stats.newlyCompressed++;
+          stats.tokensSaved += result.tokensSaved;
+
+          // Keep samples for first 5
+          if (stats.samples.length < 5) {
+            stats.samples.push({
+              id: entry.id.substring(0, 8),
+              before: entry.content.substring(0, 50) + '...',
+              after: result.compressed.substring(0, 50) + '...',
+              type: detectedType
+            });
+          }
+        } else {
+          // Low compression ratio - still mark as processed
+          if (!input.dryRun) {
+            insertTag.run(entry.id, 'compressed');
+          }
+          stats.alreadyCompressed++;
+        }
+      } catch (error) {
+        stats.failed++;
+      }
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          dryRun: input.dryRun,
+          totalEntries: stats.totalEntries,
+          alreadyCompressed: stats.alreadyCompressed,
+          newlyCompressed: stats.newlyCompressed,
+          failed: stats.failed,
+          tokensSaved: stats.tokensSaved,
+          samples: stats.samples,
+          message: input.dryRun
+            ? `Would compress ${stats.newlyCompressed} entries (${stats.tokensSaved} tokens saved)`
+            : `Compressed ${stats.newlyCompressed} entries (${stats.tokensSaved} tokens saved)`
         }, null, 2)
       }]
     };
