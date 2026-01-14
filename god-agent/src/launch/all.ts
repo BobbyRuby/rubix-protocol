@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   await requireEnvInteractive(ENV_REQUIREMENTS.all, 'Full Stack');
 
   // Bootstrap core systems (includes capability pre-warming)
-  const { engine, executor, capabilities } = await bootstrap({ showEnvSummary: true });
+  const { engine, executor, capabilities, containment } = await bootstrap({ showEnvSummary: true });
 
   // Track all services for cleanup
   const services: Service[] = [];
@@ -91,8 +91,10 @@ async function main(): Promise<void> {
     // Wire TelegramBot and CommunicationManager together:
     // 1. TelegramChannel goes into send-only mode (TelegramBot handles polling)
     // 2. Escalation responses are forwarded from TelegramBot to CommunicationManager
+    // 3. Containment enables /paths, /path-add, /path-remove commands
     comms.setTelegramBotActive(true);
     bot.setComms(comms);
+    bot.setContainment(containment);
 
     bot.start();
     services.push({ name: 'Telegram Bot', stop: () => bot.stop() });
