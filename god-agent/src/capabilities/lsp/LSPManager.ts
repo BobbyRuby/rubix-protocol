@@ -8,6 +8,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { existsSync } from 'fs';
 import {
   createMessageConnection,
   StreamMessageReader,
@@ -38,22 +39,80 @@ import type {
 import type { LSPServerConfig, LSPServerStatus, LSPCapabilities } from './types.js';
 
 /**
- * Default language server configurations
+ * Resolve command path, checking npm global bin on Windows
+ * Called at spawn time to ensure environment is available
+ *
+ * IMPORTANT: Returns paths with forward slashes on Windows to avoid
+ * backslash escaping issues when using shell: 'cmd.exe'
  */
-const DEFAULT_SERVERS: LSPServerConfig[] = [
-  {
-    languageId: 'typescript',
-    command: 'typescript-language-server',
-    args: ['--stdio'],
-    patterns: ['**/*.ts', '**/*.tsx']
-  },
-  {
-    languageId: 'javascript',
-    command: 'typescript-language-server',
-    args: ['--stdio'],
-    patterns: ['**/*.js', '**/*.jsx']
+function resolveCommand(command: string): string {
+  if (process.platform === 'win32') {
+    // Check npm global bin location on Windows
+    const appData = process.env.APPDATA || process.env.AppData;
+    if (appData) {
+      const npmGlobalBin = path.join(appData, 'npm', `${command}.cmd`);
+      try {
+        if (existsSync(npmGlobalBin)) {
+          // Use forward slashes to avoid cmd.exe backslash escaping issues
+          const normalizedPath = npmGlobalBin.replace(/\\/g, '/');
+          console.log(`[LSP] Resolved ${command} to: ${normalizedPath}`);
+          return normalizedPath;
+        }
+      } catch {
+        // Fall through to default
+      }
+    }
+    // Also try common Windows paths
+    const userProfile = process.env.USERPROFILE;
+    if (userProfile) {
+      const altPath = path.join(userProfile, 'AppData', 'Roaming', 'npm', `${command}.cmd`);
+      try {
+        if (existsSync(altPath)) {
+          // Use forward slashes to avoid cmd.exe backslash escaping issues
+          const normalizedPath = altPath.replace(/\\/g, '/');
+          console.log(`[LSP] Resolved ${command} to: ${normalizedPath}`);
+          return normalizedPath;
+        }
+      } catch {
+        // Fall through to default
+      }
+    }
   }
-];
+  console.log(`[LSP] Using default command: ${command}`);
+  return command;
+}
+
+/**
+ * Get server config with resolved command (called at spawn time)
+ */
+function getServerConfig(languageId: string): LSPServerConfig | undefined {
+  const configs: Record<string, Omit<LSPServerConfig, 'command'> & { commandName: string }> = {
+    'typescript': {
+      languageId: 'typescript',
+      commandName: 'typescript-language-server',
+      args: ['--stdio'],
+      patterns: ['**/*.ts', '**/*.tsx']
+    },
+    'javascript': {
+      languageId: 'javascript',
+      commandName: 'typescript-language-server',
+      args: ['--stdio'],
+      patterns: ['**/*.js', '**/*.jsx']
+    }
+  };
+
+  const config = configs[languageId];
+  if (!config) return undefined;
+
+  return {
+    languageId: config.languageId,
+    command: resolveCommand(config.commandName),
+    args: config.args,
+    patterns: config.patterns
+  };
+}
+
+// Server configs are now generated dynamically via getServerConfig()
 
 /**
  * LSPManager - Language Server Protocol manager
@@ -88,28 +147,76 @@ export class LSPManager {
       return; // Already running
     }
 
-    const serverConfig = DEFAULT_SERVERS.find(s => s.languageId === languageId);
+    // Get server config with resolved command path (resolved at spawn time)
+    const serverConfig = getServerConfig(languageId);
     if (!serverConfig) {
       throw new Error(`No server configuration for language: ${languageId}`);
     }
+    console.log(`[LSP] Starting ${languageId} server with command: ${serverConfig.command}`);
+
+    let serverProcess: ChildProcess | null = null;
+    let connection: MessageConnection | null = null;
 
     try {
       // Spawn the language server process
-      const serverProcess = spawn(serverConfig.command, serverConfig.args, {
+      // On Windows, explicitly use cmd.exe to avoid PowerShell execution policy issues
+      const spawnOptions: Parameters<typeof spawn>[2] = {
         cwd: this.projectRoot,
         stdio: ['pipe', 'pipe', 'pipe'],
-        shell: process.platform === 'win32'
-      });
+        shell: process.platform === 'win32' ? 'cmd.exe' : false,
+        env: { ...process.env }  // Pass through all environment variables
+      };
+
+      console.log(`[LSP] Spawning with shell: ${spawnOptions.shell}, command: ${serverConfig.command}`);
+      serverProcess = spawn(serverConfig.command, serverConfig.args, spawnOptions);
 
       if (!serverProcess.stdin || !serverProcess.stdout) {
         throw new Error('Failed to create server process streams');
       }
 
+      // Track if process is still alive
+      let processAlive = true;
+      let processError: Error | null = null;
+
+      // Handle process errors and exit BEFORE creating connection
+      serverProcess.on('error', (err) => {
+        processAlive = false;
+        processError = err;
+      });
+
+      serverProcess.on('exit', (code) => {
+        processAlive = false;
+        if (code !== 0 && code !== null) {
+          processError = new Error(`Server exited with code ${code}`);
+        }
+      });
+
+      // Handle stderr for debugging
+      serverProcess.stderr?.on('data', () => {
+        // Silently consume stderr to prevent buffer issues
+      });
+
+      // Wait a tick to see if process immediately fails
+      await new Promise(resolve => setImmediate(resolve));
+
+      if (!processAlive) {
+        throw processError || new Error('Server process failed to start');
+      }
+
       // Create message connection
-      const connection = createMessageConnection(
+      connection = createMessageConnection(
         new StreamMessageReader(serverProcess.stdout),
         new StreamMessageWriter(serverProcess.stdin)
       );
+
+      // Handle connection errors silently (log but don't crash)
+      connection.onError((error) => {
+        console.warn(`[LSP] Connection error for ${languageId}:`, error[0]?.message || error);
+      });
+
+      connection.onClose(() => {
+        this.servers.delete(languageId);
+      });
 
       // Handle diagnostics
       connection.onNotification(PublishDiagnosticsNotification.type, params => {
@@ -133,7 +240,7 @@ export class LSPManager {
       // Start listening
       connection.listen();
 
-      // Initialize the server
+      // Initialize the server with timeout
       const initParams: InitializeParams = {
         processId: process.pid,
         rootUri: this.pathToUri(this.projectRoot),
@@ -187,6 +294,21 @@ export class LSPManager {
       });
 
     } catch (error) {
+      // Clean up on failure
+      if (connection) {
+        try {
+          connection.dispose();
+        } catch {
+          // Ignore dispose errors
+        }
+      }
+      if (serverProcess) {
+        try {
+          serverProcess.kill();
+        } catch {
+          // Ignore kill errors
+        }
+      }
       throw new Error(`Failed to start ${languageId} server: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
