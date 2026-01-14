@@ -238,16 +238,28 @@ RULE:json_only,no_prose`
 
       // Check if Claude is asking for clarification
       if (parsed.needsClarification) {
-        const questions = parsed.questions || [];
+        const rawQuestions = parsed.questions || [];
         const reason = parsed.reason || 'Additional information needed';
-        const clarificationText = `${reason}\n\nQuestions:\n${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join('\n')}`;
+
+        // Normalize questions - handle both string[] and object[] formats
+        const questions: string[] = rawQuestions.map((q: unknown) => {
+          if (typeof q === 'string') return q;
+          if (typeof q === 'object' && q !== null) {
+            // Try common property names for question text
+            const obj = q as Record<string, unknown>;
+            return String(obj.question || obj.text || obj.description || obj.content || JSON.stringify(q));
+          }
+          return String(q);
+        });
+
+        const clarificationText = `${reason}\n\nQuestions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
 
         console.log(`[TaskDecomposer] Claude needs clarification: ${questions.length} questions`);
 
         return {
           subtasks: [],
           estimatedComplexity: 'medium',
-          ambiguities: questions.map((q: string) => ({
+          ambiguities: questions.map((q) => ({
             id: randomUUID(),
             description: q,
             critical: true,
