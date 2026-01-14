@@ -14,7 +14,8 @@
     "launch:telegram": "node dist/launch/telegram.js",
     "launch:daemon": "node dist/launch/daemon.js",
     "launch:webhooks": "node dist/launch/webhooks.js",
-    "assimilate": "node dist/cli/index.js assimilate"
+    "assimilate": "node dist/cli/index.js assimilate",
+    "clean:temp": "node scripts/clean-temp.cjs"
   },
   "keywords": [
     "ai",

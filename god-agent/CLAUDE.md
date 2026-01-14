@@ -1,5 +1,34 @@
 # God-Agent Architecture
 
+## Communication Protocol (MANDATORY)
+
+**ALL questions, clarifications, and user interactions MUST go through Telegram via `god_comms_escalate`.**
+
+This is NON-NEGOTIABLE. Do NOT:
+- Use AskUserQuestion tool
+- Ask questions in text responses
+- Wait for user input via CLI
+
+The user monitors Telegram exclusively. Use `god_comms_escalate` for:
+- Decisions and approvals
+- Clarifications and questions
+- Blocked/stuck situations
+- Progress updates requiring response
+
+```typescript
+// REQUIRED mechanism for user communication
+mcp__rubix__god_comms_escalate({
+  title: "Question Title",
+  message: "Your question here",
+  type: "decision",  // decision | clarification | blocked | approval | info
+  options: [{ label: "Option A", description: "..." }, ...]
+});
+```
+
+**This tool must always be allowed in permissions.**
+
+---
+
 ## Overview
 
 God-Agent is a **standalone autonomous agent system** - NOT just an MCP server. It has THREE deployment modes:
