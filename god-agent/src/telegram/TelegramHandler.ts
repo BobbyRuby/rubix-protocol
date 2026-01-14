@@ -524,7 +524,7 @@ When ready, use /execute to run the plan.
     const MAX_LENGTH = 3500;
 
     if (response.length <= MAX_LENGTH) {
-      await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+      await this.safeSendMarkdown(bot, chatId, response);
       return;
     }
 
@@ -623,10 +623,10 @@ When ready, use /execute to run the plan.
       if (response.length > 4000) {
         const chunks = response.match(/.{1,4000}/gs) || [];
         for (const chunk of chunks) {
-          await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+          await this.safeSendMarkdown(bot, chatId, chunk);
         }
       } else {
-        await bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+        await this.safeSendMarkdown(bot, chatId, response);
       }
     } catch (error) {
       console.error('[TelegramHandler] Conversation error:', error);
@@ -983,5 +983,28 @@ When ready, use /execute to run the plan.
 
   private generateTaskId(): string {
     return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Safely send a message with Markdown, falling back to plain text on parse errors.
+   * Telegram's Markdown parser chokes on unescaped special chars in paths.
+   */
+  private async safeSendMarkdown(
+    bot: TelegramBotAPI,
+    chatId: number,
+    text: string
+  ): Promise<void> {
+    try {
+      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    } catch (error: unknown) {
+      // Check if it's a Telegram markdown parse error
+      const telegramError = error as { response?: { body?: { description?: string } } };
+      if (telegramError.response?.body?.description?.includes("can't parse entities")) {
+        // Fall back to plain text
+        await bot.sendMessage(chatId, text);
+      } else {
+        throw error;
+      }
+    }
   }
 }
