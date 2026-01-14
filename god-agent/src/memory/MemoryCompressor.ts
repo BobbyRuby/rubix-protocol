@@ -4,20 +4,20 @@
  * Encode: Human text → Pure tokens (for storage)
  * Decode: Pure tokens → Human text (for reading)
  *
- * Rules (same as prompt compression):
- * - No articles (a, an, the)
- * - No pronouns (you, I, we)
- * - No politeness (please, thanks)
- * - No hedging (maybe, might, could)
- * - No filler (basically, actually, really)
- * - No explanatory prose
+ * Format: position0|position1|position2|...
+ * Machine knows schema → position = meaning → no keys needed.
+ *
+ * Principles:
+ * - Strip the bullshit, pure function, compress into pure tokens
+ * - No NLP strings, pure efficiency
+ * - Machine understands tokens, humans get decoded output
  */
 
 import {
   MemoryType,
   CompressionSchema,
   CompressionResult,
-  ParsedKeyValue,
+  TYPE_DETECTION_PATTERNS,
   TYPE_PREFIXES,
 } from './types.js';
 import { COMPRESSION_SCHEMAS } from './CompressionSchemas.js';
@@ -41,9 +41,11 @@ export class MemoryCompressor {
 
   /**
    * Compress human-readable text to pure tokens.
+   * Auto-detects type if not provided.
    */
-  encode(content: string, type: MemoryType): CompressionResult {
-    const schema = this.schemas.get(type);
+  encode(content: string, type?: MemoryType): CompressionResult {
+    const detectedType = type || this.detectTypeFromContent(content);
+    const schema = this.schemas.get(detectedType);
     const compressed = schema
       ? schema.encode(content)
       : this.genericEncode(content);
@@ -85,11 +87,22 @@ export class MemoryCompressor {
   }
 
   /**
-   * Detect memory type from compressed content.
+   * Detect memory type from COMPRESSED content (positional tokens).
    */
   detectType(compressed: string): MemoryType {
-    const firstLine = compressed.split('\n')[0];
+    // Check for pipe-delimited positional format
+    if (compressed.includes('|')) {
+      const segments = compressed.split('|');
 
+      for (const pattern of TYPE_DETECTION_PATTERNS) {
+        if (pattern.test(segments)) {
+          return pattern.type;
+        }
+      }
+    }
+
+    // Legacy: Check for KEY: prefix format
+    const firstLine = compressed.split('\n')[0];
     for (const [prefix, type] of Object.entries(TYPE_PREFIXES)) {
       if (firstLine.startsWith(prefix)) {
         return type;
@@ -100,9 +113,103 @@ export class MemoryCompressor {
   }
 
   /**
+   * Detect memory type from UNCOMPRESSED human-readable content.
+   * Used for auto-detecting before encoding.
+   */
+  detectTypeFromContent(text: string): MemoryType {
+    // Auto-detect memory type from human-readable content
+
+    // Bug/Issue fix patterns
+    if (/\b(bug|issue|problem)[:\s]+\w+/i.test(text) ||
+        /\bstatus[:\s]*(fixed|open|wip|resolved)/i.test(text) ||
+        (/\bsymptom/i.test(text) && /\bfix/i.test(text))) {
+      return 'bug_fix';
+    }
+
+    // Error pattern
+    if (/\b(error|exception)[:\s]/i.test(text) ||
+        /\b\w+(Error|Exception)\b/.test(text) ||
+        (/\bsymptom/i.test(text) && /\broot\s*cause/i.test(text))) {
+      return 'error_pattern';
+    }
+
+    // MCP Tool
+    if (/\bgod_\w+\b/.test(text)) {
+      return 'mcp_tool';
+    }
+
+    // Component (PascalCase names with action verbs)
+    if (/\b(TaskExecutor|MemoryEngine|CodeGenerator|SelfHealer|Manager|Engine|Service)\b/.test(text) ||
+        (/\b[A-Z][a-zA-Z]+[A-Z][a-zA-Z]+\b/.test(text) &&
+         /\b(orchestrat|execut|manag|handl|process|generat)\w+/i.test(text))) {
+      return 'component';
+    }
+
+    // Department
+    if (/\b(Researcher|Architect|Engineer|Validator|Guardian)\b/i.test(text) ||
+        /\b(VP of|department|sub-?agent)/i.test(text)) {
+      return 'department';
+    }
+
+    // Capability
+    if (/\b(LSP|Git|AST|Profiler|Debug|REPL|capability|IDE power)/i.test(text) ||
+        /\b(go-?to-?definition|find-?references|diagnostics)\b/i.test(text)) {
+      return 'capability';
+    }
+
+    // Workflow
+    if (/\b(workflow|flow|cycle|process)\b/i.test(text) &&
+        (/→|->|\bthen\b|\bstep/i.test(text))) {
+      return 'workflow';
+    }
+
+    // Configuration
+    if (/\b(config|configuration|setting)\b/i.test(text) ||
+        /\b[A-Z_]{3,}=/g.test(text)) {
+      return 'config';
+    }
+
+    // Success pattern
+    if (/\b(success|pattern)\b/i.test(text) &&
+        /\b(because|due to|works? when|rate)\b/i.test(text)) {
+      return 'success_pattern';
+    }
+
+    // System overview
+    if (/\b(system|god-agent|rubix)\b/i.test(text) &&
+        /\b(mode|storage|embed|core)\b/i.test(text)) {
+      return 'system';
+    }
+
+    // Dev feature
+    if (/\b(feature|module|enhancement|refactor)\b/i.test(text) &&
+        /\b(purpose|export|wiring)\b/i.test(text)) {
+      return 'dev_feature';
+    }
+
+    // Architecture insight
+    if (/\b(arch|architecture|insight|lesson)\b/i.test(text) &&
+        /\b(pattern|rule|component)\b/i.test(text)) {
+      return 'arch_insight';
+    }
+
+    return 'generic';
+  }
+
+  /**
    * Check if content is already compressed.
    */
   isCompressed(content: string): boolean {
+    // Check for pipe-delimited format
+    if (content.includes('|')) {
+      const segments = content.split('|');
+      // At least 3 segments and mostly short segments
+      if (segments.length >= 3 && segments.every(s => s.length < 100)) {
+        return true;
+      }
+    }
+
+    // Legacy: Check for KEY: prefix format
     const firstLine = content.split('\n')[0];
     return Object.keys(TYPE_PREFIXES).some(prefix => firstLine.startsWith(prefix));
   }
@@ -112,41 +219,26 @@ export class MemoryCompressor {
    * Strips common filler words and collapses whitespace.
    */
   private genericEncode(text: string): string {
-    // Remove articles
-    let compressed = text.replace(/\b(a|an|the)\b/gi, '');
-
-    // Remove pronouns
-    compressed = compressed.replace(/\b(you|I|we|they|he|she|it|your|my|our)\b/gi, '');
-
-    // Remove politeness
-    compressed = compressed.replace(/\b(please|thanks|thank you|kindly)\b/gi, '');
-
-    // Remove hedging
-    compressed = compressed.replace(/\b(maybe|might|could|would|should|perhaps|possibly)\b/gi, '');
-
-    // Remove filler
-    compressed = compressed.replace(/\b(basically|actually|really|very|just|simply|quite)\b/gi, '');
-
-    // Remove "is a/an" patterns
-    compressed = compressed.replace(/\bis an?\b/gi, ':');
-
-    // Collapse multiple spaces
-    compressed = compressed.replace(/\s+/g, ' ');
-
-    // Collapse multiple newlines
-    compressed = compressed.replace(/\n+/g, '\n');
-
-    // Trim
-    compressed = compressed.trim();
-
-    return compressed;
+    return text
+      .replace(/\b(a|an|the)\b/gi, '')
+      .replace(/\b(you|I|we|they|he|she|it|your|my|our|their)\b/gi, '')
+      .replace(/\b(please|thanks|thank you|kindly)\b/gi, '')
+      .replace(/\b(maybe|might|could|would|should|perhaps|possibly)\b/gi, '')
+      .replace(/\b(basically|actually|really|very|just|simply|quite)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**
    * Generic decompression (minimal expansion).
    */
   private genericDecode(compressed: string): string {
-    // If it has key:value format, expand it
+    // For pipe-delimited, just return as-is
+    if (compressed.includes('|') && !compressed.includes('\n')) {
+      return compressed;
+    }
+
+    // For key:value format, expand keys
     if (compressed.includes(':') && compressed.includes('\n')) {
       const lines = compressed.split('\n');
       const expanded: string[] = [];
@@ -182,6 +274,9 @@ export class MemoryCompressor {
       ERR: 'Error Pattern',
       PAT: 'Success Pattern',
       SYS: 'System',
+      BUG: 'Bug',
+      DEV: 'Feature',
+      ARCH: 'Architecture',
       TYPE: 'Type',
       DOES: 'Function',
       IN: 'Inputs',
@@ -194,7 +289,6 @@ export class MemoryCompressor {
       STEPS: 'Steps',
       ACTORS: 'Actors',
       API: 'API',
-      SUBS: 'Subsystems',
       LINES: 'Lines',
       USE: 'Use Cases',
       LANG: 'Languages',
@@ -202,9 +296,19 @@ export class MemoryCompressor {
       CORE: 'Core Components',
       STORE: 'Storage',
       EMBED: 'Embedding',
-      LEARN: 'Learning',
-      COMMS: 'Communication',
       BUDGET: 'Budget',
+      STATUS: 'Status',
+      SYMPTOM: 'Symptom',
+      ROOT: 'Root Cause',
+      FIX: 'Fix',
+      LESSON: 'Lesson',
+      PURPOSE: 'Purpose',
+      EXPORTS: 'Exports',
+      WIRING: 'Integration',
+      INSIGHT: 'Insight',
+      PATTERN: 'Pattern',
+      RULE: 'Rule',
+      COMPS: 'Components',
     };
 
     return expansions[key] || key;
@@ -233,6 +337,9 @@ export class MemoryCompressor {
       'error_pattern',
       'success_pattern',
       'system',
+      'bug_fix',
+      'dev_feature',
+      'arch_insight',
       'generic',
     ];
 
@@ -244,22 +351,18 @@ export class MemoryCompressor {
 }
 
 /**
- * Parse key:value format into object.
+ * Parse pipe-delimited positional tokens into array.
  */
-export function parseKeyValue(compressed: string): ParsedKeyValue {
-  const result: ParsedKeyValue = {};
-  const lines = compressed.split('\n');
+export function parseTokens(compressed: string): string[] {
+  return compressed.split('|');
+}
 
-  for (const line of lines) {
-    const colonIdx = line.indexOf(':');
-    if (colonIdx > 0) {
-      const key = line.slice(0, colonIdx).trim();
-      const value = line.slice(colonIdx + 1).trim();
-      result[key] = value;
-    }
-  }
-
-  return result;
+/**
+ * Expand dot-separated list to readable form.
+ */
+export function expandDotList(list: string): string {
+  if (!list) return '';
+  return list.split('.').join(', ');
 }
 
 /**
@@ -267,14 +370,8 @@ export function parseKeyValue(compressed: string): ParsedKeyValue {
  */
 export function expandVerbs(verbChain: string): string {
   if (!verbChain) return '';
-
   const verbs = verbChain.split('→').map(v => v.trim());
-
-  if (verbs.length === 1) {
-    return verbs[0];
-  }
-
-  // Convert verb chain to sentence
+  if (verbs.length === 1) return verbs[0];
   return verbs.join(', then ');
 }
 
@@ -283,17 +380,9 @@ export function expandVerbs(verbChain: string): string {
  */
 export function expandList(list: string): string {
   if (!list) return '';
-
   const items = list.split(',').map(i => i.trim());
-
-  if (items.length === 1) {
-    return items[0];
-  }
-
-  if (items.length === 2) {
-    return `${items[0]} and ${items[1]}`;
-  }
-
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
   const last = items.pop();
   return `${items.join(', ')}, and ${last}`;
 }

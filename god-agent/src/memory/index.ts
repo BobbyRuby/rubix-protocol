@@ -5,5 +5,16 @@
  */
 
 export * from './types.js';
-export { MemoryCompressor, memoryCompressor, parseKeyValue, expandVerbs, expandList } from './MemoryCompressor.js';
+export {
+  MemoryCompressor,
+  memoryCompressor,
+  parseTokens,
+  expandDotList,
+  expandVerbs,
+  expandList
+} from './MemoryCompressor.js';
 export { COMPRESSION_SCHEMAS } from './CompressionSchemas.js';
+
+// Performance Optimizations (NEW - for parallel agent support)
+export { AsyncWriteQueue } from './AsyncWriteQueue.js';
+export { EmbeddingCache } from './EmbeddingCache.js';
