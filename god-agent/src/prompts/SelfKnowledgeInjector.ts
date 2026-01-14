@@ -139,6 +139,7 @@ DEPTS:researcher,architect,engineer,validator,guardian`;
     subsystem: RubixSubsystem;
     codebase: string;
     model?: string;
+    department?: string;  // Department context for parallel execution
   }): string {
     const identity = SUBSYSTEM_IDENTITIES[options.subsystem];
     const caps = identity.capabilities.join(',');
@@ -147,11 +148,21 @@ DEPTS:researcher,architect,engineer,validator,guardian`;
     const cwd = options.codebase;
     const model = options.model || 'opus';
 
+    // Build department context if provided
+    const deptLines = options.department ? `
+YOUR_DEPT:${options.department}
+DEPTS:RESEARCHER,ARCHITECT,ENGINEER,VALIDATOR,GUARDIAN
+PARALLEL:5_departments_simultaneous
+BLACKBOARD:shared_state|check_before_write|no_duplicate_work
+COORD:post_findings→blackboard|read_others_progress|avoid_conflicts
+RULE:Check blackboard BEFORE starting work. Post findings AFTER completing work.` : '';
+
     return `# RUBIX Instance Context
 
 IDENT:RUBIX|${subsys}
 CWD:${cwd}
 MODEL:${model}
+${deptLines}
 
 CAP:${caps},mcp_tools(50+),lsp,git,ast,profiler,playwright,wolfram
 FLOW:${flow}
@@ -162,6 +173,7 @@ CLEAN:npm_run_clean:temp|run_at:session_start,before_commit
 ACTION:Run cleanup proactively. Do not wait to be asked.
 
 ESCAL:blocked→comms_chain(telegram→phone→slack→discord)
+ESCAL_TIERS:sonnet(x3)→opus(x2)→human|each_attempt_gets_all_prev_logs
 LEARN:god_failure_*|record_on_fail,query_before_retry
 
 MCP:god_store,god_query,god_trace,god_causal,god_learn

@@ -20,8 +20,8 @@ async function main(): Promise<void> {
   // Validate environment - prompts for missing required config
   await requireEnvInteractive(ENV_REQUIREMENTS.daemon, 'Scheduler');
 
-  // Bootstrap core systems
-  const { engine } = await bootstrap({ showEnvSummary: true });
+  // Bootstrap core systems (includes capability pre-warming)
+  const { engine, capabilities } = await bootstrap({ showEnvSummary: true });
 
   // Start scheduler daemon
   const daemon = new SchedulerDaemon(engine);
@@ -50,6 +50,8 @@ async function main(): Promise<void> {
   setupShutdown(async () => {
     console.log('[Shutdown] Stopping scheduler daemon...');
     daemon.stop('shutdown');
+    console.log('[Shutdown] Stopping capabilities...');
+    await capabilities.shutdown();
   });
 
   console.log('');

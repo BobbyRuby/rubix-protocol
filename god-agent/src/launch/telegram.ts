@@ -22,8 +22,8 @@ async function main(): Promise<void> {
   // Validate environment - prompts for missing required config
   await requireEnvInteractive(ENV_REQUIREMENTS.telegram, 'Telegram');
 
-  // Bootstrap core systems
-  const { executor, engine, containment } = await bootstrap({ showEnvSummary: true });
+  // Bootstrap core systems (includes capability pre-warming)
+  const { executor, engine, containment, capabilities } = await bootstrap({ showEnvSummary: true });
 
   // Create CommunicationManager with Telegram channel
   const comms = new CommunicationManager({
@@ -70,6 +70,8 @@ async function main(): Promise<void> {
   setupShutdown(async () => {
     console.log('[Shutdown] Stopping Telegram bot...');
     bot.stop();
+    console.log('[Shutdown] Stopping capabilities...');
+    await capabilities.shutdown();
   });
 
   console.log('');

@@ -13,6 +13,7 @@ import { MemoryEngine } from '../core/MemoryEngine.js';
 import { TaskExecutor } from '../codex/TaskExecutor.js';
 import { CodeGenerator } from '../codex/CodeGenerator.js';
 import { ContainmentManager } from '../codex/ContainmentManager.js';
+import { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js';
 import { getCodexLLMConfig } from '../core/config.js';
 import { getEnvSummary } from './env.js';
 
@@ -29,6 +30,7 @@ export interface BootstrapResult {
   executor: TaskExecutor;
   codeGenerator?: CodeGenerator;
   containment: ContainmentManager;
+  capabilities: CapabilitiesManager;
 }
 
 /**
@@ -121,7 +123,40 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     codeGenerator.setContainment(containment);
   }
 
-  return { engine, executor, codeGenerator, containment };
+  // 5. Initialize CapabilitiesManager with all capabilities enabled
+  const codebaseRoot = options.codebaseRoot || process.cwd();
+  const capabilities = new CapabilitiesManager({
+    projectRoot: codebaseRoot,
+    // Enable all capabilities for full functionality
+    lsp: { enabled: true, timeout: 30000 },
+    git: { enabled: true },
+    analysis: { enabled: true, eslint: true, typescript: true },
+    ast: { enabled: true },
+    deps: { enabled: true },
+    repl: { enabled: true },      // Enable debug/REPL
+    profiler: { enabled: true },  // Enable profiler
+    stacktrace: { enabled: true },
+    database: { enabled: false }, // Requires explicit connection
+    docs: { enabled: true, cacheTTL: 3600 }
+  });
+  await capabilities.initialize();
+  console.log('[Bootstrap] CapabilitiesManager initialized');
+
+  // Start background pre-warming of heavy capabilities (non-blocking)
+  capabilities.prewarm()
+    .then(results => {
+      const ready = Object.entries(results)
+        .filter(([, ok]) => ok)
+        .map(([name]) => name);
+      if (ready.length > 0) {
+        console.log(`[Bootstrap] Pre-warmed capabilities: ${ready.join(', ')}`);
+      }
+    })
+    .catch(err => {
+      console.warn('[Bootstrap] Capability prewarm error:', err.message);
+    });
+
+  return { engine, executor, codeGenerator, containment, capabilities };
 }
 
 /**

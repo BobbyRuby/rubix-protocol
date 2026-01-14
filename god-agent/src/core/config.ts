@@ -8,6 +8,7 @@ import { config as loadDotenv } from 'dotenv';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import type { MemoryEngineConfig, HNSWConfig, EmbeddingConfig, StorageConfig, LScoreConfig, CodexLLMConfig } from './types.js';
+import type { ProviderConfig, DepartmentConfig } from '../providers/types.js';
 
 // Get the directory where this module is located
 const __filename = fileURLToPath(import.meta.url);
@@ -243,4 +244,81 @@ export function validateCuriosityConfig(config: CuriosityConfig): string[] {
   }
 
   return errors;
+}
+
+/**
+ * Department Provider Configuration
+ *
+ * Maps each department to its LLM provider with fallback strategy:
+ * - cloud-only: Wait if rate limited (ARCHITECT, ENGINEER - quality critical)
+ * - cloud-with-fallback: Fall back to Ollama if rate limited (RESEARCHER, VALIDATOR, GUARDIAN)
+ *
+ * Environment variables:
+ * - OLLAMA_ENDPOINT: Ollama API endpoint (default: http://localhost:11434)
+ * - OLLAMA_MODEL: Local model to use (default: qwen2.5-coder:7b)
+ * - RATE_LIMIT_WAIT_MS: How long to wait for quota reset (default: 60000)
+ */
+
+// Shared provider configs
+const CLAUDE_CONFIG: ProviderConfig = {
+  provider: 'claude',
+  model: process.env.RUBIX_MODEL || 'claude-sonnet-4-20250514',
+  apiKey: process.env.ANTHROPIC_API_KEY
+};
+
+const OLLAMA_CONFIG: ProviderConfig = {
+  provider: 'ollama',
+  model: process.env.OLLAMA_MODEL || 'qwen2.5-coder:32b',
+  apiEndpoint: process.env.OLLAMA_ENDPOINT || 'http://localhost:11434'
+};
+
+export const DEPARTMENT_CONFIG: Record<string, DepartmentConfig> = {
+  // Cloud-only: Wait if rate limited (quality critical)
+  ARCHITECT: {
+    primary: CLAUDE_CONFIG,
+    strategy: 'cloud-only'
+  },
+  ENGINEER: {
+    primary: CLAUDE_CONFIG,
+    strategy: 'cloud-only'
+  },
+
+  // Cloud-with-fallback: Try Claude, use Ollama if 429
+  RESEARCHER: {
+    primary: CLAUDE_CONFIG,
+    fallback: OLLAMA_CONFIG,
+    strategy: 'cloud-with-fallback'
+  },
+  VALIDATOR: {
+    primary: CLAUDE_CONFIG,
+    fallback: OLLAMA_CONFIG,
+    strategy: 'cloud-with-fallback'
+  },
+  GUARDIAN: {
+    primary: CLAUDE_CONFIG,
+    fallback: OLLAMA_CONFIG,
+    strategy: 'cloud-with-fallback'
+  }
+};
+
+/**
+ * Get department config with current environment values
+ */
+export function getDepartmentConfig(department: string): DepartmentConfig | undefined {
+  return DEPARTMENT_CONFIG[department.toUpperCase()];
+}
+
+/**
+ * Check if Ollama fallback is available for a department
+ */
+export function hasFallback(department: string): boolean {
+  const config = DEPARTMENT_CONFIG[department.toUpperCase()];
+  return config?.strategy === 'cloud-with-fallback' && !!config.fallback;
+}
+
+/**
+ * Get rate limit wait duration in ms
+ */
+export function getRateLimitWaitMs(): number {
+  return parseInt(process.env.RATE_LIMIT_WAIT_MS || '60000', 10);
 }

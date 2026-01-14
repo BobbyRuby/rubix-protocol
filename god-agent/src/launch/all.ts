@@ -31,8 +31,8 @@ async function main(): Promise<void> {
   // Validate environment - prompts for missing required config
   await requireEnvInteractive(ENV_REQUIREMENTS.all, 'Full Stack');
 
-  // Bootstrap core systems
-  const { engine, executor } = await bootstrap({ showEnvSummary: true });
+  // Bootstrap core systems (includes capability pre-warming)
+  const { engine, executor, capabilities } = await bootstrap({ showEnvSummary: true });
 
   // Track all services for cleanup
   const services: Service[] = [];
@@ -125,6 +125,9 @@ async function main(): Promise<void> {
         console.error(`[Shutdown] Error stopping ${service.name}:`, error);
       }
     }
+    // Shutdown capabilities last
+    console.log('[Shutdown] Stopping capabilities...');
+    await capabilities.shutdown();
   });
 
   // Summary
