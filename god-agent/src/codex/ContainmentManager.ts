@@ -507,47 +507,40 @@ export class ContainmentManager {
 
   /**
    * Check if two glob patterns could potentially overlap
+   *
+   * CONSERVATIVE approach: Only block DIRECT override attempts.
+   * The priority system (immutable rules at 100 vs user rules capped at 89)
+   * ensures security even when we allow broad patterns.
    */
   private patternsOverlap(newPattern: string, existingPattern: string): boolean {
     // Normalize patterns
     const normNew = newPattern.replace(/\\/g, '/');
     const normExisting = existingPattern.replace(/\\/g, '/');
 
-    // Only block DIRECT override attempts - when user tries to explicitly allow
-    // what an immutable rule denies.
-    //
-    // Examples that SHOULD be blocked:
-    //   - Adding "**/.env" when immutable denies "**/.env"
-    //   - Adding "C:/project/.env" when immutable denies "**/.env"
-    //
-    // Examples that should be ALLOWED (priority system handles it):
-    //   - Adding "C:/**" or "D:/" - broad path permissions
-    //   - The immutable deny rules (priority 100) still block sensitive files
-    //   - User rules (priority <= 89) can't override immutable rules
-
-    // Check if the new pattern would match the same files as the existing pattern
-    // Only consider it an overlap if the new pattern is equal or more specific
+    // 1. Exact match - direct override attempt
     if (normNew === normExisting) {
-      return true; // Exact match - direct override attempt
+      return true;
     }
 
-    // Check if new pattern matches the existing pattern (new is more specific)
-    // e.g., "C:/project/.env" matches "**/.env"
+    // 2. If new pattern contains wildcards, it's a BROAD permission request
+    //    Let the priority system handle it - immutable rules will still win
+    if (normNew.includes('*') || normNew.includes('?')) {
+      return false;
+    }
+
+    // 3. For specific paths (no wildcards), check if it matches the deny pattern
+    //    e.g., "C:/project/.env" should be blocked by "**/.env"
     if (minimatch(normNew, normExisting, { dot: true })) {
       return true;
     }
 
-    // Check basename match for glob patterns
-    // e.g., "myproject/.env.local" should be blocked by "**/.env.*"
+    // 4. Check basename for patterns like "**/.env*" or "**/secrets*"
     const newBase = normNew.split('/').pop() || '';
     const existingBase = normExisting.split('/').pop() || '';
-
     if (existingBase.includes('*') && minimatch(newBase, existingBase, { dot: true })) {
       return true;
     }
 
-    // Broad patterns like "C:/**" or "D:/" do NOT overlap with "**/.env"
-    // The priority system ensures immutable rules still apply
     return false;
   }
 
