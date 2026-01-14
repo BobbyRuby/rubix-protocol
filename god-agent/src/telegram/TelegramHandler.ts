@@ -756,7 +756,10 @@ When ready, use /execute to run the plan.
     const text = msg.text || '';
 
     // Parse: /path-add E:/ rw   OR   /path-add "D:/My Folder" read
-    const match = text.match(/\/path-add\s+["']?([^"']+)["']?\s*(read|rw|read-write)?/i);
+    // Try quoted path first, then unquoted
+    const quotedMatch = text.match(/\/path-add\s+["']([^"']+)["']\s*(read|rw|read-write)?/i);
+    const unquotedMatch = text.match(/\/path-add\s+(\S+)\s*(read|rw|read-write)?/i);
+    const match = quotedMatch || unquotedMatch;
 
     if (!match) {
       await bot.sendMessage(chatId,
