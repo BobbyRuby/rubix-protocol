@@ -150,12 +150,19 @@ RULE:reference_past_naturally,no_repeat_unless_asked`;
 /**
  * PlanningAgent - Claude-powered planning conversations with tool access
  */
+/** Maximum tool use iterations before stopping */
+const MAX_TOOL_ITERATIONS = 5;
+
+/** Minimum delay between API calls (ms) */
+const MIN_API_DELAY_MS = 300;
+
 export class PlanningAgent {
   private client: Anthropic;
   private model: string;
   private maxTokens: number;
   private codebaseRoot: string;
   private containment?: ContainmentManager;
+  private lastApiCall = 0;
 
   constructor(config: PlanningAgentConfig) {
     if (!config.apiKey) {
@@ -386,6 +393,18 @@ export class PlanningAgent {
   }
 
   /**
+   * Throttle API calls to avoid rate limits
+   */
+  private async throttle(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - this.lastApiCall;
+    if (elapsed < MIN_API_DELAY_MS) {
+      await new Promise(resolve => setTimeout(resolve, MIN_API_DELAY_MS - elapsed));
+    }
+    this.lastApiCall = Date.now();
+  }
+
+  /**
    * Get a planning response from Claude (with tool support)
    */
   async respond(
@@ -417,6 +436,9 @@ export class PlanningAgent {
     }
 
     try {
+      // Throttle API calls
+      await this.throttle();
+
       let response = await this.client.messages.create({
         model: this.model,
         max_tokens: this.maxTokens,
@@ -425,12 +447,12 @@ export class PlanningAgent {
         messages
       });
 
-      // Handle tool use loop - unlimited iterations for collaborative planning
+      // Handle tool use loop - capped to prevent runaway iterations
       let iterations = 0;
 
-      while (response.stop_reason === 'tool_use') {
+      while (response.stop_reason === 'tool_use' && iterations < MAX_TOOL_ITERATIONS) {
         iterations++;
-        console.log(`[PlanningAgent] Tool use iteration ${iterations}`);
+        console.log(`[PlanningAgent] Tool use iteration ${iterations}/${MAX_TOOL_ITERATIONS}`);
 
         const toolUseBlocks = response.content.filter(
           (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
@@ -454,6 +476,9 @@ export class PlanningAgent {
         messages.push({ role: 'assistant', content: response.content });
         messages.push({ role: 'user', content: toolResults });
 
+        // Throttle before next API call
+        await this.throttle();
+
         response = await this.client.messages.create({
           model: this.model,
           max_tokens: this.maxTokens,
@@ -465,6 +490,11 @@ export class PlanningAgent {
 
       if (iterations > 0) {
         console.log(`[PlanningAgent] Completed ${iterations} tool iterations`);
+      }
+
+      // Warn if we hit the iteration cap
+      if (iterations >= MAX_TOOL_ITERATIONS && response.stop_reason === 'tool_use') {
+        console.warn(`[PlanningAgent] Hit max iterations (${MAX_TOOL_ITERATIONS}), returning partial response`);
       }
 
       // Extract final text response
@@ -505,6 +535,7 @@ export class PlanningAgent {
       ? `Update this plan document based on our conversation:\n\nPREVIOUS PLAN:\n${JSON.stringify(previousPlan, null, 2)}\n\nCONVERSATION SUMMARY:\n${conversationSummary}`
       : `Generate a plan document from our conversation:\n\nTASK: ${taskDescription}\n\nCONVERSATION SUMMARY:\n${conversationSummary}`;
 
+    await this.throttle();
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: 2048,
@@ -571,6 +602,7 @@ Be thorough but concise.`,
     }
 
     try {
+      await this.throttle();
       const response = await this.client.messages.create({
         model: 'claude-haiku-4-20250514', // Use Haiku for summaries (fast & cheap)
         max_tokens: 150,
@@ -604,6 +636,7 @@ CONTEXT:
 ${context}`;
 
     try {
+      await this.throttle();
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: this.maxTokens,
@@ -612,13 +645,15 @@ ${context}`;
         messages: [{ role: 'user', content: userMessage }]
       });
 
-      // Handle tool use loop
+      // Handle tool use loop with iteration cap
       let currentResponse = response;
       let messages: Anthropic.Messages.MessageParam[] = [
         { role: 'user', content: userMessage }
       ];
+      let iterations = 0;
 
-      while (currentResponse.stop_reason === 'tool_use') {
+      while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_TOOL_ITERATIONS) {
+        iterations++;
         const toolUseBlocks = currentResponse.content.filter(
           (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
         );
@@ -640,6 +675,7 @@ ${context}`;
         messages.push({ role: 'assistant', content: currentResponse.content });
         messages.push({ role: 'user', content: toolResults });
 
+        await this.throttle();
         currentResponse = await this.client.messages.create({
           model: this.model,
           max_tokens: this.maxTokens,
@@ -647,6 +683,11 @@ ${context}`;
           tools: PLANNING_TOOLS,
           messages
         });
+      }
+
+      // Warn if we hit the iteration cap
+      if (iterations >= MAX_TOOL_ITERATIONS && currentResponse.stop_reason === 'tool_use') {
+        console.warn(`[PlanningAgent] Chat hit max iterations (${MAX_TOOL_ITERATIONS})`);
       }
 
       // Extract final text response
@@ -689,6 +730,7 @@ ${conversationText}
 Output ONLY the task description, nothing else.`;
 
     try {
+      await this.throttle();
       const response = await this.client.messages.create({
         model: 'claude-haiku-4-20250514', // Use Haiku for synthesis (fast & cheap)
         max_tokens: 200,

@@ -113,5 +113,24 @@ export type {
   ExecuteSubtaskResult
 } from './types.js';
 
-// Default config
-export { DEFAULT_RUBIX_CONFIG } from './types.js';
+// Default config and escalation tiers
+export { DEFAULT_RUBIX_CONFIG, ESCALATION_TIERS, DEPARTMENTS, DEPARTMENT_ROLES } from './types.js';
+export type { Department } from './types.js';
+
+// Phased Execution (6-Phase Tokenized Architecture - Rate Limit Solution)
+export { TokenRouter, getTokenRouter, resetTokenRouter, estimateTokens, routeToProvider } from './TokenRouter.js';
+
+export { ContextScout, createContextScout } from './ContextScout.js';
+export type { ResearchResult, ContextBundle } from './ContextScout.js';
+
+export { OllamaReasoner, createOllamaReasoner } from './OllamaReasoner.js';
+export type { DesignOutput, PlanOutput, FileContent } from './OllamaReasoner.js';
+
+export { PlanValidator, createPlanValidator } from './PlanValidator.js';
+export type { ValidationResult } from './PlanValidator.js';
+
+export { PlanExecutor, createPlanExecutor } from './PlanExecutor.js';
+export type { ExecutionResult as PlanExecutionResult, ExecutionError } from './PlanExecutor.js';
+
+export { PhasedExecutor, getPhasedExecutor, resetPhasedExecutor } from './PhasedExecutor.js';
+export type { PhasedExecutionResult, HumanEscalationCallback } from './PhasedExecutor.js';

@@ -275,10 +275,42 @@ export interface CodexConfig {
 }
 
 /**
+ * 6-Tier Escalation Model
+ * Tiers 1-3: Sonnet (department heads)
+ * Tiers 4-5: Opus (servant leadership - boss helps)
+ * Tier 6: Human escalation
+ */
+export const ESCALATION_TIERS = {
+  SONNET_1: { tier: 1, model: 'sonnet', ultrathink: false },
+  SONNET_2: { tier: 2, model: 'sonnet', ultrathink: false },
+  SONNET_3: { tier: 3, model: 'sonnet', ultrathink: true },
+  OPUS_4: { tier: 4, model: 'opus', ultrathink: false },
+  OPUS_5: { tier: 5, model: 'opus', ultrathink: true },
+  HUMAN: { tier: 6, model: 'human', ultrathink: false }
+} as const;
+
+/**
+ * Department names for parallel execution
+ */
+export const DEPARTMENTS = ['RESEARCHER', 'ARCHITECT', 'ENGINEER', 'VALIDATOR', 'GUARDIAN'] as const;
+export type Department = typeof DEPARTMENTS[number];
+
+/**
+ * Department role descriptions
+ */
+export const DEPARTMENT_ROLES: Record<Department, { title: string; focus: string }> = {
+  RESEARCHER: { title: 'VP of Discovery', focus: 'Codebase analysis, pattern detection, dependency mapping' },
+  ARCHITECT: { title: 'VP of Design', focus: 'Solution structure, interfaces, data models' },
+  ENGINEER: { title: 'VP of Implementation', focus: 'Code writing, component building, feature development' },
+  VALIDATOR: { title: 'VP of Quality', focus: 'Unit tests, integration tests, edge cases' },
+  GUARDIAN: { title: 'VP of Reliability', focus: 'Security scanning, performance, code review' }
+};
+
+/**
  * Default RUBIX configuration
  */
 export const DEFAULT_RUBIX_CONFIG: CodexConfig = {
-  maxAttemptsBeforeEscalate: 3,
+  maxAttemptsBeforeEscalate: 5,  // 6-tier: Sonnet x3 + Opus x2, then human
   batchDecisions: true,
   notifyOnProgress: false,
   notifyOnComplete: true,

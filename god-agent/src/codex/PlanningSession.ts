@@ -98,6 +98,46 @@ export class PlanningSession {
   /** Track last stored exchange for chaining */
   private lastExchangeId?: string;
 
+  /**
+   * Get a simple response for common conversational messages.
+   * Returns null if the message requires full agent processing.
+   */
+  private getSimpleResponse(input: string): string | null {
+    const msg = input.trim().toLowerCase().replace(/[!?.]+$/, '');
+
+    // Greetings
+    if (/^(hi|hello|hey|yo|sup|hiya)$/.test(msg)) {
+      return "Hey! What would you like to work on today?";
+    }
+
+    // Thanks
+    if (/^(thanks|thank you|thx|ty|cheers)$/.test(msg)) {
+      return "You're welcome! Anything else you need?";
+    }
+
+    // Acknowledgments
+    if (/^(ok|okay|sure|got it|understood|makes sense|cool|great|nice|perfect)$/.test(msg)) {
+      return "Great! Let me know when you're ready to continue.";
+    }
+
+    // Affirmatives
+    if (/^(yes|yeah|yep|yup|y)$/.test(msg)) {
+      return "Got it! What's next?";
+    }
+
+    // Negatives
+    if (/^(no|nope|nah|n)$/.test(msg)) {
+      return "No problem. What would you like to do instead?";
+    }
+
+    // Farewells
+    if (/^(bye|goodbye|cya|later|see ya)$/.test(msg)) {
+      return "See you later! Session saved - use /resume to continue anytime.";
+    }
+
+    return null; // Not a simple message, proceed with full agent
+  }
+
   constructor(engine: MemoryEngine, config: PlanningSessionConfig) {
     this.engine = engine;
     this.config = config;
@@ -173,6 +213,15 @@ export class PlanningSession {
   async chat(userMessage: string): Promise<string> {
     if (!this.isActive()) {
       return 'This planning session is no longer active. Start a new session with /plan';
+    }
+
+    // Check for simple conversational messages - no API call needed
+    const simpleResponse = this.getSimpleResponse(userMessage);
+    if (simpleResponse) {
+      console.log(`[PlanningSession] Simple response for: ${userMessage}`);
+      await this.storeExchange(userMessage, 'user');
+      await this.storeExchange(simpleResponse, 'assistant');
+      return simpleResponse;
     }
 
     console.log(`[PlanningSession] Chat: ${userMessage.substring(0, 50)}...`);

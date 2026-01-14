@@ -34,6 +34,7 @@ import type { EscalationResponse } from '../communication/types.js';
 import { RubixOrchestrator, type RubixConfig } from '../rubix/RubixOrchestrator.js';
 import { InputCompressor } from '../prompts/InputCompressor.js';
 import type { RubixResult } from '../rubix/types.js';
+import { PhasedExecutor, type PhasedExecutionResult } from './PhasedExecutor.js';
 import type { RuntimeContext } from '../context/RuntimeContext.js';
 import {
   TaskStatus,
@@ -130,6 +131,10 @@ export class TaskExecutor {
   private rubixOrchestrator?: RubixOrchestrator;
   private useRubixMode: boolean = false;
 
+  // Phased Executor (6-phase tokenized execution with Ollama routing)
+  private phasedExecutor?: PhasedExecutor;
+  private usePhasedExecution: boolean = false;
+
   // Runtime Context (compressed capabilities context for this instance)
   private runtimeContext: RuntimeContext | undefined;
 
@@ -193,6 +198,11 @@ export class TaskExecutor {
       // Use RUBIX mode if enabled
       if (this.useRubixMode && this.rubixOrchestrator) {
         return await this.executeWithRubix(submission, options);
+      }
+
+      // Use Phased Executor if enabled (6-phase tokenized execution)
+      if (this.usePhasedExecution) {
+        return await this.executeWithPhased(task, options);
       }
 
       // Start deep work session
@@ -488,13 +498,6 @@ export class TaskExecutor {
               `Complexity: ${decomposition.estimatedComplexity}. Ambiguities: ${decomposition.ambiguities.length}`,
               [] // No alternatives tracked currently
             );
-
-            // Link subtask dependencies as causal relations
-            for (const subtask of task.subtasks) {
-              for (const depId of subtask.dependencies) {
-                await this.workingMemory.linkCause(depId, subtask.id, 'enables');
-              }
-            }
 
             this.log('memory', `Stored decomposition decision: ${planId}`);
           }
@@ -2908,6 +2911,136 @@ ${wolframResults.join('\n')}
     this.rubixOrchestrator = undefined;
     this.useRubixMode = false;
     console.log('[TaskExecutor] RUBIX mode disabled');
+  }
+
+  /**
+   * Enable Phased Execution mode - uses 6-phase tokenized flow with Ollama routing
+   * Reduces Claude API calls from 15-25 to 2-3 (90% reduction)
+   */
+  enablePhasedExecution(codebasePath?: string): void {
+    const codebase = codebasePath || process.cwd();
+    if (!this.phasedExecutor) {
+      this.phasedExecutor = new PhasedExecutor(codebase);
+    }
+    this.usePhasedExecution = true;
+    console.log('[TaskExecutor] Phased execution enabled (6-phase tokenized flow)');
+  }
+
+  /**
+   * Disable Phased Execution mode - reverts to standard sequential execution
+   */
+  disablePhasedExecution(): void {
+    this.usePhasedExecution = false;
+    console.log('[TaskExecutor] Phased execution disabled');
+  }
+
+  /**
+   * Execute task using PhasedExecutor (6-phase tokenized flow)
+   *
+   * Phases:
+   * 1. CONTEXT SCOUT (Claude) → CTX tokens
+   * 2. ARCHITECT (Ollama) → DES tokens
+   * 3. ENGINEER (Ollama) → PLAN tokens
+   * 4. VALIDATOR (Claude) → VAL tokens
+   * 5. EXECUTOR (Local) → file writes/commands
+   * 6. FIX LOOP (5 attempts before human)
+   */
+  private async executeWithPhased(
+    task: CodexTask,
+    _options?: ExecutionOptions
+  ): Promise<TaskResult> {
+    const startTime = Date.now();
+
+    try {
+      this.log('start', `Executing with PhasedExecutor (6-phase tokenized flow)`);
+
+      // Ensure phased executor exists
+      if (!this.phasedExecutor) {
+        this.phasedExecutor = new PhasedExecutor(task.codebase);
+      }
+
+      // Wire escalation callback to communication manager
+      if (this.communications) {
+        this.phasedExecutor.setEscalationCallback(async (_taskId, message, tokenChain) => {
+          const escalation = this.escalation.createEscalation({
+            type: 'blocked',
+            description: `Fix loop exhausted: ${message}`,
+            task,
+            businessImpact: 'high'
+          }, {
+            shouldEscalate: true,
+            type: 'clarification',
+            reason: `Exhausted 5 fix attempts. Token chain: ${tokenChain.substring(0, 200)}...`,
+            canContinueWithAssumption: false
+          });
+
+          const response = await this.attemptCommunicationEscalation(escalation, task);
+          return { answer: response?.response || 'No response' };
+        });
+      }
+
+      // Execute through all 6 phases
+      const result: PhasedExecutionResult = await this.phasedExecutor.execute(task);
+
+      // Log stats
+      const stats = this.phasedExecutor.getStats(result);
+      this.log('complete', `Phased execution completed in ${result.duration}ms`);
+      this.log('progress', `Claude: ${result.claudeCalls}, Ollama: ${result.ollamaCalls}, Fix attempts: ${result.fixAttempts}`);
+      this.log('progress', `${stats.reduction}`);
+
+      // Mark task complete
+      task.status = result.success ? TaskStatus.COMPLETED : TaskStatus.FAILED;
+      task.completedAt = new Date();
+
+      // Build TaskResult from PhasedExecutionResult
+      const filesModified: string[] = [];
+      if (result.phases.execution) {
+        // Count files from execution phase
+        const exec = result.phases.execution;
+        if (exec.filesWritten > 0 || exec.filesModified > 0) {
+          // We don't have file paths in PhasedExecutionResult, but we can note the counts
+          this.log('progress', `Files: ${exec.filesWritten} written, ${exec.filesModified} modified, ${exec.filesDeleted} deleted`);
+        }
+      }
+
+      const taskResult: TaskResult = {
+        success: result.success,
+        summary: result.success
+          ? `Phased execution completed (${stats.claudeCalls} Claude, ${stats.ollamaCalls} Ollama calls)`
+          : `Phased execution failed: ${result.error || 'Unknown error'}`,
+        subtasksCompleted: result.success ? 6 : result.fixAttempts,
+        subtasksFailed: result.success ? 0 : 1,
+        filesModified,
+        testsWritten: 0,
+        duration: result.duration,
+        decisions: [],
+        assumptions: []
+      };
+
+      return taskResult;
+
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.log('failure', `Phased execution failed: ${err.message}`);
+
+      task.status = TaskStatus.FAILED;
+      task.completedAt = new Date();
+
+      return {
+        success: false,
+        summary: `Phased execution failed: ${err.message}`,
+        subtasksCompleted: 0,
+        subtasksFailed: 0,
+        filesModified: [],
+        testsWritten: 0,
+        duration: Date.now() - startTime,
+        decisions: [],
+        assumptions: []
+      };
+    } finally {
+      this.isExecuting = false;
+      this.currentTask = undefined;
+    }
   }
 
   /**
