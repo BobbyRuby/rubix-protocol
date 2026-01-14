@@ -513,15 +513,32 @@ export class ContainmentManager {
     const normNew = newPattern.replace(/\\/g, '/');
     const normExisting = existingPattern.replace(/\\/g, '/');
 
-    // If one pattern matches the other, they overlap
-    // This is a simplified check - patterns like "**/.env" and "**/project/.env" overlap
-    if (minimatch(normNew, normExisting, { dot: true }) ||
-        minimatch(normExisting, normNew, { dot: true })) {
+    // Only block DIRECT override attempts - when user tries to explicitly allow
+    // what an immutable rule denies.
+    //
+    // Examples that SHOULD be blocked:
+    //   - Adding "**/.env" when immutable denies "**/.env"
+    //   - Adding "C:/project/.env" when immutable denies "**/.env"
+    //
+    // Examples that should be ALLOWED (priority system handles it):
+    //   - Adding "C:/**" or "D:/" - broad path permissions
+    //   - The immutable deny rules (priority 100) still block sensitive files
+    //   - User rules (priority <= 89) can't override immutable rules
+
+    // Check if the new pattern would match the same files as the existing pattern
+    // Only consider it an overlap if the new pattern is equal or more specific
+    if (normNew === normExisting) {
+      return true; // Exact match - direct override attempt
+    }
+
+    // Check if new pattern matches the existing pattern (new is more specific)
+    // e.g., "C:/project/.env" matches "**/.env"
+    if (minimatch(normNew, normExisting, { dot: true })) {
       return true;
     }
 
-    // Check if the new pattern is a subset of the existing pattern
-    // e.g., "**/project/.env" is a subset of "**/.env"
+    // Check basename match for glob patterns
+    // e.g., "myproject/.env.local" should be blocked by "**/.env.*"
     const newBase = normNew.split('/').pop() || '';
     const existingBase = normExisting.split('/').pop() || '';
 
@@ -529,6 +546,8 @@ export class ContainmentManager {
       return true;
     }
 
+    // Broad patterns like "C:/**" or "D:/" do NOT overlap with "**/.env"
+    // The priority system ensures immutable rules still apply
     return false;
   }
 
