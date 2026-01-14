@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   await requireEnvInteractive(ENV_REQUIREMENTS.all, 'Full Stack');
 
   // Bootstrap core systems (includes capability pre-warming)
-  const { engine, executor, capabilities, containment } = await bootstrap({ showEnvSummary: true });
+  const { engine, executor, capabilities, containment, codeGenerator } = await bootstrap({ showEnvSummary: true });
 
   // Track all services for cleanup
   const services: Service[] = [];
@@ -72,6 +72,13 @@ async function main(): Promise<void> {
   });
   comms.initialize();
   executor.setCommunications(comms);
+
+  // Wire comms to codeGenerator for permission routing
+  if (codeGenerator) {
+    codeGenerator.setComms(comms);
+    console.log('[Launch] CommunicationManager wired to CodeGenerator for permission routing');
+  }
+
   console.log('[Launch] CommunicationManager initialized');
 
   // 3. Telegram Bot (if token available)

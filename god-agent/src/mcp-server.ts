@@ -5538,7 +5538,8 @@ class GodAgentMCPServer {
           // Wire CommunicationManager for escalations (Telegram, Phone, SMS, etc.)
           const comms = this.getCommunicationManager();
           this.taskExecutor.setCommunications(comms);
-          console.log('[MCP Server] CommunicationManager wired - escalations will reach user via configured channels');
+          codeGenerator.setComms(comms);
+          console.log('[MCP Server] CommunicationManager wired - escalations and permission routing enabled');
 
           // Generate RuntimeContext - compressed capabilities context for this instance
           const configuredChannels = comms.getConfiguredChannels?.() || [];

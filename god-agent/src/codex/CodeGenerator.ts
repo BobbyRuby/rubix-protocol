@@ -19,6 +19,7 @@ import { ContainmentManager } from './ContainmentManager.js';
 import type { WolframManager } from '../capabilities/wolfram/WolframManager.js';
 import { ClaudeCodeExecutor } from './ClaudeCodeExecutor.js';
 import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
+import type { CommunicationManager } from '../communication/CommunicationManager.js';
 
 const execAsync = promisify(exec);
 
@@ -127,6 +128,14 @@ export class CodeGenerator {
 
     console.log(`[CodeGenerator] Execution mode: ${this.executionMode}`);
     console.log(`[CodeGenerator] CLI model: ${config.cliModel || 'opus'}`);
+  }
+
+  /**
+   * Set CommunicationManager for routing permission requests to Telegram
+   */
+  setComms(comms: CommunicationManager): void {
+    this.cliExecutor.setComms(comms);
+    console.log('[CodeGenerator] CommunicationManager wired for permission routing');
   }
 
   /**
