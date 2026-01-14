@@ -9340,21 +9340,25 @@ god_comms_setup mode="set" channel="email" config={
     });
 
     const expandedResults = results.map(r => {
-      const context = r.entry.metadata.context as Record<string, unknown> | undefined;
+      const tags = r.entry.metadata.tags || [];
+      const isCompressed = tags.includes('compressed');
       let content = r.entry.content;
 
       // Expand if compressed and expansion requested
-      if (shouldExpand && context?.compressed) {
-        content = memoryCompressor.autoDecode(r.entry.content);
+      if (shouldExpand && isCompressed) {
+        // Extract type from tags (format: "type:arch_insight")
+        const typeTag = tags.find((t: string) => t.startsWith('type:'));
+        const memType = typeTag ? typeTag.replace('type:', '') : undefined;
+        content = memoryCompressor.decode(r.entry.content, memType as import('./memory/types.js').MemoryType);
       }
 
       return {
         id: r.entry.id,
         content,
         score: r.score,
-        tags: r.entry.metadata.tags,
-        compressed: context?.compressed || false,
-        type: context?.originalType
+        tags,
+        compressed: isCompressed,
+        type: tags.find((t: string) => t.startsWith('type:'))?.replace('type:', '')
       };
     });
 
