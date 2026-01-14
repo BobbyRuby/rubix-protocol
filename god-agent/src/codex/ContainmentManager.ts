@@ -251,11 +251,14 @@ export class ContainmentManager {
 
     // Check if trying to allow what immutable rules deny
     if (permission !== 'deny') {
-      const conflictingImmutable = this.config.permissions.find(p =>
-        p.immutable &&
-        p.permission === 'deny' &&
-        this.patternsOverlap(normalizedPattern, p.pattern)
-      );
+      const conflictingImmutable = this.config.permissions.find(p => {
+        if (!p.immutable || p.permission !== 'deny') return false;
+        const overlaps = this.patternsOverlap(normalizedPattern, p.pattern);
+        if (overlaps) {
+          console.log(`[Containment DEBUG] "${normalizedPattern}" overlaps with immutable "${p.pattern}"`);
+        }
+        return overlaps;
+      });
       if (conflictingImmutable) {
         this.auditLog('addUserRule', { pattern: normalizedPattern, permission }, false);
         return {
@@ -519,6 +522,7 @@ export class ContainmentManager {
 
     // 1. Exact match - direct override attempt
     if (normNew === normExisting) {
+      console.log(`[patternsOverlap] CHECK 1 HIT: exact match "${normNew}" === "${normExisting}"`);
       return true;
     }
 
@@ -531,13 +535,16 @@ export class ContainmentManager {
     // 3. For specific paths (no wildcards), check if it matches the deny pattern
     //    e.g., "C:/project/.env" should be blocked by "**/.env"
     if (minimatch(normNew, normExisting, { dot: true })) {
+      console.log(`[patternsOverlap] CHECK 3 HIT: minimatch("${normNew}", "${normExisting}") = true`);
       return true;
     }
 
     // 4. Check basename for patterns like "**/.env*" or "**/secrets*"
+    //    Only applies when new pattern has a non-empty basename
     const newBase = normNew.split('/').pop() || '';
     const existingBase = normExisting.split('/').pop() || '';
-    if (existingBase.includes('*') && minimatch(newBase, existingBase, { dot: true })) {
+    if (newBase && existingBase.includes('*') && minimatch(newBase, existingBase, { dot: true })) {
+      console.log(`[patternsOverlap] CHECK 4 HIT: basename "${newBase}" matches "${existingBase}"`);
       return true;
     }
 
