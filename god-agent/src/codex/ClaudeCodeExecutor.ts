@@ -13,6 +13,9 @@ import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
+import { PermissionDetector, PermissionRequest } from './PermissionDetector.js';
+import type { CommunicationManager } from '../communication/CommunicationManager.js';
+import type { Escalation } from './types.js';
 
 const execAsync = promisify(exec);
 
@@ -108,14 +111,25 @@ export class ClaudeCodeExecutor {
   private cliAvailable: boolean | null = null;
   private consecutiveQuotaErrors = 0;
   private lastQuotaError: Date | null = null;
+  private comms: CommunicationManager | undefined;
+  private permissionDetector: PermissionDetector;
 
-  constructor(config: ClaudeCodeExecutorConfig) {
+  constructor(config: ClaudeCodeExecutorConfig, comms?: CommunicationManager) {
     this.config = {
       timeout: 5 * 60 * 1000, // 5 minutes default
       model: 'opus',
       allowEdits: true,
       ...config
     };
+    this.comms = comms;
+    this.permissionDetector = new PermissionDetector();
+  }
+
+  /**
+   * Set the CommunicationManager for permission routing
+   */
+  setComms(comms: CommunicationManager): void {
+    this.comms = comms;
   }
 
   /**
@@ -344,21 +358,55 @@ export class ClaudeCodeExecutor {
       let stdout = '';
       let stderr = '';
       let resolved = false;
+      let permissionPending = false;
+
+      // Reset permission detector for this execution
+      this.permissionDetector.reset();
 
       // Spawn claude CLI directly (not through shell for proper arg handling)
       const child = spawn('claude', args, {
         cwd: this.config.cwd,
         shell: false,  // Don't use shell - pass args directly
         windowsHide: true,
-        stdio: ['inherit', 'pipe', 'pipe'],  // inherit stdin, pipe stdout/stderr
+        stdio: ['pipe', 'pipe', 'pipe'],  // pipe all for permission handling
         env: process.env
       });
 
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
+      child.stdout.on('data', async (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+
         // Log progress for long-running operations
         if (stdout.length % 1000 < 100) {
           console.log(`[ClaudeCodeExecutor] Received ${stdout.length} chars...`);
+        }
+
+        // Check for permission prompts (only if not already handling one)
+        if (!permissionPending) {
+          const permRequest = this.permissionDetector.detect(chunk);
+          if (permRequest) {
+            permissionPending = true;
+            console.log(`[ClaudeCodeExecutor] Permission request detected: ${permRequest.tool}(${permRequest.command})`);
+
+            try {
+              const approved = await this.routePermissionToTelegram(permRequest);
+              console.log(`[ClaudeCodeExecutor] Permission ${approved ? 'APPROVED' : 'DENIED'}`);
+
+              // Inject response to stdin
+              if (child.stdin && !child.stdin.destroyed) {
+                child.stdin.write(approved ? 'y\n' : 'n\n');
+              }
+            } catch (error) {
+              console.error('[ClaudeCodeExecutor] Permission routing failed:', error);
+              // Default to deny on error
+              if (child.stdin && !child.stdin.destroyed) {
+                child.stdin.write('n\n');
+              }
+            } finally {
+              permissionPending = false;
+              this.permissionDetector.removePendingRequest(permRequest.id);
+            }
+          }
         }
       });
 
@@ -666,6 +714,51 @@ export class ClaudeCodeExecutor {
       consecutiveQuotaErrors: this.consecutiveQuotaErrors,
       inQuotaCooldown: this.shouldSkipCliDueToQuota()
     };
+  }
+
+  /**
+   * Route a permission request to Telegram for user approval
+   * Returns true if approved, false if denied
+   */
+  private async routePermissionToTelegram(request: PermissionRequest): Promise<boolean> {
+    // If no communication manager, auto-deny
+    if (!this.comms) {
+      console.warn('[ClaudeCodeExecutor] No CommunicationManager - auto-denying permission');
+      return false;
+    }
+
+    const escalation: Escalation = {
+      id: request.id,
+      taskId: request.instanceId,
+      type: 'approval',
+      title: '🔐 Claude Code Permission Request',
+      context: PermissionDetector.formatForTelegram(request),
+      options: [
+        { label: 'Allow', description: 'Approve this action' },
+        { label: 'Deny', description: 'Reject this action' }
+      ],
+      blocking: true,
+      createdAt: request.timestamp
+    };
+
+    try {
+      const response = await this.comms.escalate(escalation);
+
+      if (!response) {
+        console.log('[ClaudeCodeExecutor] No response to permission request - denying');
+        return false;
+      }
+
+      // Check if user approved
+      const approved = response.response?.toLowerCase().includes('allow') ||
+                       response.selectedOption?.toLowerCase().includes('allow') ||
+                       false;
+
+      return approved;
+    } catch (error) {
+      console.error('[ClaudeCodeExecutor] Failed to route permission to Telegram:', error);
+      return false;
+    }
   }
 }
 
