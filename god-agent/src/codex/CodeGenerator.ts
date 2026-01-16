@@ -111,7 +111,7 @@ export class CodeGenerator {
     this.cliExecutor = new ClaudeCodeExecutor({
       cwd: config.codebaseRoot,
       model: config.cliModel || 'opus',
-      timeout: config.cliTimeout || 5 * 60 * 1000,
+      timeout: config.cliTimeout || 15 * 60 * 1000,  // 15 minutes - research tasks can take longer
       allowEdits: true
     });
 
@@ -136,6 +136,37 @@ export class CodeGenerator {
   setComms(comms: CommunicationManager): void {
     this.cliExecutor.setComms(comms);
     console.log('[CodeGenerator] CommunicationManager wired for permission routing');
+  }
+
+  /**
+   * Set heartbeat callback for progress updates during execution
+   */
+  setOnHeartbeat(callback: (progress: import('./ClaudeCodeExecutor.js').HeartbeatProgress) => void): void {
+    this.cliExecutor.setOnHeartbeat(callback);
+    console.log('[CodeGenerator] Heartbeat callback wired');
+  }
+
+  /**
+   * Set real-time stdout streaming callback for live output visibility
+   * Called on EVERY chunk of stdout - useful for Telegram progress updates
+   */
+  setOnStdout(callback: (chunk: string, accumulated: string) => void): void {
+    this.cliExecutor.setOnStdout(callback);
+    console.log('[CodeGenerator] Stdout streaming callback wired');
+  }
+
+  /**
+   * Abort the currently running CLI execution
+   */
+  abort(): void {
+    this.cliExecutor.abort();
+  }
+
+  /**
+   * Check if execution is in progress
+   */
+  isExecuting(): boolean {
+    return this.cliExecutor.isExecuting();
   }
 
   /**
@@ -204,19 +235,15 @@ export class CodeGenerator {
    */
   private async executeViaCli(task: CodexTask, prompt: string, systemPrompt: string): Promise<CodeGenResult> {
     try {
-      // Use the task's codebase if provided
+      // Use the task's codebase if provided, update executor cwd if different
       const codebaseRoot = task.codebase || this.config.codebaseRoot;
 
-      // Update CLI executor cwd if different
-      const cliExecutor = new ClaudeCodeExecutor({
-        cwd: codebaseRoot,
-        model: this.config.cliModel || 'opus',
-        timeout: this.config.cliTimeout || 5 * 60 * 1000,
-        allowEdits: true
-      });
+      // Update cwd on the existing executor (which already has comms wired)
+      // This ensures permission requests are properly routed to Telegram
+      this.cliExecutor.setCwd(codebaseRoot);
 
-      // Execute via CLI
-      const result = await cliExecutor.execute(prompt, systemPrompt);
+      // Execute via CLI - reuse this.cliExecutor to preserve CommunicationManager
+      const result = await this.cliExecutor.execute(prompt, systemPrompt);
 
       return {
         success: result.success,
@@ -668,6 +695,39 @@ STYLE:follow_codebase_patterns,all_imports,self_documenting`;
   }
 
   /**
+   * Normalize a file path to be relative to codebaseRoot
+   * Handles paths that Claude generates with embedded absolute paths
+   *
+   * Examples:
+   * - "/users/rruby/project/package.json" → "package.json" (if codebaseRoot contains this)
+   * - "/package.json" → "package.json" (strip leading slash)
+   * - "src/file.ts" → "src/file.ts" (already relative)
+   */
+  private normalizeFilePath(rawPath: string, codebaseRoot: string): string {
+    let normalized = rawPath;
+
+    // Normalize separators to forward slashes for comparison
+    const normalizedRoot = codebaseRoot.replace(/\\/g, '/').toLowerCase();
+    const normalizedPath = rawPath.replace(/\\/g, '/').toLowerCase();
+
+    // If path contains codebaseRoot (embedded absolute path), extract relative part
+    if (normalizedPath.includes(normalizedRoot)) {
+      const idx = normalizedPath.indexOf(normalizedRoot);
+      normalized = rawPath.substring(idx + codebaseRoot.length);
+      console.log(`[CodeGenerator] Normalized embedded path: ${rawPath} → ${normalized}`);
+    }
+
+    // Strip leading slashes/backslashes to make it relative
+    const stripped = normalized.replace(/^[\/\\]+/, '');
+    if (stripped !== normalized) {
+      console.log(`[CodeGenerator] Stripped leading slash: ${normalized} → ${stripped}`);
+      normalized = stripped;
+    }
+
+    return normalized;
+  }
+
+  /**
    * Execute file operations
    * @param operations File operations to execute
    * @param codebaseRoot Root directory for file operations (from task or config)
@@ -685,7 +745,9 @@ STYLE:follow_codebase_patterns,all_imports,self_documenting`;
 
     for (const op of operations) {
       try {
-        const fullPath = join(codebaseRoot, op.path);
+        // Normalize path to handle Claude's absolute-looking paths
+        const relativePath = this.normalizeFilePath(op.path, codebaseRoot);
+        const fullPath = join(codebaseRoot, relativePath);
         const dir = dirname(fullPath);
 
         // === CONTAINMENT CHECK ===
@@ -693,12 +755,12 @@ STYLE:follow_codebase_patterns,all_imports,self_documenting`;
         if (this.containment) {
           const permission = this.containment.checkPermission(fullPath, 'write');
           if (!permission.allowed) {
-            const msg = `Containment blocked ${op.action} to ${op.path}: ${permission.reason}`;
+            const msg = `Containment blocked ${op.action} to ${relativePath}: ${permission.reason}`;
             console.warn(`[CodeGenerator] ${msg}`);
             errors.push(msg);
             continue; // Skip this operation
           }
-          console.log(`[CodeGenerator] Containment: allowed ${op.action} to ${op.path}`);
+          console.log(`[CodeGenerator] Containment: allowed ${op.action} to ${relativePath}`);
         }
 
         // Ensure directory exists
@@ -712,15 +774,16 @@ STYLE:follow_codebase_patterns,all_imports,self_documenting`;
           await writeFile(fullPath, op.content, 'utf-8');
 
           if (fileExists) {
-            filesModified.push(op.path);
+            filesModified.push(relativePath);
           } else {
-            filesCreated.push(op.path);
+            filesCreated.push(relativePath);
           }
         }
 
-        console.log(`[CodeGenerator] ${op.action}: ${op.path}`);
+        console.log(`[CodeGenerator] ${op.action}: ${relativePath}`);
 
       } catch (error) {
+        // Use op.path here since relativePath may not be defined if normalization itself fails
         const msg = `Failed to ${op.action} ${op.path}: ${error instanceof Error ? error.message : error}`;
         errors.push(msg);
         console.error(`[CodeGenerator] ${msg}`);

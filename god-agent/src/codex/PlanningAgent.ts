@@ -609,6 +609,7 @@ Do not request more tool calls - just summarize your findings and ask what speci
   /**
    * Extract JSON from text that may contain markdown code blocks or extra text.
    * Handles nested braces correctly by tracking depth and string literals.
+   * Validates extracted JSON with JSON.parse() before returning.
    */
   private extractJSON(text: string): string | null {
     // 1. Try markdown code block first (most reliable)
@@ -616,7 +617,13 @@ Do not request more tool calls - just summarize your findings and ask what speci
     if (codeBlockMatch) {
       const content = codeBlockMatch[1].trim();
       if (content.startsWith('{')) {
-        return content;
+        // Validate before returning
+        try {
+          JSON.parse(content);
+          return content;
+        } catch {
+          // Invalid JSON in code block, continue to next method
+        }
       }
     }
 
@@ -652,12 +659,61 @@ Do not request more tool calls - just summarize your findings and ask what speci
       } else if (char === '}') {
         depth--;
         if (depth === 0 && start !== -1) {
-          return text.substring(start, i + 1);
+          const candidate = text.substring(start, i + 1);
+          // Validate before returning
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            // Invalid JSON, continue searching for next { }
+            start = -1;
+          }
         }
       }
     }
 
     return null;
+  }
+
+  /**
+   * Attempt to repair common JSON syntax errors
+   * This is cheaper than an API call and catches most formatting issues
+   */
+  private repairJSON(text: string): string | null {
+    let repaired = text.trim();
+
+    // Remove markdown wrapper
+    repaired = repaired.replace(/^```(?:json)?\s*\n?/m, '');
+    repaired = repaired.replace(/\n?```\s*$/m, '');
+
+    // Remove leading prose (find first {)
+    const firstBrace = repaired.indexOf('{');
+    if (firstBrace > 0) {
+      repaired = repaired.substring(firstBrace);
+    } else if (firstBrace === -1) {
+      return null; // No JSON object found
+    }
+
+    // Remove trailing prose (find last })
+    const lastBrace = repaired.lastIndexOf('}');
+    if (lastBrace > 0 && lastBrace < repaired.length - 1) {
+      repaired = repaired.substring(0, lastBrace + 1);
+    } else if (lastBrace === -1) {
+      return null; // No closing brace found
+    }
+
+    // Fix common syntax errors
+    repaired = repaired
+      .replace(/,\s*}/g, '}')      // Trailing comma before }
+      .replace(/,\s*]/g, ']');     // Trailing comma before ]
+
+    // Validate the repaired JSON
+    try {
+      JSON.parse(repaired);
+      return repaired;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -675,10 +731,17 @@ Do not request more tool calls - just summarize your findings and ask what speci
     await this.throttle();
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 2048,
-      system: `You are a technical planner. Generate a structured plan document in JSON format.
+      max_tokens: 4096,
+      system: `OUTPUT_FORMAT: pure_json_only
 
-Output ONLY valid JSON matching this structure:
+STRICT RULES:
+- Start response with { character immediately
+- End response with } character
+- NO markdown code blocks (no \`\`\`)
+- NO explanatory text before or after JSON
+- Your ENTIRE response must be parseable by JSON.parse()
+
+Required JSON structure:
 {
   "title": "Short title for the plan",
   "description": "One paragraph description",
@@ -697,7 +760,7 @@ Output ONLY valid JSON matching this structure:
   "estimatedComplexity": "small|medium|large|massive"
 }
 
-Be thorough but concise.`,
+CRITICAL: Output valid JSON only. No prose.`,
       messages: [{ role: 'user', content: prompt }]
     });
 
@@ -714,6 +777,13 @@ Be thorough but concise.`,
       }
       return JSON.parse(jsonStr) as PlanDocument;
     } catch (parseError) {
+      // Try programmatic repair first (cheaper than API call)
+      const repaired = this.repairJSON(textContent.text);
+      if (repaired) {
+        console.log('[PlanningAgent] JSON repaired programmatically');
+        return JSON.parse(repaired) as PlanDocument;
+      }
+
       console.warn('[PlanningAgent] JSON parse failed, retrying with repair prompt...', parseError);
 
       // Retry with explicit JSON-only instruction
