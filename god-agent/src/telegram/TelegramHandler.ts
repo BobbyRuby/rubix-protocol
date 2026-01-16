@@ -110,6 +110,39 @@ export class TelegramHandler {
     console.log('[TelegramHandler] ContainmentManager connected for path management');
   }
 
+  /**
+   * Extract codebase path from user's task description.
+   * Looks for paths like /users/..., C:\..., etc.
+   * Falls back to defaultCodebase if no path found.
+   */
+  private extractCodebase(description: string): string {
+    // Common patterns for codebase paths
+    const patterns = [
+      // Unix absolute paths: /users/..., /home/..., /var/..., etc.
+      /(?:^|\s|in|at|for|to)\s*(\/[a-zA-Z][a-zA-Z0-9_\-./]+)/i,
+      // Windows paths: C:\..., D:\...
+      /(?:^|\s|in|at|for|to)\s*([A-Za-z]:[\\\/][^\s]+)/i,
+      // Relative paths with multiple segments: ./src/..., ../project/...
+      /(?:^|\s|in|at|for|to)\s*(\.\.?\/[a-zA-Z0-9_\-./]+)/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = description.match(pattern);
+      if (match && match[1]) {
+        const path = match[1].trim();
+        // Validate it looks like a real path (has multiple segments or ends with project-like name)
+        if (path.split(/[/\\]/).length >= 2) {
+          console.log(`[TelegramHandler] Extracted codebase from description: ${path}`);
+          return path;
+        }
+      }
+    }
+
+    // Fall back to default
+    console.log(`[TelegramHandler] No codebase path found in description, using default: ${this.defaultCodebase}`);
+    return this.defaultCodebase;
+  }
+
   async handleMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text || (msg as any).caption || '';  // Also check caption for photos
@@ -156,9 +189,16 @@ export class TelegramHandler {
 
     // Check if in active planning session first (non-command messages route there)
     // Also handle photos in planning mode
-    if (this.planningSession?.isActive() && !text.startsWith('/')) {
-      await this.handlePlanningMessage(msg, bot, hasPhoto ? await this.extractImage(msg, bot) : null);
-      return;
+    if (!text.startsWith('/')) {
+      // Try to restore session if we don't have one (e.g., after server restart)
+      if (!this.planningSession && this.engine) {
+        await this.tryRestoreActiveSession(chatId);
+      }
+
+      if (this.planningSession?.isActive()) {
+        await this.handlePlanningMessage(msg, bot, hasPhoto ? await this.extractImage(msg, bot) : null);
+        return;
+      }
     }
 
     // Handle photos outside of planning mode -> route to conversational
@@ -386,9 +426,12 @@ Just chat! I remember everything.
     await bot.sendMessage(chatId, `🎯 *Starting planning session*\n\n"${description}"\n\nLet's think this through together...`, { parse_mode: 'Markdown' });
 
     try {
+      // Extract codebase from user's description (e.g., "in /users/project")
+      const codebase = this.extractCodebase(description);
+
       this.planningSession = new PlanningSession(this.engine, {
         taskDescription: description,
-        codebase: this.defaultCodebase,
+        codebase,
         chatId
       });
 
@@ -466,6 +509,41 @@ Just chat! I remember everything.
     }
   }
 
+  /**
+   * Try to find and restore an active planning session for this chat.
+   * Called when planningSession is null but user sends a message that should
+   * continue an existing session (e.g., after server restart).
+   */
+  private async tryRestoreActiveSession(chatId: number): Promise<boolean> {
+    // Skip if we already have a session or no engine
+    if (!this.engine || this.planningSession) return false;
+
+    try {
+      // Find active sessions for this chat
+      const sessions = await PlanningSession.listSessions(this.engine, chatId, 5);
+      const activeSession = sessions.find(s => s.status === 'active');
+
+      if (activeSession) {
+        console.log(`[TelegramHandler] Auto-resuming active session: ${activeSession.id}`);
+
+        // Extract codebase from the session's task description
+        const codebase = this.extractCodebase(activeSession.taskDescription);
+
+        this.planningSession = await PlanningSession.load(this.engine, activeSession.id, {
+          codebase,
+          taskDescription: activeSession.taskDescription,
+          chatId
+        });
+
+        await this.planningSession.resume();
+        return true;
+      }
+    } catch (error) {
+      console.warn('[TelegramHandler] Failed to restore session:', error);
+    }
+    return false;
+  }
+
   private async resumePlanningSession(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text || '';
@@ -500,9 +578,12 @@ Just chat! I remember everything.
 
       await bot.sendMessage(chatId, `📂 Resuming: "${targetSession.taskDescription}"...`);
 
+      // Extract codebase from the session's task description
+      const codebase = this.extractCodebase(targetSession.taskDescription);
+
       this.planningSession = await PlanningSession.load(this.engine, targetSession.id, {
         taskDescription: targetSession.taskDescription,
-        codebase: this.defaultCodebase,
+        codebase,
         chatId
       });
 
@@ -949,6 +1030,15 @@ Just chat! I remember everything.
 
     // Initialize conversation session if needed
     if (!this.conversationSession && this.engine) {
+      // FIRST: Try to restore any active planning session
+      const restored = await this.tryRestoreActiveSession(chatId);
+      if (restored && this.planningSession?.isActive()) {
+        console.log('[TelegramHandler] Restored active planning session, routing there');
+        await this.handlePlanningMessage(msg, bot, image || null);
+        return;
+      }
+
+      // No active planning session - create new conversation
       this.conversationSession = new ConversationSession(
         this.engine,
         chatId,
@@ -1302,11 +1392,14 @@ Just chat! I remember everything.
         }
       }
 
+      // Extract codebase from the original (uncompressed) task description
+      const codebase = this.extractCodebase(taskDescription);
+
       // Use the correct TaskExecutor API (with compressed description)
       const result = await this.taskExecutor.execute({
         description: compressed.compressed,
         specification,
-        codebase: this.defaultCodebase
+        codebase
       });
 
       const summary = result.summary || (result.success ? 'Task completed' : 'Task failed');

@@ -17,8 +17,27 @@ import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { MemorySource } from '../core/types.js';
 import { PlanningAgent, type PlanDocument, type PlanningExchange, type ImageContent } from './PlanningAgent.js';
 import type { TaskSubmission } from './TaskExecutor.js';
-import { memoryCompressor } from '../memory/index.js';
-import type { MemoryType } from '../memory/types.js';
+import { getLLMCompressor } from '../memory/LLMCompressor.js';
+
+/**
+ * Standalone decompression helper for static methods and contexts without instance access.
+ */
+async function decompressMemoryContent(content: string, tags: string[]): Promise<string> {
+  if (!tags.includes('llm-compressed')) {
+    return content;
+  }
+
+  try {
+    const compressor = getLLMCompressor();
+    if (compressor.isAvailable()) {
+      return await compressor.decompress(content);
+    }
+  } catch {
+    // Not initialized or failed
+  }
+
+  return content;
+}
 
 /**
  * Configuration for a planning session
@@ -102,6 +121,26 @@ export class PlanningSession {
 
   /** Track metadata entry ID to update instead of creating duplicates */
   private metaEntryId?: string;
+
+  /**
+   * Decompress LLM-compressed content.
+   */
+  private async decompressContent(content: string, tags: string[]): Promise<string> {
+    if (!tags.includes('llm-compressed')) {
+      return content;
+    }
+
+    try {
+      const compressor = getLLMCompressor();
+      if (compressor.isAvailable()) {
+        return await compressor.decompress(content);
+      }
+    } catch {
+      // Not initialized or failed
+    }
+
+    return content;
+  }
 
   /**
    * Get a simple response for common conversational messages.
@@ -285,8 +324,13 @@ export class PlanningSession {
       await this.extractAndStoreDecision(userMessage, response);
     }
 
-    // Periodically update plan document (every 10 exchanges)
-    if (this.meta.exchangeCount % 10 === 0 && this.meta.exchangeCount > 0) {
+    // Generate initial plan after 2 exchanges, then update on EVERY exchange
+    // Plan evolves continuously as conversation progresses
+    const shouldGeneratePlan = !this.currentPlan && this.meta.exchangeCount >= 2;
+    const shouldUpdatePlan = this.currentPlan && this.meta.exchangeCount > 0;
+
+    if (shouldGeneratePlan || shouldUpdatePlan) {
+      console.log(`[PlanningSession] ${shouldGeneratePlan ? 'Generating initial' : 'Updating'} plan at exchange ${this.meta.exchangeCount}`);
       await this.updatePlanDocument();
     }
 
@@ -316,7 +360,7 @@ export class PlanningSession {
     await this.loadDecisions();
 
     // Force plan generation if we have enough exchanges but no plan
-    if (!this.currentPlan && this.meta.exchangeCount >= 4) {
+    if (!this.currentPlan && this.meta.exchangeCount >= 2) {
       console.log('[PlanningSession] No plan loaded, generating from history...');
       await this.updatePlanDocument();
     }
@@ -472,12 +516,8 @@ export class PlanningSession {
       const tags = r.entry.metadata.tags || [];
       let content = r.entry.content;
 
-      // Decompress if needed (legacy compression)
-      if (tags.includes('compressed')) {
-        const typeTag = tags.find(t => t.startsWith('type:'));
-        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-        content = memoryCompressor.decode(content, memType);
-      }
+      // Decompress if needed (LLM or legacy compression)
+      content = await decompressMemoryContent(content, tags);
 
       try {
         const meta = JSON.parse(content) as SessionMeta;
@@ -528,12 +568,8 @@ export class PlanningSession {
       const tags = r.entry.metadata.tags || [];
       let content = r.entry.content;
 
-      // Decompress if needed (legacy compression)
-      if (tags.includes('compressed')) {
-        const typeTag = tags.find(t => t.startsWith('type:'));
-        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-        content = memoryCompressor.decode(content, memType);
-      }
+      // Decompress if needed (LLM or legacy compression)
+      content = await decompressMemoryContent(content, tags);
 
       try {
         const meta = JSON.parse(content) as SessionMeta;
@@ -688,12 +724,8 @@ export class PlanningSession {
       const tags = r.entry.metadata.tags || [];
       let content = r.entry.content;
 
-      // Decompress if needed
-      if (tags.includes('compressed')) {
-        const typeTag = tags.find(t => t.startsWith('type:'));
-        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-        content = memoryCompressor.decode(content, memType);
-      }
+      // Decompress if needed (LLM or legacy compression)
+      content = await this.decompressContent(content, tags);
 
       const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
       const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
@@ -752,12 +784,8 @@ export class PlanningSession {
         const tags = results[0].entry.metadata.tags || [];
         let content = results[0].entry.content;
 
-        // Decompress if needed
-        if (tags.includes('compressed')) {
-          const typeTag = tags.find(t => t.startsWith('type:'));
-          const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-          content = memoryCompressor.decode(content, memType);
-        }
+        // Decompress if needed (LLM or legacy compression)
+        content = await this.decompressContent(content, tags);
 
         this.meta = JSON.parse(content);
         this.metaEntryId = results[0].entry.id; // Track for updates
@@ -779,16 +807,12 @@ export class PlanningSession {
       }
     });
 
-    this.recentExchanges = results.map(r => {
+    this.recentExchanges = await Promise.all(results.map(async r => {
       const tags = r.entry.metadata.tags || [];
       let content = r.entry.content;
 
-      // Decompress if needed
-      if (tags.includes('compressed')) {
-        const typeTag = tags.find(t => t.startsWith('type:'));
-        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-        content = memoryCompressor.decode(content, memType);
-      }
+      // Decompress if needed (LLM or legacy compression)
+      content = await this.decompressContent(content, tags);
 
       return {
         id: r.entry.id,
@@ -797,7 +821,7 @@ export class PlanningSession {
         timestamp: new Date(r.entry.createdAt),
         memoryId: r.entry.id
       };
-    });
+    }));
 
     // Sort by timestamp (oldest first for conversation order)
     this.recentExchanges.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -830,12 +854,8 @@ export class PlanningSession {
         const tags = results[0].entry.metadata.tags || [];
         let content = results[0].entry.content;
 
-        // Decompress if needed
-        if (tags.includes('compressed')) {
-          const typeTag = tags.find(t => t.startsWith('type:'));
-          const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-          content = memoryCompressor.decode(content, memType);
-        }
+        // Decompress if needed (LLM or legacy compression)
+        content = await this.decompressContent(content, tags);
 
         this.currentPlan = JSON.parse(content);
         console.log(`[PlanningSession] Loaded plan: ${this.currentPlan?.title}`);
@@ -856,19 +876,15 @@ export class PlanningSession {
       }
     });
 
-    this.decisions = results.map(r => {
+    this.decisions = await Promise.all(results.map(async r => {
       const tags = r.entry.metadata.tags || [];
       let content = r.entry.content;
 
-      // Decompress if needed
-      if (tags.includes('compressed')) {
-        const typeTag = tags.find(t => t.startsWith('type:'));
-        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-        content = memoryCompressor.decode(content, memType);
-      }
+      // Decompress if needed (LLM or legacy compression)
+      content = await this.decompressContent(content, tags);
 
       return content;
-    });
+    }));
     console.log(`[PlanningSession] Loaded ${this.decisions.length} decisions`);
   }
 
@@ -890,22 +906,18 @@ export class PlanningSession {
     }
 
     // Build summary from exchanges
-    const summaryParts = allExchanges
+    const summaryParts = await Promise.all(allExchanges
       .slice(-30) // Last 30 exchanges
-      .map(r => {
+      .map(async r => {
         const tags = r.entry.metadata.tags || [];
         let content = r.entry.content;
 
-        // Decompress if needed
-        if (tags.includes('compressed')) {
-          const typeTag = tags.find(t => t.startsWith('type:'));
-          const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
-          content = memoryCompressor.decode(content, memType);
-        }
+        // Decompress if needed (LLM or legacy compression)
+        content = await this.decompressContent(content, tags);
 
         const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
         return `[${role}] ${content.substring(0, 300)}...`;
-      });
+      }));
 
     const conversationSummary = summaryParts.join('\n\n');
 
