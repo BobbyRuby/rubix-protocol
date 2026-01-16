@@ -762,13 +762,25 @@ export class PlanningSession {
       }
     });
 
-    this.recentExchanges = results.map(r => ({
-      id: r.entry.id,
-      role: (r.entry.metadata.tags?.includes('user') ? 'user' : 'assistant') as 'user' | 'assistant',
-      content: r.entry.content,
-      timestamp: new Date(r.entry.createdAt),
-      memoryId: r.entry.id
-    }));
+    this.recentExchanges = results.map(r => {
+      const tags = r.entry.metadata.tags || [];
+      let content = r.entry.content;
+
+      // Decompress if needed
+      if (tags.includes('compressed')) {
+        const typeTag = tags.find(t => t.startsWith('type:'));
+        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+        content = memoryCompressor.decode(content, memType);
+      }
+
+      return {
+        id: r.entry.id,
+        role: (tags.includes('user') ? 'user' : 'assistant') as 'user' | 'assistant',
+        content,
+        timestamp: new Date(r.entry.createdAt),
+        memoryId: r.entry.id
+      };
+    });
 
     // Sort by timestamp (oldest first for conversation order)
     this.recentExchanges.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -798,7 +810,17 @@ export class PlanningSession {
 
     if (results.length > 0) {
       try {
-        this.currentPlan = JSON.parse(results[0].entry.content);
+        const tags = results[0].entry.metadata.tags || [];
+        let content = results[0].entry.content;
+
+        // Decompress if needed
+        if (tags.includes('compressed')) {
+          const typeTag = tags.find(t => t.startsWith('type:'));
+          const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+          content = memoryCompressor.decode(content, memType);
+        }
+
+        this.currentPlan = JSON.parse(content);
         console.log(`[PlanningSession] Loaded plan: ${this.currentPlan?.title}`);
       } catch {
         console.warn('[PlanningSession] Failed to parse plan document');
@@ -817,7 +839,19 @@ export class PlanningSession {
       }
     });
 
-    this.decisions = results.map(r => r.entry.content);
+    this.decisions = results.map(r => {
+      const tags = r.entry.metadata.tags || [];
+      let content = r.entry.content;
+
+      // Decompress if needed
+      if (tags.includes('compressed')) {
+        const typeTag = tags.find(t => t.startsWith('type:'));
+        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+        content = memoryCompressor.decode(content, memType);
+      }
+
+      return content;
+    });
     console.log(`[PlanningSession] Loaded ${this.decisions.length} decisions`);
   }
 
@@ -842,8 +876,18 @@ export class PlanningSession {
     const summaryParts = allExchanges
       .slice(-30) // Last 30 exchanges
       .map(r => {
-        const role = r.entry.metadata.tags?.includes('user') ? 'USER' : 'ASSISTANT';
-        return `[${role}] ${r.entry.content.substring(0, 300)}...`;
+        const tags = r.entry.metadata.tags || [];
+        let content = r.entry.content;
+
+        // Decompress if needed
+        if (tags.includes('compressed')) {
+          const typeTag = tags.find(t => t.startsWith('type:'));
+          const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+          content = memoryCompressor.decode(content, memType);
+        }
+
+        const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
+        return `[${role}] ${content.substring(0, 300)}...`;
       });
 
     const conversationSummary = summaryParts.join('\n\n');
