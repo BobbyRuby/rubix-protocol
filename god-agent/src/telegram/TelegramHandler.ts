@@ -7,6 +7,13 @@ import type { ContainmentManager } from '../codex/ContainmentManager.js';
 import { PlanningSession } from '../codex/PlanningSession.js';
 import { ConversationSession } from '../codex/ConversationSession.js';
 import { InputCompressor } from '../prompts/InputCompressor.js';
+import { AutoRecall } from '../memory/AutoRecall.js';
+
+/** Image attachment for messages */
+export interface ImageAttachment {
+  base64: string;
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+}
 
 export class TelegramHandler {
   private taskExecutor: TaskExecutor | undefined;
@@ -15,6 +22,9 @@ export class TelegramHandler {
   private containment: ContainmentManager | undefined;
   private activeTasks: Map<string, TaskRequest>;
   private defaultCodebase: string;
+
+  /** AutoRecall for centralized brain */
+  private autoRecall: AutoRecall;
 
   /** Active planning session */
   private planningSession: PlanningSession | null = null;
@@ -25,17 +35,37 @@ export class TelegramHandler {
   /** Awaiting confirmation for /execute */
   private awaitingExecuteConfirmation: boolean = false;
 
+  /** Message queue for planning mode - messages sent while processing */
+  private messageQueue: Array<{ text: string; image?: ImageAttachment }> = [];
+
+  /** Flag to track if we're currently processing a planning message */
+  private isProcessingPlanning: boolean = false;
+
   constructor(taskExecutor?: TaskExecutor, defaultCodebase?: string, engine?: MemoryEngine) {
     this.taskExecutor = taskExecutor;
     this.engine = engine;
     this.activeTasks = new Map();
     this.defaultCodebase = defaultCodebase || process.cwd();
 
+    // Initialize AutoRecall (centralized brain)
+    this.autoRecall = new AutoRecall({
+      enabled: true,
+      topK: 5,
+      minScore: 0.3,
+      debug: process.env.AUTORECALL_DEBUG === 'true'
+    });
+
+    // Wire AutoRecall to engine if available
+    if (engine) {
+      this.autoRecall.setEngine(engine);
+    }
+
     // Debug: Log what we received
     console.log('[TelegramHandler] Constructor called with:');
     console.log(`  - taskExecutor: ${taskExecutor ? 'provided' : 'undefined'}`);
     console.log(`  - defaultCodebase: ${defaultCodebase || '(not provided, using cwd)'}`);
     console.log(`  - engine: ${engine ? 'provided' : 'undefined'}`);
+    console.log(`  - autoRecall: enabled`);
 
     if (engine) {
       console.log('[TelegramHandler] MemoryEngine connected for planning sessions');
@@ -56,7 +86,9 @@ export class TelegramHandler {
    */
   setEngine(engine: MemoryEngine): void {
     this.engine = engine;
-    console.log('[TelegramHandler] MemoryEngine connected for planning sessions');
+    // Wire AutoRecall to engine (centralized brain)
+    this.autoRecall.setEngine(engine);
+    console.log('[TelegramHandler] MemoryEngine connected for planning sessions and AutoRecall');
   }
 
   /**
@@ -80,7 +112,10 @@ export class TelegramHandler {
 
   async handleMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
-    const text = msg.text || '';
+    const text = msg.text || (msg as any).caption || '';  // Also check caption for photos
+
+    // Check if message has an image
+    const hasPhoto = !!(msg as any).photo || ((msg as any).document?.mime_type?.startsWith('image/'));
 
     // Check for /execute confirmation responses
     if (this.awaitingExecuteConfirmation) {
@@ -90,17 +125,49 @@ export class TelegramHandler {
         return;
       } else if (/^(no|n|cancel|back|wait)$/i.test(text.trim())) {
         this.awaitingExecuteConfirmation = false;
-        await bot.sendMessage(chatId, '↩️ Back to planning. Continue the conversation or /execute again when ready.');
+        // Context-aware response
+        if (this.planningSession) {
+          const taskDesc = this.planningSession.getTaskDescription();
+          const exchanges = this.planningSession.getExchangeCount();
+          await bot.sendMessage(
+            chatId,
+            `↩️ Back to planning: "${taskDesc.substring(0, 50)}${taskDesc.length > 50 ? '...' : ''}"\n\n` +
+            `📝 ${exchanges} exchanges so far. Continue refining your plan or /execute again when ready.`
+          );
+        } else {
+          await bot.sendMessage(chatId, '↩️ Back to planning. Continue the conversation or /execute again when ready.');
+        }
         return;
       }
       // Any other message = back to planning mode
       this.awaitingExecuteConfirmation = false;
     }
 
+    // Debug logging for troubleshooting routing issues
+    if (process.env.TELEGRAM_DEBUG === 'true') {
+      console.log(`[TelegramHandler] Routing check:`, {
+        hasPlanningSession: !!this.planningSession,
+        isActive: this.planningSession?.isActive?.() ?? 'N/A',
+        awaitingConfirmation: this.awaitingExecuteConfirmation,
+        text: text.substring(0, 30),
+        isCommand: text.startsWith('/')
+      });
+    }
+
     // Check if in active planning session first (non-command messages route there)
+    // Also handle photos in planning mode
     if (this.planningSession?.isActive() && !text.startsWith('/')) {
-      await this.handlePlanningMessage(msg, bot);
+      await this.handlePlanningMessage(msg, bot, hasPhoto ? await this.extractImage(msg, bot) : null);
       return;
+    }
+
+    // Handle photos outside of planning mode -> route to conversational
+    if (hasPhoto && !text.startsWith('/')) {
+      const image = await this.extractImage(msg, bot);
+      if (image) {
+        await this.handleConversationalMessage(msg, bot, image);
+        return;
+      }
     }
 
     // Command routing
@@ -110,18 +177,22 @@ export class TelegramHandler {
       await this.handleHelpCommand(chatId, bot);
     } else if (text.startsWith('/plan ') || text === '/plan') {
       await this.startPlanningSession(msg, bot);
-    } else if (text === '/resume') {
+    } else if (text === '/resume' || text.startsWith('/resume ')) {
       await this.resumePlanningSession(msg, bot);
-    } else if (text === '/plans') {
+    } else if (text === '/plans' || text.startsWith('/plans ')) {
       await this.listPlanningSessions(msg, bot);
+    } else if (text.startsWith('/delete ')) {
+      await this.deletePlanningSession(msg, bot);
     } else if (text === '/plan-status') {
       await this.showPlanStatus(msg, bot);
     } else if (text === '/execute') {
       await this.executePlan(msg, bot);
     } else if (text === '/rubixallize') {
       await this.handleRubixallizeCommand(msg, bot);
+    } else if (text === '/confirm') {
+      await this.confirmDeletion(msg, bot);
     } else if (text === '/cancel') {
-      await this.cancelPlanningSession(msg, bot);
+      await this.handleCancelCommand(msg, bot);
     } else if (text.startsWith('/task')) {
       await this.handleTaskCommand(msg, bot);
     } else if (text.startsWith('/status')) {
@@ -136,6 +207,8 @@ export class TelegramHandler {
       await this.handlePathRemoveCommand(msg, bot);
     } else if (text === '/wait' || text.startsWith('/wait ')) {
       await this.handleWaitCommand(msg, bot);
+    } else if (text === '/restart') {
+      await this.handleRestartCommand(chatId, bot);
     } else {
       await this.handleConversationalMessage(msg, bot);
     }
@@ -145,18 +218,52 @@ export class TelegramHandler {
     const data = query.data;
     const chatId = query.message.chat.id;
 
-    // Check if this is an escalation callback (contains 'rid' and 'opt')
-    if (this.comms && data) {
+    // Check if this is JSON callback data
+    if (data) {
       try {
         const parsed = JSON.parse(data);
-        if (parsed.rid && parsed.opt) {
-          // This is an escalation button click - forward to CommunicationManager
+
+        // Escalation callback (contains 'rid' and 'opt')
+        if (parsed.rid && parsed.opt && this.comms) {
           console.log('[TelegramHandler] Forwarding escalation callback:', parsed.opt);
           await this.comms.handleTelegramResponse({
             text: parsed.opt,
             callbackData: data
           });
           await bot.answerCallbackQuery(query.id, { text: 'Response received!' });
+          return;
+        }
+
+        // Plan list button callbacks (resume/delete)
+        if (parsed.action === 'resume') {
+          const fakeMsg = { ...query.message, text: `/resume ${parsed.num}` } as TelegramMessage;
+          await bot.answerCallbackQuery(query.id, { text: `Resuming session ${parsed.num}...` });
+          await this.resumePlanningSession(fakeMsg, bot);
+          return;
+        }
+
+        if (parsed.action === 'delete') {
+          const fakeMsg = { ...query.message, text: `/delete ${parsed.num}` } as TelegramMessage;
+          await bot.answerCallbackQuery(query.id);
+          await this.deletePlanningSession(fakeMsg, bot);
+          return;
+        }
+
+        // Execute confirmation button callbacks
+        if (parsed.action === 'execute_yes') {
+          this.awaitingExecuteConfirmation = false;
+          const fakeMsg = { ...query.message, text: 'yes' } as TelegramMessage;
+          await this.executeApprovedPlan(fakeMsg, bot);
+          await bot.answerCallbackQuery(query.id, { text: 'Executing...' });
+          return;
+        }
+
+        if (parsed.action === 'execute_no') {
+          this.awaitingExecuteConfirmation = false;
+          await bot.answerCallbackQuery(query.id, { text: 'Continuing planning' });
+          if (this.planningSession) {
+            await bot.sendMessage(chatId, '↩️ Back to planning. Continue or /execute when ready.');
+          }
           return;
         }
       } catch {
@@ -194,46 +301,62 @@ Just send me a message describing what you need!
 
   private async handleHelpCommand(chatId: number, bot: TelegramBotAPI): Promise<void> {
     const helpMessage = `
-Rubix Help
+*RUBIX - Autonomous Developer Agent*
 
-**Conversation Mode:**
-Just chat normally - I remember everything!
-/rubixallize - Crystallize conversation into a plan
-Then use /execute to run the plan
+*Quick Start:*
+Chat naturally → /rubixallize → /execute
+Or: /plan <idea> → discuss → /execute
 
-**Task Commands:**
-- /task <description> - Execute a task immediately
-- /status - Show active task status
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Planning Commands:**
-- /plan <description> - Start a new planning session
-- /resume - Resume your last planning session
-- /plans - List all your planning sessions
-- /plan-status - Show current plan status
-- /execute - Approve plan and start execution
-- /cancel - Cancel current planning session
+*Conversation Mode*
+Just chat! I remember everything.
+• /rubixallize - Turn chat into executable plan
 
-**Configuration Commands:**
-- /config - Show configuration status
-- /paths - List allowed paths
-- /path-add <path> [rw|read] - Add allowed path
-- /path-remove <pattern> - Remove allowed path
+*Immediate Execution*
+• /task <desc> - Run task now (no planning)
+• /status - Check running task progress
 
-**Escalation Commands:**
-- /wait [minutes] - Extend timeout by 10 min (stackable)
+*Planning Sessions*
+• /plan <desc> - Start new planning session
+• /plans - List your sessions (most recent 3)
+• /plans all - List ALL sessions (any chat)
+• /resume - Resume most recent session
+• /resume N - Resume session #N from list
+• /delete N - Delete session #N from list
+• /plan-status - Current plan details
+• /execute - Preview & run the plan
+• /cancel - Abandon current session
 
-**Examples:**
-- /task Fix the API endpoint for user authentication
-- /plan Build a full-stack calculator app with history
-- /path-add E:/ rw
+*Path Permissions*
+• /paths - Show allowed paths
+• /path-add <path> rw - Add read-write access
+• /path-add <path> read - Add read-only access
+• /path-remove <pattern> - Remove access
 
-**Planning Mode:**
-Use /plan when you want to think through a project before coding.
-The conversation is stored in memory - no context limits!
-When ready, use /execute to run the plan.
+*During Execution*
+• /wait - Add 10 min to escalation timeout
+• /wait N - Add N minutes
+
+*System*
+• /config - Show configuration
+• /restart - Restart RUBIX system
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+*Workflow Example:*
+1. /plans all - Browse old plans
+2. /resume 2 - Load plan #2
+3. Continue discussing...
+4. /execute - Run when ready
+
+*Or start fresh:*
+1. /plan Build a REST API
+2. Discuss requirements...
+3. /execute - Approve & run
     `.trim();
 
-    await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+    await this.safeSendMarkdown(bot, chatId, helpMessage);
   }
 
   // ===========================================================================
@@ -278,29 +401,74 @@ When ready, use /execute to run the plan.
     }
   }
 
-  private async handlePlanningMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+  private async handlePlanningMessage(msg: TelegramMessage, bot: TelegramBotAPI, image?: ImageAttachment | null): Promise<void> {
     const chatId = msg.chat.id;
-    const text = msg.text || '';
+    const text = msg.text || (msg as any).caption || '';
 
     if (!this.planningSession) {
       await bot.sendMessage(chatId, 'No active planning session. Start one with /plan');
       return;
     }
 
-    // Thinking indicator
-    await bot.sendMessage(chatId, '💭');
+    // If already processing, queue this message for inclusion in current response
+    if (this.isProcessingPlanning) {
+      this.messageQueue.push({ text, image: image || undefined });
+      await bot.sendMessage(chatId, `📝 +${this.messageQueue.length} message${this.messageQueue.length > 1 ? 's' : ''} queued`);
+      return;
+    }
+
+    // Start processing
+    this.isProcessingPlanning = true;
+
+    // Thinking indicator (with image acknowledgment)
+    if (image) {
+      await bot.sendMessage(chatId, '🖼️💭');
+    } else {
+      await bot.sendMessage(chatId, '💭');
+    }
 
     try {
-      const response = await this.planningSession.chat(text);
+      // Collect initial message with explicit type
+      let combinedMessages: Array<{ text: string; image?: ImageAttachment }> = [
+        { text, image: image || undefined }
+      ];
+
+      // Base iteration budget
+      let iterationBudget = 10;
+
+      // Check for queued messages before processing
+      if (this.messageQueue.length > 0) {
+        combinedMessages = [...combinedMessages, ...this.messageQueue];
+        iterationBudget += this.messageQueue.length * 5;
+        this.messageQueue = [];
+        console.log(`[TelegramHandler] Processing ${combinedMessages.length} messages, iteration budget: ${iterationBudget}`);
+      }
+
+      // Build combined user input
+      const combinedText = combinedMessages.map(m => m.text).join('\n\n---\n\n');
+      const combinedImage = combinedMessages.find(m => m.image)?.image;  // Use first image if any
+
+      const response = await this.planningSession.chat(combinedText, combinedImage, iterationBudget);
       await this.sendConversationalMessages(chatId, response, bot);
     } catch (error) {
       console.error('[TelegramHandler] Planning chat error:', error);
       await bot.sendMessage(chatId, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      this.isProcessingPlanning = false;
+
+      // Check if more messages arrived during processing - process them
+      if (this.messageQueue.length > 0) {
+        // Recursively process queued messages
+        const nextMsg = this.messageQueue.shift()!;
+        const fakeTgMsg = { ...msg, text: nextMsg.text };
+        await this.handlePlanningMessage(fakeTgMsg, bot, nextMsg.image || null);
+      }
     }
   }
 
   private async resumePlanningSession(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
+    const text = msg.text || '';
 
     if (!this.engine) {
       await bot.sendMessage(chatId, 'MemoryEngine not configured. Cannot resume planning sessions.');
@@ -308,19 +476,32 @@ When ready, use /execute to run the plan.
     }
 
     try {
-      // Get recent sessions for this chat
-      const sessions = await PlanningSession.listSessions(this.engine, chatId, 1);
+      // Check for /resume N syntax (e.g., /resume 2)
+      const match = text.match(/\/resume\s+(\d+)/);
+      let targetSession: import('../codex/PlanningSession.js').SessionSummary | undefined;
 
-      if (sessions.length === 0) {
-        await bot.sendMessage(chatId, 'No planning sessions found. Start one with /plan');
-        return;
+      if (match) {
+        const index = parseInt(match[1], 10) - 1; // Convert to 0-based
+        if (this.cachedSessionList.length > 0 && index >= 0 && index < this.cachedSessionList.length) {
+          targetSession = this.cachedSessionList[index];
+        } else {
+          await bot.sendMessage(chatId, `Invalid session number. Use /plans first to see available sessions.`);
+          return;
+        }
+      } else {
+        // Default: get most recent session for this chat
+        const sessions = await PlanningSession.listSessions(this.engine, chatId, 1);
+        if (sessions.length === 0) {
+          await bot.sendMessage(chatId, 'No planning sessions found. Start one with /plan\n\nOr use /plans all to see all sessions.');
+          return;
+        }
+        targetSession = sessions[0];
       }
 
-      const latest = sessions[0];
-      await bot.sendMessage(chatId, `📂 Resuming: "${latest.taskDescription}"...`);
+      await bot.sendMessage(chatId, `📂 Resuming: "${targetSession.taskDescription}"...`);
 
-      this.planningSession = await PlanningSession.load(this.engine, latest.id, {
-        taskDescription: latest.taskDescription,
+      this.planningSession = await PlanningSession.load(this.engine, targetSession.id, {
+        taskDescription: targetSession.taskDescription,
         codebase: this.defaultCodebase,
         chatId
       });
@@ -333,8 +514,15 @@ When ready, use /execute to run the plan.
     }
   }
 
+  /** Cached session list for /resume N selection */
+  private cachedSessionList: import('../codex/PlanningSession.js').SessionSummary[] = [];
+
+  /** Pending deletion awaiting confirmation */
+  private pendingDeletion: { chatId: number; session: import('../codex/PlanningSession.js').SessionSummary; index: number } | null = null;
+
   private async listPlanningSessions(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
+    const text = msg.text || '';
 
     if (!this.engine) {
       await bot.sendMessage(chatId, 'MemoryEngine not configured.');
@@ -342,22 +530,107 @@ When ready, use /execute to run the plan.
     }
 
     try {
-      const sessions = await PlanningSession.listSessions(this.engine, chatId, 10);
+      // Check for /plans all flag
+      const showAll = text.includes(' all');
+
+      let sessions: import('../codex/PlanningSession.js').SessionSummary[];
+      if (showAll) {
+        sessions = await PlanningSession.listAllSessions(this.engine, 100); // Show all
+      } else {
+        sessions = await PlanningSession.listSessions(this.engine, chatId, 10);
+        // Fallback: if no sessions found by chatId, try listing all sessions
+        if (sessions.length === 0) {
+          console.log('[TelegramHandler] No sessions for chatId, trying all sessions');
+          sessions = await PlanningSession.listAllSessions(this.engine, 10);
+        }
+      }
+
+      // Cache for /resume N
+      this.cachedSessionList = sessions;
 
       if (sessions.length === 0) {
         await bot.sendMessage(chatId, 'No planning sessions found. Start one with /plan');
         return;
       }
 
+      // Build session list text (without inline commands - buttons handle that)
       const lines = sessions.map((s, i) => {
         const date = s.lastActivity.toLocaleDateString();
-        const status = s.status === 'active' ? '🟢' : s.status === 'approved' ? '✅' : '⚪';
-        return `${i + 1}. ${status} ${s.taskDescription.substring(0, 40)}...\n   ${date} • ${s.exchangeCount} exchanges`;
+        const status = s.status === 'active' ? '🟢' : s.status === 'approved' ? '✅' : s.status === 'executed' ? '🏁' : '⚪';
+        const num = i + 1;
+        return `${num}. ${status} ${s.taskDescription.substring(0, 40)}...\n   ${date} • ${s.exchangeCount} exchanges`;
       });
 
-      await bot.sendMessage(chatId, `📋 *Your Planning Sessions*\n\n${lines.join('\n\n')}\n\nUse /resume to continue the most recent session.`, { parse_mode: 'Markdown' });
+      // Build inline keyboard with Resume/Delete buttons for each session
+      const keyboard = sessions.map((_, i) => {
+        const num = i + 1;
+        return [
+          { text: `▶️ Resume ${num}`, callback_data: JSON.stringify({ action: 'resume', num }) },
+          { text: `🗑️ Delete ${num}`, callback_data: JSON.stringify({ action: 'delete', num }) }
+        ];
+      });
+
+      const title = showAll ? '📋 *All Planning Sessions*' : '📋 *Your Planning Sessions*';
+      await bot.sendMessage(
+        chatId,
+        `${title}\n\n${lines.join('\n\n')}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard }
+        }
+      );
     } catch (error) {
       console.error('[TelegramHandler] Failed to list sessions:', error);
+      await bot.sendMessage(chatId, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Delete a planning session by number (from cached list)
+   * Usage: /delete N (e.g., /delete 2)
+   */
+  private async deletePlanningSession(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = (msg.text || '').trim();
+
+    if (!this.engine) {
+      await bot.sendMessage(chatId, 'MemoryEngine not configured.');
+      return;
+    }
+
+    try {
+      // Parse /delete N syntax
+      const match = text.match(/\/delete\s+(\d+)/);
+      if (!match) {
+        await bot.sendMessage(chatId, 'Usage: /delete N (e.g., /delete 2)\n\nUse /plans first to see available sessions.');
+        return;
+      }
+
+      const index = parseInt(match[1], 10) - 1; // Convert to 0-based
+
+      // Check cached session list
+      if (this.cachedSessionList.length === 0) {
+        await bot.sendMessage(chatId, 'No session list cached. Use /plans first to see available sessions.');
+        return;
+      }
+
+      if (index < 0 || index >= this.cachedSessionList.length) {
+        await bot.sendMessage(chatId, `Invalid session number. Valid range: 1-${this.cachedSessionList.length}`);
+        return;
+      }
+
+      const targetSession = this.cachedSessionList[index];
+
+      // Store pending deletion and ask for confirmation
+      this.pendingDeletion = { chatId, session: targetSession, index };
+
+      await bot.sendMessage(
+        chatId,
+        `⚠️ *Confirm Delete*\n\nYou're about to delete:\n"${targetSession.taskDescription.substring(0, 60)}..."\n\n${targetSession.exchangeCount} exchanges will be permanently deleted.\n\n→ /confirm - Delete permanently\n→ /cancel - Keep the session`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      console.error('[TelegramHandler] Failed to delete session:', error);
       await bot.sendMessage(chatId, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -381,7 +654,7 @@ When ready, use /execute to run the plan.
 
       if (plan) {
         message += `\n**Current Plan:** ${plan.title}\n`;
-        message += `**Complexity:** ${plan.estimatedComplexity}\n`;
+        message += `**Complexity:** ${plan.estimatedComplexity ?? 'medium'}\n`;
         message += `**Components:** ${plan.components.length}\n`;
         if (status.openQuestions > 0) {
           message += `**Open Questions:** ${status.openQuestions}\n`;
@@ -422,28 +695,44 @@ When ready, use /execute to run the plan.
       }
 
       // Show the plan with details
-      let planSummary = `📋 *Current Plan: ${plan.title}*\n\n`;
-      planSummary += `${plan.description}\n\n`;
-      planSummary += `*Goals:*\n`;
-      plan.goals.slice(0, 5).forEach(g => { planSummary += `• ${g}\n`; });
+      let planSummary = `📋 *Current Plan: ${plan.title || 'Untitled'}*\n\n`;
+      planSummary += `${plan.description || 'No description'}\n\n`;
 
-      if (plan.components.length > 0) {
+      if (plan.goals?.length > 0) {
+        planSummary += `*Goals:*\n`;
+        plan.goals.slice(0, 5).forEach(g => { planSummary += `• ${g}\n`; });
+      }
+
+      if (plan.components?.length > 0) {
         planSummary += `\n*Components:*\n`;
         plan.components.forEach(c => {
-          planSummary += `• *${c.name}*: ${c.description.substring(0, 80)}${c.description.length > 80 ? '...' : ''}\n`;
+          const desc = c.description || '';
+          planSummary += `• *${c.name || 'Unnamed'}*: ${desc.substring(0, 80)}${desc.length > 80 ? '...' : ''}\n`;
         });
       }
 
-      if (plan.openQuestions.length > 0) {
+      if (plan.openQuestions?.length > 0) {
         planSummary += `\n⚠️ *Open Questions:*\n`;
         plan.openQuestions.slice(0, 3).forEach(q => { planSummary += `• ${q}\n`; });
       }
 
-      planSummary += `\n*Complexity:* ${plan.estimatedComplexity}`;
-      planSummary += `\n\n---\n`;
-      planSummary += `Reply *yes* to execute, or *no* to continue planning.`;
+      if (plan.considerations?.some(c => c.includes('Plan generation failed'))) {
+        planSummary += `\n⚠️ *Warning:* Plan was auto-generated due to parsing issues.\n`;
+      }
 
-      await bot.sendMessage(chatId, planSummary, { parse_mode: 'Markdown' });
+      planSummary += `\n*Complexity:* ${plan.estimatedComplexity ?? 'medium'}`;
+
+      await this.safeSendMarkdown(bot, chatId, planSummary);
+
+      // Show inline buttons for execute confirmation
+      await bot.sendMessage(chatId, 'Execute this plan?', {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '✅ Yes, Execute', callback_data: JSON.stringify({ action: 'execute_yes' }) },
+            { text: '❌ No, Continue', callback_data: JSON.stringify({ action: 'execute_no' }) }
+          ]]
+        }
+      });
 
       // Set confirmation state
       this.awaitingExecuteConfirmation = true;
@@ -500,20 +789,80 @@ When ready, use /execute to run the plan.
     }
   }
 
-  private async cancelPlanningSession(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+  /**
+   * Context-aware cancel command - handles multiple scenarios
+   */
+  private async handleCancelCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
 
-    if (!this.planningSession) {
-      await bot.sendMessage(chatId, 'No active planning session to cancel.');
+    // Priority 1: Cancel running task execution
+    if (this.taskExecutor?.isRunning?.()) {
+      const cancelled = this.taskExecutor.cancel();
+      if (cancelled) {
+        await bot.sendMessage(chatId, '🛑 Task cancelled. Current subtask aborted.');
+        return;
+      }
+    }
+
+    // Priority 2: Cancel pending deletion
+    if (this.pendingDeletion && this.pendingDeletion.chatId === chatId) {
+      this.pendingDeletion = null;
+      await bot.sendMessage(chatId, '🚫 Deletion cancelled. Session kept.');
+      return;
+    }
+
+    // Priority 3: Cancel active planning session
+    if (this.planningSession) {
+      try {
+        await this.planningSession.cancel();
+        this.planningSession = null;
+        await bot.sendMessage(chatId, '❌ Planning session cancelled.');
+        return;
+      } catch (error) {
+        await bot.sendMessage(chatId, `Error cancelling: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return;
+      }
+    }
+
+    await bot.sendMessage(chatId, 'Nothing to cancel.');
+  }
+
+  /**
+   * Confirm a pending deletion
+   */
+  private async confirmDeletion(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+
+    if (!this.pendingDeletion || this.pendingDeletion.chatId !== chatId) {
+      await bot.sendMessage(chatId, 'No pending deletion to confirm.');
+      return;
+    }
+
+    if (!this.engine) {
+      await bot.sendMessage(chatId, 'MemoryEngine not configured.');
+      this.pendingDeletion = null;
       return;
     }
 
     try {
-      await this.planningSession.cancel();
-      this.planningSession = null;
-      await bot.sendMessage(chatId, '❌ Planning session cancelled.');
+      const { session, index } = this.pendingDeletion;
+
+      const deleted = await PlanningSession.deleteSession(this.engine, session.id);
+
+      // Clear from cache
+      this.cachedSessionList.splice(index, 1);
+
+      // If this was the active session, clear it
+      if (this.planningSession && this.planningSession.getId() === session.id) {
+        this.planningSession = null;
+      }
+
+      this.pendingDeletion = null;
+      await bot.sendMessage(chatId, `✅ Deleted session and ${deleted} related entries.`);
     } catch (error) {
-      await bot.sendMessage(chatId, `Error cancelling: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('[TelegramHandler] Failed to confirm deletion:', error);
+      await bot.sendMessage(chatId, `Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.pendingDeletion = null;
     }
   }
 
@@ -566,11 +915,12 @@ When ready, use /execute to run the plan.
    * Handle conversational messages (non-command text)
    * Messages are stored in conversation session for later crystallization
    */
-  private async handleConversationalMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+  private async handleConversationalMessage(msg: TelegramMessage, bot: TelegramBotAPI, image?: ImageAttachment | null): Promise<void> {
     const chatId = msg.chat.id;
-    const text = msg.text?.trim();
+    const text = (msg.text || (msg as any).caption || '').trim();
 
-    if (!text) return;
+    // Allow messages with just images (no text required)
+    if (!text && !image) return;
 
     // Check if CommunicationManager has pending escalation requests
     // If so, forward ANY message as the response (not just replies to [RUBIX])
@@ -613,11 +963,14 @@ When ready, use /execute to run the plan.
     }
 
     try {
-      // Send typing indicator
+      // Send typing indicator (with image acknowledgment)
+      if (image) {
+        await bot.sendMessage(chatId, '🖼️');
+      }
       await bot.sendChatAction(chatId, 'typing');
 
-      // Get response from Claude
-      const response = await this.conversationSession.chat(text);
+      // Get response from Claude (with optional image)
+      const response = await this.conversationSession.chat(text || 'What do you see in this image?', image || undefined);
 
       // Send response (may need chunking for long responses)
       if (response.length > 4000) {
@@ -867,6 +1220,27 @@ When ready, use /execute to run the plan.
     }
   }
 
+  /**
+   * Handle /restart command - restarts the entire system
+   */
+  private async handleRestartCommand(chatId: number, bot: TelegramBotAPI): Promise<void> {
+    await bot.sendMessage(chatId, '🔄 Restarting system in 3 seconds...');
+
+    // Spawn restart script detached so it survives this process dying
+    const { spawn } = await import('child_process');
+    const path = await import('path');
+    const restartScript = path.join(process.cwd(), 'restart.bat');
+
+    spawn('cmd.exe', ['/c', restartScript], {
+      detached: true,
+      stdio: 'ignore',
+      shell: true
+    }).unref();
+
+    // Give message time to send, then exit
+    setTimeout(() => process.exit(0), 1000);
+  }
+
   // ===========================================================================
   // TASK HANDLERS
   // ===========================================================================
@@ -906,10 +1280,32 @@ When ready, use /execute to run the plan.
     await bot.sendMessage(chatId, `Task started: ${compressed.compressed}\nTask ID: ${taskId}${compressionMsg}`);
 
     try {
+      // AutoRecall: Query memory for relevant context (centralized brain)
+      let specification = 'IMPORTANT: Before starting, please escalate and ask any clarifying questions about requirements, target location, technology choices, or concerns you have. Do not assume - ask first.';
+
+      try {
+        const recallResult = await this.autoRecall.recall('task', { description: taskDescription });
+        if (recallResult.memories.length > 0) {
+          const recalledContext = recallResult.memories
+            .map(m => `- ${m.content.slice(0, 300)}${m.content.length > 300 ? '...' : ''} (score: ${m.score.toFixed(2)})`)
+            .join('\n');
+          specification = `[Recalled Context from Memory]\n${recalledContext}\n\n${specification}`;
+
+          if (process.env.AUTORECALL_DEBUG === 'true') {
+            console.log(`[TelegramHandler] AutoRecall: Found ${recallResult.memories.length} memories in ${recallResult.recallTimeMs}ms`);
+          }
+        }
+      } catch (recallError) {
+        // AutoRecall failures should not block the task
+        if (process.env.AUTORECALL_DEBUG === 'true') {
+          console.error('[TelegramHandler] AutoRecall error:', recallError);
+        }
+      }
+
       // Use the correct TaskExecutor API (with compressed description)
       const result = await this.taskExecutor.execute({
         description: compressed.compressed,
-        specification: 'IMPORTANT: Before starting, please escalate and ask any clarifying questions about requirements, target location, technology choices, or concerns you have. Do not assume - ask first.',
+        specification,
         codebase: this.defaultCodebase
       });
 
@@ -983,6 +1379,67 @@ When ready, use /execute to run the plan.
 
   private generateTaskId(): string {
     return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Download an image from Telegram and convert to base64
+   */
+  private async downloadImage(bot: TelegramBotAPI, fileId: string): Promise<ImageAttachment | null> {
+    try {
+      // Get file info from Telegram
+      const file = await bot.getFile(fileId);
+      if (!file.file_path) {
+        console.error('[TelegramHandler] No file_path in Telegram response');
+        return null;
+      }
+
+      // Download the file
+      const token = (bot as any).token;
+      const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        console.error(`[TelegramHandler] Failed to download image: ${response.status}`);
+        return null;
+      }
+
+      const buffer = await response.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+
+      // Determine media type from file extension
+      const ext = file.file_path.split('.').pop()?.toLowerCase();
+      let mediaType: ImageAttachment['mediaType'] = 'image/jpeg';
+      if (ext === 'png') mediaType = 'image/png';
+      else if (ext === 'gif') mediaType = 'image/gif';
+      else if (ext === 'webp') mediaType = 'image/webp';
+
+      console.log(`[TelegramHandler] Downloaded image: ${file.file_path} (${Math.round(base64.length / 1024)}KB)`);
+      return { base64, mediaType };
+    } catch (error) {
+      console.error('[TelegramHandler] Error downloading image:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract image from Telegram message if present
+   * Returns the largest available photo size
+   */
+  private async extractImage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<ImageAttachment | null> {
+    // Check for photo (array of sizes, last is largest)
+    const photo = (msg as any).photo;
+    if (photo && Array.isArray(photo) && photo.length > 0) {
+      const largest = photo[photo.length - 1];
+      return this.downloadImage(bot, largest.file_id);
+    }
+
+    // Check for document that is an image
+    const doc = (msg as any).document;
+    if (doc && doc.mime_type?.startsWith('image/')) {
+      return this.downloadImage(bot, doc.file_id);
+    }
+
+    return null;
   }
 
   /**

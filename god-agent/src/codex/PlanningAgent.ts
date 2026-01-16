@@ -59,6 +59,14 @@ export interface PlanningExchange {
 }
 
 /**
+ * Image content for multimodal messages
+ */
+export interface ImageContent {
+  base64: string;
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+}
+
+/**
  * Tool definitions for planning mode
  */
 const PLANNING_TOOLS: Anthropic.Messages.Tool[] = [
@@ -133,11 +141,21 @@ PLAN_AGENT
 ROLE:planning_subsystem,perfect_memory,tool_access
 GOAL:think_through_project_BEFORE_code,store_exchanges_in_memory
 
+CONTEXT_FIRST:
+- The CONTEXT section contains the current plan, past exchanges, and key decisions
+- ALWAYS use information from CONTEXT before searching
+- Do NOT grep/search for information already in CONTEXT
+- For follow-up questions, prefer CONTEXT over fresh tool calls
+
 TOOLS:read_file,glob_files,grep_search,web_fetch,list_directory
-USE_TOOLS_WHEN:user_asks_about_code,need_architecture_context,lookup_docs,explore_existing
+USE_TOOLS_ONLY_WHEN:
+- User explicitly asks to search/find NEW information
+- Information is NOT in the provided CONTEXT
+- Need to verify code implementation details
+- Exploring parts of codebase not discussed yet
 
 APPROACH:
-1.UNDERSTAND:ask_clarifying(1-2_questions),use_tools,explore_requirements,find_the_why
+1.UNDERSTAND:check_CONTEXT_first,ask_clarifying(1-2_questions),use_tools_if_needed
 2.EXPLORE:suggest_approaches_with_tradeoffs,discuss_alternatives,share_considerations
 3.BUILD_PLAN:summarize_decisions,track_open_questions,actionable_plan
 4.STAY_IN_PLANNING:NO_code_writes,NO_execution,offer_summary_when_complete,wait_for_/execute
@@ -145,13 +163,13 @@ APPROACH:
 STYLE:collaborative,concise,use_questions,build_on_ideas,direct_about_tradeoffs,markdown
 
 CONTEXT_RECEIVED:current_plan,relevant_past_exchanges,recent_conversation,key_decisions
-RULE:reference_past_naturally,no_repeat_unless_asked`;
+RULE:reference_CONTEXT_naturally,acknowledge_previous_work,no_redundant_searches`;
 
 /**
  * PlanningAgent - Claude-powered planning conversations with tool access
  */
-/** Maximum tool use iterations before stopping */
-const MAX_TOOL_ITERATIONS = 5;
+/** Default maximum tool use iterations before stopping */
+const DEFAULT_MAX_ITERATIONS = 10;
 
 /** Minimum delay between API calls (ms) */
 const MIN_API_DELAY_MS = 300;
@@ -415,25 +433,51 @@ export class PlanningAgent {
       recentExchanges?: PlanningExchange[];
       currentPlan?: PlanDocument;
       decisions?: string[];
+      image?: ImageContent;
+      maxIterations?: number;  // Dynamic iteration budget (default 10, increased for queued messages)
     }
   ): Promise<string> {
+    // Use provided iteration budget or default
+    const maxIterations = context.maxIterations || DEFAULT_MAX_ITERATIONS;
+
     // Build the context-rich prompt
     const contextPrompt = this.buildContextPrompt(context);
 
     const messages: Anthropic.Messages.MessageParam[] = [];
 
-    // Add context as first user message if substantial
+    // Build user message content (may include image)
+    const userContent: Anthropic.Messages.ContentBlockParam[] = [];
+
+    // Add image first if present (Claude processes images before text)
+    if (context.image) {
+      userContent.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: context.image.mediaType,
+          data: context.image.base64
+        }
+      });
+      console.log(`[PlanningAgent] Including image in request (${context.image.mediaType})`);
+    }
+
+    // Add text content
     if (contextPrompt.length > 100) {
-      messages.push({
-        role: 'user',
-        content: `[CONTEXT FOR THIS PLANNING SESSION]\n\n${contextPrompt}\n\n---\n\n[USER MESSAGE]\n${userMessage}`
+      userContent.push({
+        type: 'text',
+        text: `[CONTEXT FOR THIS PLANNING SESSION]\n\n${contextPrompt}\n\n---\n\n[USER MESSAGE]\n${userMessage}`
       });
     } else {
-      messages.push({
-        role: 'user',
-        content: userMessage
+      userContent.push({
+        type: 'text',
+        text: userMessage
       });
     }
+
+    messages.push({
+      role: 'user',
+      content: userContent
+    });
 
     try {
       // Throttle API calls
@@ -450,9 +494,9 @@ export class PlanningAgent {
       // Handle tool use loop - capped to prevent runaway iterations
       let iterations = 0;
 
-      while (response.stop_reason === 'tool_use' && iterations < MAX_TOOL_ITERATIONS) {
+      while (response.stop_reason === 'tool_use' && iterations < maxIterations) {
         iterations++;
-        console.log(`[PlanningAgent] Tool use iteration ${iterations}/${MAX_TOOL_ITERATIONS}`);
+        console.log(`[PlanningAgent] Tool use iteration ${iterations}/${maxIterations}`);
 
         const toolUseBlocks = response.content.filter(
           (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
@@ -492,9 +536,46 @@ export class PlanningAgent {
         console.log(`[PlanningAgent] Completed ${iterations} tool iterations`);
       }
 
-      // Warn if we hit the iteration cap
-      if (iterations >= MAX_TOOL_ITERATIONS && response.stop_reason === 'tool_use') {
-        console.warn(`[PlanningAgent] Hit max iterations (${MAX_TOOL_ITERATIONS}), returning partial response`);
+      // Handle hitting max iterations - force a summary response with clarifying question
+      if (iterations >= maxIterations && response.stop_reason === 'tool_use') {
+        console.warn(`[PlanningAgent] Hit max iterations (${maxIterations}), forcing summary response`);
+
+        // Get pending tool_use blocks and create empty results for them
+        const toolUseBlocks = response.content.filter(
+          (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
+        );
+
+        const toolResults: Anthropic.Messages.ToolResultBlockParam[] = toolUseBlocks.map(tool => ({
+          type: 'tool_result' as const,
+          tool_use_id: tool.id,
+          content: '[Iteration limit reached - search stopped]'
+        }));
+
+        // Add the assistant response with tool_use, then tool_results + summary request in one user message
+        messages.push({ role: 'assistant', content: response.content });
+        messages.push({
+          role: 'user',
+          content: [
+            ...toolResults,
+            {
+              type: 'text' as const,
+              text: `You've reached the tool iteration limit (${maxIterations} searches). Please:
+1. Summarize what you found so far from the tool results
+2. Ask me a clarifying question to help narrow down the search
+
+Do not request more tool calls - just summarize your findings and ask what specific information would help.`
+            }
+          ]
+        });
+
+        await this.throttle();
+        response = await this.client.messages.create({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          system: PLANNING_SYSTEM_PROMPT,
+          // Intentionally omit tools to force text response
+          messages
+        });
       }
 
       // Extract final text response
@@ -503,7 +584,9 @@ export class PlanningAgent {
       );
 
       if (!textContent) {
-        throw new Error('No text response from Claude');
+        // Fallback: return a message asking for clarification
+        console.warn('[PlanningAgent] No text content after forcing summary, returning fallback');
+        return 'I searched through the codebase but couldn\'t find what I was looking for within the iteration limit. Could you be more specific about what you\'re looking for, or provide a more targeted path to search?';
       }
 
       return textContent.text;
@@ -521,6 +604,60 @@ export class PlanningAgent {
       `I want to plan: ${taskDescription}\n\nPlease help me think through this. Ask me clarifying questions, suggest approaches, and help me develop a detailed plan before we execute anything.`,
       { taskDescription }
     );
+  }
+
+  /**
+   * Extract JSON from text that may contain markdown code blocks or extra text.
+   * Handles nested braces correctly by tracking depth and string literals.
+   */
+  private extractJSON(text: string): string | null {
+    // 1. Try markdown code block first (most reliable)
+    const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (codeBlockMatch) {
+      const content = codeBlockMatch[1].trim();
+      if (content.startsWith('{')) {
+        return content;
+      }
+    }
+
+    // 2. Find first balanced JSON object (handles nested braces correctly)
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+
+      if (char === '"' && !escape) {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === '{') {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          return text.substring(start, i + 1);
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -570,22 +707,50 @@ Be thorough but concise.`,
     }
 
     try {
-      // Extract JSON from response (may have markdown code blocks)
-      const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
+      // Extract JSON using robust method
+      const jsonStr = this.extractJSON(textContent.text);
+      if (!jsonStr) {
         throw new Error('No JSON found in response');
       }
-      return JSON.parse(jsonMatch[0]) as PlanDocument;
+      return JSON.parse(jsonStr) as PlanDocument;
     } catch (parseError) {
-      console.error('[PlanningAgent] Failed to parse plan document:', parseError);
-      // Return a basic plan structure
+      console.warn('[PlanningAgent] JSON parse failed, retrying with repair prompt...', parseError);
+
+      // Retry with explicit JSON-only instruction
+      try {
+        await this.throttle();
+        const retryResponse = await this.client.messages.create({
+          model: this.model,
+          max_tokens: 4096,
+          system: `Output ONLY valid JSON. No markdown, no explanation, no code blocks.
+Start with { and end with }. Ensure all strings are properly quoted and arrays have correct comma syntax.`,
+          messages: [{
+            role: 'user',
+            content: `Fix this JSON and output the corrected version:\n\n${textContent.text.substring(0, 8000)}`
+          }]
+        });
+
+        const retryText = retryResponse.content.find(b => b.type === 'text');
+        if (retryText && retryText.type === 'text') {
+          const retryJson = this.extractJSON(retryText.text);
+          if (retryJson) {
+            console.log('[PlanningAgent] Retry succeeded');
+            return JSON.parse(retryJson) as PlanDocument;
+          }
+        }
+      } catch (retryError) {
+        console.error('[PlanningAgent] Retry also failed:', retryError);
+      }
+
+      console.error('[PlanningAgent] Returning fallback plan');
+      // Return fallback with marker so caller knows it failed
       return {
         title: taskDescription.substring(0, 50),
         description: conversationSummary.substring(0, 200),
         goals: ['Complete the task as discussed'],
         approach: 'Follow the conversation decisions',
         components: [],
-        considerations: [],
+        considerations: ['Plan generation failed - using fallback'],
         openQuestions: [],
         estimatedComplexity: 'medium'
       };
@@ -621,19 +786,47 @@ Be thorough but concise.`,
   /**
    * Chat mode - conversational responses without plan generation
    * Used by ConversationSession before /rubixallize
+   * @param context Conversation context string
+   * @param userMessage User's message
+   * @param image Optional image attachment
    */
-  async chat(context: string, userMessage: string): Promise<string> {
+  async chat(context: string, userMessage: string, image?: ImageContent): Promise<string> {
+    // Use default iteration limit for conversational mode
+    const maxIterations = DEFAULT_MAX_ITERATIONS;
+
     const conversationIdentity = SelfKnowledgeInjector.getIdentity('conversation_agent');
     const conversationalPrompt = `${conversationIdentity}
 
 CONV_AGENT
 ROLE:conversational_interface,tool_access
-HELPS:answer_code_questions,read_explore_files,research_docs,general_chat
+HELPS:answer_code_questions,read_explore_files,research_docs,general_chat,analyze_images
 TOOLS:read_file,glob_files,grep_search,web_fetch,list_directory
 STYLE:friendly,conversational,proactive_tool_use
 
 CONTEXT:
 ${context}`;
+
+    // Build user message content (may include image)
+    const userContent: Anthropic.Messages.ContentBlockParam[] = [];
+
+    // Add image first if present (Claude processes images before text)
+    if (image) {
+      userContent.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: image.mediaType,
+          data: image.base64
+        }
+      });
+      console.log(`[PlanningAgent] Chat: Including image (${image.mediaType})`);
+    }
+
+    // Add text content
+    userContent.push({
+      type: 'text',
+      text: userMessage
+    });
 
     try {
       await this.throttle();
@@ -642,17 +835,17 @@ ${context}`;
         max_tokens: this.maxTokens,
         system: conversationalPrompt,
         tools: PLANNING_TOOLS,
-        messages: [{ role: 'user', content: userMessage }]
+        messages: [{ role: 'user', content: userContent }]
       });
 
       // Handle tool use loop with iteration cap
       let currentResponse = response;
       let messages: Anthropic.Messages.MessageParam[] = [
-        { role: 'user', content: userMessage }
+        { role: 'user', content: userContent }
       ];
       let iterations = 0;
 
-      while (currentResponse.stop_reason === 'tool_use' && iterations < MAX_TOOL_ITERATIONS) {
+      while (currentResponse.stop_reason === 'tool_use' && iterations < maxIterations) {
         iterations++;
         const toolUseBlocks = currentResponse.content.filter(
           (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
@@ -685,9 +878,46 @@ ${context}`;
         });
       }
 
-      // Warn if we hit the iteration cap
-      if (iterations >= MAX_TOOL_ITERATIONS && currentResponse.stop_reason === 'tool_use') {
-        console.warn(`[PlanningAgent] Chat hit max iterations (${MAX_TOOL_ITERATIONS})`);
+      // Handle hitting max iterations - force a summary response with clarifying question
+      if (iterations >= maxIterations && currentResponse.stop_reason === 'tool_use') {
+        console.warn(`[PlanningAgent] Chat hit max iterations (${maxIterations}), forcing summary`);
+
+        // Get pending tool_use blocks and create empty results for them
+        const toolUseBlocks = currentResponse.content.filter(
+          (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use'
+        );
+
+        const toolResults: Anthropic.Messages.ToolResultBlockParam[] = toolUseBlocks.map(tool => ({
+          type: 'tool_result' as const,
+          tool_use_id: tool.id,
+          content: '[Iteration limit reached - search stopped]'
+        }));
+
+        // Add the assistant response with tool_use, then tool_results + summary request in one user message
+        messages.push({ role: 'assistant', content: currentResponse.content });
+        messages.push({
+          role: 'user',
+          content: [
+            ...toolResults,
+            {
+              type: 'text' as const,
+              text: `You've reached the tool iteration limit (${maxIterations} searches). Please:
+1. Summarize what you found so far from the tool results
+2. Ask me a clarifying question to help narrow down the search
+
+Do not request more tool calls - just summarize your findings and ask what specific information would help.`
+            }
+          ]
+        });
+
+        await this.throttle();
+        currentResponse = await this.client.messages.create({
+          model: this.model,
+          max_tokens: this.maxTokens,
+          system: conversationalPrompt,
+          // Intentionally omit tools to force text response
+          messages
+        });
       }
 
       // Extract final text response
@@ -696,7 +926,9 @@ ${context}`;
       );
 
       if (!textContent) {
-        throw new Error('No text response from Claude');
+        // Fallback: return a message asking for clarification
+        console.warn('[PlanningAgent] Chat: No text content after forcing summary, returning fallback');
+        return 'I searched through the codebase but couldn\'t find what I was looking for within the iteration limit. Could you be more specific about what you\'re looking for?';
       }
 
       return textContent.text;
@@ -773,13 +1005,13 @@ Output ONLY the task description, nothing else.`;
     // Current plan (if exists)
     if (context.currentPlan) {
       parts.push('\n=== CURRENT PLAN ===');
-      parts.push(`Title: ${context.currentPlan.title}`);
-      parts.push(`Approach: ${context.currentPlan.approach}`);
-      if (context.currentPlan.goals.length > 0) {
-        parts.push(`Goals: ${context.currentPlan.goals.join(', ')}`);
+      parts.push(`Title: ${context.currentPlan.title ?? 'Untitled'}`);
+      parts.push(`Approach: ${context.currentPlan.approach ?? ''}`);
+      if ((context.currentPlan.goals?.length ?? 0) > 0) {
+        parts.push(`Goals: ${context.currentPlan.goals!.join(', ')}`);
       }
-      if (context.currentPlan.openQuestions.length > 0) {
-        parts.push(`Open Questions: ${context.currentPlan.openQuestions.join(', ')}`);
+      if ((context.currentPlan.openQuestions?.length ?? 0) > 0) {
+        parts.push(`Open Questions: ${context.currentPlan.openQuestions!.join(', ')}`);
       }
     }
 

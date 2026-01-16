@@ -15,8 +15,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { MemorySource } from '../core/types.js';
-import { PlanningAgent, type PlanDocument, type PlanningExchange } from './PlanningAgent.js';
+import { PlanningAgent, type PlanDocument, type PlanningExchange, type ImageContent } from './PlanningAgent.js';
 import type { TaskSubmission } from './TaskExecutor.js';
+import { memoryCompressor } from '../memory/index.js';
+import type { MemoryType } from '../memory/types.js';
 
 /**
  * Configuration for a planning session
@@ -97,6 +99,9 @@ export class PlanningSession {
 
   /** Track last stored exchange for chaining */
   private lastExchangeId?: string;
+
+  /** Track metadata entry ID to update instead of creating duplicates */
+  private metaEntryId?: string;
 
   /**
    * Get a simple response for common conversational messages.
@@ -186,13 +191,24 @@ export class PlanningSession {
   }
 
   /**
+   * Get task description
+   */
+  getTaskDescription(): string {
+    return this.config.taskDescription;
+  }
+
+  /**
+   * Get exchange count
+   */
+  getExchangeCount(): number {
+    return this.meta.exchangeCount;
+  }
+
+  /**
    * Start a new planning session
    */
   async start(): Promise<string> {
     console.log(`[PlanningSession] Starting session for: ${this.config.taskDescription}`);
-
-    // Store session metadata
-    await this.storeSessionMeta();
 
     // Get initial response from Claude
     const response = await this.agent.startSession(this.config.taskDescription);
@@ -204,41 +220,61 @@ export class PlanningSession {
     );
     await this.storeExchange(response, 'assistant');
 
+    // Store session metadata AFTER exchanges so count is accurate
+    await this.storeSessionMeta();
+
     return response;
   }
 
   /**
    * Continue the planning conversation
+   * @param userMessage Text message from user
+   * @param image Optional image attachment
+   * @param maxIterations Optional max tool iterations (default 10, increased for queued messages)
    */
-  async chat(userMessage: string): Promise<string> {
+  async chat(userMessage: string, image?: ImageContent, maxIterations?: number): Promise<string> {
     if (!this.isActive()) {
       return 'This planning session is no longer active. Start a new session with /plan';
     }
 
-    // Check for simple conversational messages - no API call needed
-    const simpleResponse = this.getSimpleResponse(userMessage);
-    if (simpleResponse) {
-      console.log(`[PlanningSession] Simple response for: ${userMessage}`);
-      await this.storeExchange(userMessage, 'user');
-      await this.storeExchange(simpleResponse, 'assistant');
-      return simpleResponse;
+    // Check for simple conversational messages - no API call needed (only if no image)
+    if (!image) {
+      const simpleResponse = this.getSimpleResponse(userMessage);
+      if (simpleResponse) {
+        console.log(`[PlanningSession] Simple response for: ${userMessage}`);
+        await this.storeExchange(userMessage, 'user');
+        await this.storeExchange(simpleResponse, 'assistant');
+        return simpleResponse;
+      }
     }
 
-    console.log(`[PlanningSession] Chat: ${userMessage.substring(0, 50)}...`);
+    console.log(`[PlanningSession] Chat: ${userMessage.substring(0, 50)}...${image ? ' [with image]' : ''}${maxIterations ? ` [maxIter: ${maxIterations}]` : ''}`);
 
-    // Store user message
-    await this.storeExchange(userMessage, 'user');
+    // Store user message (note: we can't store images in memory, just note that one was attached)
+    const storedMessage = image ? `${userMessage} [Image attached]` : userMessage;
+    await this.storeExchange(storedMessage, 'user');
 
     // Build context from memory
     const retrievedContext = await this.retrieveRelevantContext(userMessage);
 
-    // Get response from Claude with context
+    // Debug: Log what context is being passed to agent
+    console.log(`[PlanningSession] Chat context:`, {
+      hasCurrentPlan: !!this.currentPlan,
+      planTitle: this.currentPlan?.title || 'N/A',
+      decisionsCount: this.decisions.length,
+      recentExchangesCount: this.recentExchanges.length,
+      retrievedContextLength: retrievedContext.length
+    });
+
+    // Get response from Claude with context (and optional image)
     const response = await this.agent.respond(userMessage, {
       taskDescription: this.config.taskDescription,
       retrievedContext,
-      recentExchanges: this.recentExchanges.slice(-5),
+      recentExchanges: this.recentExchanges.slice(-10),
       currentPlan: this.currentPlan,
-      decisions: this.decisions
+      decisions: this.decisions,
+      image,
+      maxIterations
     });
 
     // Store assistant response
@@ -253,6 +289,9 @@ export class PlanningSession {
     if (this.meta.exchangeCount % 10 === 0 && this.meta.exchangeCount > 0) {
       await this.updatePlanDocument();
     }
+
+    // Persist session metadata with updated exchange count
+    await this.storeSessionMeta();
 
     return response;
   }
@@ -275,6 +314,12 @@ export class PlanningSession {
 
     // Load decisions
     await this.loadDecisions();
+
+    // Force plan generation if we have enough exchanges but no plan
+    if (!this.currentPlan && this.meta.exchangeCount >= 4) {
+      console.log('[PlanningSession] No plan loaded, generating from history...');
+      await this.updatePlanDocument();
+    }
 
     // Generate resume summary
     const summary = this.generateResumeSummary();
@@ -410,18 +455,32 @@ export class PlanningSession {
     chatId: number,
     limit: number = 10
   ): Promise<SessionSummary[]> {
-    const results = await engine.query('planning session', {
-      topK: limit * 2, // Get extra to filter
+    console.log(`[PlanningSession] Listing sessions for chat ${chatId}`);
+
+    const results = await engine.query('planning session metadata', {
+      topK: limit * 3, // Get extra to filter
       filters: {
         tags: ['planning', 'session-meta', `chat:${chatId}`]
       }
     });
 
+    console.log(`[PlanningSession] Query returned ${results.length} results`);
+
     const summaries: SessionSummary[] = [];
 
     for (const r of results) {
+      const tags = r.entry.metadata.tags || [];
+      let content = r.entry.content;
+
+      // Decompress if needed (legacy compression)
+      if (tags.includes('compressed')) {
+        const typeTag = tags.find(t => t.startsWith('type:'));
+        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+        content = memoryCompressor.decode(content, memType);
+      }
+
       try {
-        const meta = JSON.parse(r.entry.content) as SessionMeta;
+        const meta = JSON.parse(content) as SessionMeta;
         summaries.push({
           id: meta.id,
           taskDescription: meta.taskDescription,
@@ -430,14 +489,70 @@ export class PlanningSession {
           exchangeCount: meta.exchangeCount,
           status: meta.status
         });
-      } catch {
-        // Skip malformed entries
+      } catch (e) {
+        // Skip entries that aren't valid session metadata JSON
+        console.warn(`[PlanningSession] Skipping non-JSON entry`);
       }
     }
 
     // Sort by last activity descending
     summaries.sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime());
 
+    console.log(`[PlanningSession] Found ${summaries.length} valid sessions`);
+    return summaries.slice(0, limit);
+  }
+
+  /**
+   * List ALL planning sessions across all chats
+   * Useful for debugging and admin purposes
+   */
+  static async listAllSessions(
+    engine: MemoryEngine,
+    limit: number = 20
+  ): Promise<SessionSummary[]> {
+    console.log(`[PlanningSession] Listing ALL sessions (no chat filter)`);
+
+    // Query with just planning + session-meta tags
+    const results = await engine.query('planning session', {
+      topK: limit * 3,
+      filters: {
+        tags: ['planning', 'session-meta']
+      }
+    });
+
+    console.log(`[PlanningSession] Query returned ${results.length} results`);
+
+    const summaries: SessionSummary[] = [];
+
+    for (const r of results) {
+      const tags = r.entry.metadata.tags || [];
+      let content = r.entry.content;
+
+      // Decompress if needed (legacy compression)
+      if (tags.includes('compressed')) {
+        const typeTag = tags.find(t => t.startsWith('type:'));
+        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+        content = memoryCompressor.decode(content, memType);
+      }
+
+      try {
+        const meta = JSON.parse(content) as SessionMeta;
+        summaries.push({
+          id: meta.id,
+          taskDescription: meta.taskDescription,
+          createdAt: new Date(meta.createdAt),
+          lastActivity: new Date(meta.lastActivityAt),
+          exchangeCount: meta.exchangeCount,
+          status: meta.status
+        });
+      } catch (e) {
+        // Skip entries that aren't valid session metadata JSON
+        console.warn(`[PlanningSession] Skipping non-JSON entry`);
+      }
+    }
+
+    summaries.sort((a, b) => b.lastActivity.getTime() - a.lastActivity.getTime());
+    console.log(`[PlanningSession] Found ${summaries.length} total sessions`);
     return summaries.slice(0, limit);
   }
 
@@ -452,6 +567,34 @@ export class PlanningSession {
     const session = new PlanningSession(engine, { ...config, id: sessionId });
     await session.resume();
     return session;
+  }
+
+  /**
+   * Delete a planning session and all its data
+   * @returns Number of entries deleted
+   */
+  static async deleteSession(engine: MemoryEngine, sessionId: string): Promise<number> {
+    console.log(`[PlanningSession] Deleting session ${sessionId}`);
+
+    // Find all entries with this session tag
+    const results = await engine.query('session data', {
+      topK: 500, // Get all related entries
+      filters: {
+        tags: [`session:${sessionId}`]
+      }
+    });
+
+    console.log(`[PlanningSession] Found ${results.length} entries to delete`);
+
+    let deleted = 0;
+    for (const r of results) {
+      if (engine.deleteEntry(r.entry.id)) {
+        deleted++;
+      }
+    }
+
+    console.log(`[PlanningSession] Deleted ${deleted} entries`);
+    return deleted;
   }
 
   // ===========================================================================
@@ -561,18 +704,26 @@ export class PlanningSession {
    */
   private async storeSessionMeta(): Promise<void> {
     try {
-      await this.engine.store(JSON.stringify(this.meta), {
-        tags: [
-          'planning',
-          'session-meta',
-          `session:${this.id}`,
-          `chat:${this.config.chatId}`,
-          `codebase:${this.config.codebase}`
-        ],
-        source: MemorySource.SYSTEM,
-        importance: 0.9,
-        sessionId: this.id
-      });
+      const content = JSON.stringify(this.meta);
+
+      // Update existing entry if we have one, otherwise create new
+      if (this.metaEntryId) {
+        await this.engine.updateEntry(this.metaEntryId, { content });
+      } else {
+        const entry = await this.engine.store(content, {
+          tags: [
+            'planning',
+            'session-meta',
+            `session:${this.id}`,
+            `chat:${this.config.chatId}`,
+            `codebase:${this.config.codebase}`
+          ],
+          source: MemorySource.SYSTEM,
+          importance: 0.9,
+          sessionId: this.id
+        });
+        this.metaEntryId = entry.id;
+      }
     } catch (error) {
       console.warn(`[PlanningSession] Meta storage failed, session may not be resumable`);
     }
@@ -592,6 +743,7 @@ export class PlanningSession {
     if (results.length > 0) {
       try {
         this.meta = JSON.parse(results[0].entry.content);
+        this.metaEntryId = results[0].entry.id; // Track for updates
         console.log(`[PlanningSession] Loaded metadata: ${this.meta.exchangeCount} exchanges`);
       } catch {
         console.warn('[PlanningSession] Failed to parse session metadata');
@@ -704,6 +856,14 @@ export class PlanningSession {
         this.currentPlan
       );
 
+      // Detect if this is a fallback plan (JSON parsing failed)
+      const isFallback = this.currentPlan.considerations?.some(
+        c => c.includes('Plan generation failed')
+      );
+      if (isFallback) {
+        console.warn('[PlanningSession] Using fallback plan due to JSON parsing failure');
+      }
+
       // Store updated plan
       this.meta.planVersion++;
       await this.engine.store(JSON.stringify(this.currentPlan, null, 2), {
@@ -729,14 +889,14 @@ export class PlanningSession {
   /**
    * Check if exchange contains a decision
    */
-  private containsDecision(userMessage: string, response: string): boolean {
+  private containsDecision(userMessage: string, _response: string): boolean {
     const decisionPatterns = [
       /\b(decided|choosing|going with|prefer|let's do|will use)\b/i,
       /\b(yes|no|option [a-z]|choice [0-9])\b/i,
       /\b(sounds good|that works|perfect|agreed)\b/i
     ];
 
-    return decisionPatterns.some(p => p.test(userMessage) || p.test(response.substring(0, 200)));
+    return decisionPatterns.some(p => p.test(userMessage));  // Only user's words count as decisions
   }
 
   /**
@@ -781,13 +941,13 @@ export class PlanningSession {
     ];
 
     if (this.currentPlan) {
-      parts.push(`**Current Plan:** ${this.currentPlan.title}`);
-      parts.push(`**Approach:** ${this.currentPlan.approach.substring(0, 200)}...`);
+      parts.push(`**Current Plan:** ${this.currentPlan.title ?? 'Untitled'}`);
+      parts.push(`**Approach:** ${(this.currentPlan.approach ?? '').substring(0, 200)}...`);
 
-      if (this.currentPlan.openQuestions.length > 0) {
+      if ((this.currentPlan.openQuestions?.length ?? 0) > 0) {
         parts.push('');
         parts.push('**Open Questions:**');
-        this.currentPlan.openQuestions.slice(0, 3).forEach(q => {
+        this.currentPlan.openQuestions!.slice(0, 3).forEach(q => {
           parts.push(`- ${q}`);
         });
       }
@@ -815,34 +975,34 @@ export class PlanningSession {
     }
 
     const parts: string[] = [
-      `# ${this.currentPlan.title}`,
+      `# ${this.currentPlan.title ?? 'Untitled Plan'}`,
       '',
-      this.currentPlan.description,
+      this.currentPlan.description ?? '',
       '',
       '## Goals',
-      ...this.currentPlan.goals.map(g => `- ${g}`),
+      ...(this.currentPlan.goals ?? []).map(g => `- ${g}`),
       '',
       '## Approach',
-      this.currentPlan.approach,
+      this.currentPlan.approach ?? '',
       ''
     ];
 
-    if (this.currentPlan.components.length > 0) {
+    if ((this.currentPlan.components?.length ?? 0) > 0) {
       parts.push('## Components');
-      for (const comp of this.currentPlan.components) {
-        parts.push(`### ${comp.name}`);
-        parts.push(comp.description);
-        if (comp.subtasks.length > 0) {
+      for (const comp of this.currentPlan.components!) {
+        parts.push(`### ${comp.name ?? 'Component'}`);
+        parts.push(comp.description ?? '');
+        if ((comp.subtasks?.length ?? 0) > 0) {
           parts.push('**Tasks:**');
-          comp.subtasks.forEach(t => parts.push(`- ${t}`));
+          comp.subtasks!.forEach(t => parts.push(`- ${t}`));
         }
         parts.push('');
       }
     }
 
-    if (this.currentPlan.considerations.length > 0) {
+    if ((this.currentPlan.considerations?.length ?? 0) > 0) {
       parts.push('## Important Considerations');
-      this.currentPlan.considerations.forEach(c => parts.push(`- ${c}`));
+      this.currentPlan.considerations!.forEach(c => parts.push(`- ${c}`));
       parts.push('');
     }
 
