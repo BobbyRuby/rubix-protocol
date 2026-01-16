@@ -686,12 +686,19 @@ export class PlanningSession {
 
     for (const r of results) {
       const tags = r.entry.metadata.tags || [];
-      const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
-      const content = r.entry.content.length > 500
-        ? r.entry.content.substring(0, 500) + '...'
-        : r.entry.content;
+      let content = r.entry.content;
 
-      parts.push(`[${role}] ${content}`);
+      // Decompress if needed
+      if (tags.includes('compressed')) {
+        const typeTag = tags.find(t => t.startsWith('type:'));
+        const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+        content = memoryCompressor.decode(content, memType);
+      }
+
+      const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
+      const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
+
+      parts.push(`[${role}] ${truncated}`);
     }
 
     console.log(`[PlanningSession] Retrieved ${results.length} relevant exchanges`);
@@ -742,7 +749,17 @@ export class PlanningSession {
 
     if (results.length > 0) {
       try {
-        this.meta = JSON.parse(results[0].entry.content);
+        const tags = results[0].entry.metadata.tags || [];
+        let content = results[0].entry.content;
+
+        // Decompress if needed
+        if (tags.includes('compressed')) {
+          const typeTag = tags.find(t => t.startsWith('type:'));
+          const memType = typeTag ? typeTag.replace('type:', '') as MemoryType : undefined;
+          content = memoryCompressor.decode(content, memType);
+        }
+
+        this.meta = JSON.parse(content);
         this.metaEntryId = results[0].entry.id; // Track for updates
         console.log(`[PlanningSession] Loaded metadata: ${this.meta.exchangeCount} exchanges`);
       } catch {
