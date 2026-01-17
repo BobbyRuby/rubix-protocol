@@ -1,0 +1,174 @@
+site_name: RUBIX/God-Agent Documentation
+site_description: Comprehensive documentation for the RUBIX autonomous AI developer agent
+site_author: RUBIX Protocol
+repo_url: https://github.com/rubix-protocol/god-agent
+repo_name: rubix-protocol/god-agent
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+
+plugins:
+  - search
+  - tags
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rubix-protocol/god-agent
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Configuration: getting-started/configuration.md
+    - Quick Start: getting-started/quick-start.md
+  - Architecture:
+    - architecture/index.md
+    - Overview: architecture/overview.md
+    - Data Flow: architecture/data-flow.md
+    - Memory System: architecture/memory-system.md
+    - Task Execution: architecture/task-execution.md
+    - Learning System: architecture/learning-system.md
+    - Routing System: architecture/routing-system.md
+  - Core System:
+    - core/index.md
+    - MemoryEngine: core/memory-engine.md
+    - Types: core/types.md
+    - Configuration: core/config.md
+    - Constants: core/constants.md
+    - Errors: core/errors.md
+  - CODEX/RUBIX:
+    - codex/index.md
+    - TaskExecutor: codex/task-executor.md
+    - TaskDecomposer: codex/task-decomposer.md
+    - CodeGenerator: codex/code-generator.md
+    - SelfHealer: codex/self-healer.md
+    - EscalationGate: codex/escalation-gate.md
+    - CollaborativePartner: codex/collaborative-partner.md
+    - ContainmentManager: codex/containment-manager.md
+    - PhasedExecutor: codex/phased-executor.md
+    - Types: codex/types.md
+  - Memory System:
+    - memory/index.md
+    - Compression Schemas: memory/compression-schemas.md
+    - LLM Compressor: memory/llm-compressor.md
+    - Memory Compressor: memory/memory-compressor.md
+    - Embedding System: memory/embedding-system.md
+    - Embedding Cache: memory/embedding-cache.md
+    - Async Write Queue: memory/async-write-queue.md
+  - Learning System:
+    - learning/index.md
+    - Sona Engine: learning/sona-engine.md
+    - Weight Manager: learning/weight-manager.md
+    - EWC Regularizer: learning/ewc-regularizer.md
+  - Providers:
+    - providers/index.md
+    - Provider Factory: providers/provider-factory.md
+    - Ollama Client: providers/ollama-client.md
+    - Types: providers/types.md
+  - Capabilities:
+    - capabilities/index.md
+    - LSP Manager: capabilities/lsp-manager.md
+    - Git Manager: capabilities/git-manager.md
+    - AST Manager: capabilities/ast-manager.md
+  - Communication:
+    - communication/communication-manager.md
+    - Telegram Bot Guide: communication/telegram-bot-guide.md
+  - MCP Tools:
+    - tools/index.md
+    - Memory Tools: tools/memory-tools.md
+    - Causal Tools: tools/causal-tools.md
+    - Learning Tools: tools/learning-tools.md
+    - Scheduler Tools: tools/scheduler-tools.md
+    - Playwright Tools: tools/playwright-tools.md
+    - CODEX Tools: tools/codex-tools.md
+    - Partner Tools: tools/partner-tools.md
+    - Containment Tools: tools/containment-tools.md
+    - Capability Tools: tools/capability-tools.md
+    - Review Tools: tools/review-tools.md
+    - Notification Tools: tools/notification-tools.md
+    - Deep Work Tools: tools/deepwork-tools.md
+    - Config Tools: tools/config-tools.md
+    - Failure Tools: tools/failure-tools.md
+    - Communication Tools: tools/communication-tools.md
+    - Curiosity Tools: tools/curiosity-tools.md
+  - Prompts:
+    - prompts/index.md
+    - Compression Prompt: prompts/compression-prompt.md
+    - Decompression Prompt: prompts/decompression-prompt.md
+    - All Prompts: prompts/all-prompts.md
+  - Flowcharts:
+    - flowcharts/index.md
+    - System Architecture: flowcharts/system-architecture.md
+    - Task Execution Flow: flowcharts/task-execution-flow.md
+    - Memory Flow: flowcharts/memory-flow.md
+    - Learning Flow: flowcharts/learning-flow.md
+    - Escalation Flow: flowcharts/escalation-flow.md
+    - Compression Flow: flowcharts/compression-flow.md
+  - Reference:
+    - reference/index.md
+    - Environment Variables: reference/environment-variables.md
+    - File Reference: reference/file-reference.md
+    - Glossary: reference/glossary.md
+    - Full Test Plan: RUBIX-FULL-TEST-PLAN.md
+    - Conversation Schema: conversation-schema.md
+  - Examples:
+    - examples/index.md
+    - Basic Usage: examples/basic-usage.md
+    - Task Examples: examples/task-examples.md
+    - Integration Examples: examples/integration-examples.md
