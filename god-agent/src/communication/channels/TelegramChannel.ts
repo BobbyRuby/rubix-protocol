@@ -100,6 +100,11 @@ export class TelegramChannel extends BaseChannel {
   }
 
   private buildTelegramMessage(request: EscalationRequest): string {
+    // If title is empty, this is an acknowledgment message - return just the message
+    if (!request.title || request.title === '') {
+      return request.message;
+    }
+
     const urgencyEmoji = request.urgency === 'critical' ? '🚨' :
                          request.urgency === 'high' ? '⚠️' : 'ℹ️';
 

@@ -7,7 +7,47 @@
 import { randomUUID } from 'crypto';
 
 // Channel types
-export type ChannelType = 'phone' | 'sms' | 'slack' | 'discord' | 'email' | 'telegram';
+export type ChannelType = 'phone' | 'sms' | 'slack' | 'discord' | 'email' | 'telegram' | 'auto_decision';
+
+// Auto-decision strategy
+export type AutoDecisionStrategy = 'first_option' | 'random' | 'intelligent';
+
+// Auto-decision configuration
+export interface AutoDecisionConfig {
+  /** Enable auto-decision on timeout */
+  enabled: boolean;
+  /** Primary timeout before auto-decision (ms) - default 10 minutes */
+  primaryTimeoutMs: number;
+  /** Override window after auto-decision notification (ms) - default 5 minutes */
+  overrideWindowMs: number;
+  /** Strategy for picking auto-decision */
+  strategy: AutoDecisionStrategy;
+  /** Notify user about auto-decision */
+  notifyUser: boolean;
+}
+
+// Auto-decision result
+export interface AutoDecisionResult {
+  /** The option that was selected */
+  selectedOption: string;
+  /** Strategy used to pick the option */
+  strategy: AutoDecisionStrategy;
+  /** Deadline for override */
+  overrideDeadline: Date;
+  /** Whether the decision was overridden by user */
+  wasOverridden: boolean;
+  /** Final answer (original or overridden) */
+  finalAnswer: string;
+}
+
+// Default auto-decision config
+export const DEFAULT_AUTO_DECISION_CONFIG: AutoDecisionConfig = {
+  enabled: true,
+  primaryTimeoutMs: 600000,    // 10 minutes
+  overrideWindowMs: 300000,    // 5 minutes
+  strategy: 'first_option',
+  notifyUser: true
+};
 export type ChannelStatus = 'idle' | 'sending' | 'waiting' | 'timeout' | 'responded' | 'error';
 
 // Phone channel config
@@ -102,6 +142,9 @@ export interface CommunicationConfig {
   telegram?: TelegramChannelConfig;
 
   webhookServer: WebhookServerConfig;
+
+  /** Auto-decision configuration for handling timeout scenarios */
+  autoDecision?: AutoDecisionConfig;
 }
 
 // Escalation request
@@ -127,6 +170,14 @@ export interface EscalationResponse {
   selectedOption?: string;
   receivedAt: Date;
   rawPayload?: unknown;
+  // For queued multi-question escalations
+  responses?: string[];
+  // Metadata for auto-decisions and other special handling
+  metadata?: {
+    autoDecision?: boolean;
+    strategy?: AutoDecisionStrategy;
+    wasOverridden?: boolean;
+  };
 }
 
 // Channel interface
@@ -155,7 +206,8 @@ export const DEFAULT_COMMUNICATION_CONFIG: CommunicationConfig = {
   retryAttempts: 1,
   webhookServer: {
     port: 3456
-  }
+  },
+  autoDecision: DEFAULT_AUTO_DECISION_CONFIG
 };
 
 // Helper to create escalation request

@@ -12,14 +12,22 @@ import type {
   ChannelType,
   EscalationRequest,
   EscalationResponse,
-  IChannel
+  IChannel,
+  AutoDecisionConfig
 } from './types.js';
+import { DEFAULT_AUTO_DECISION_CONFIG } from './types.js';
 import { PhoneChannel } from './channels/PhoneChannel.js';
 import { SMSChannel } from './channels/SMSChannel.js';
 import { SlackChannel } from './channels/SlackChannel.js';
 import { DiscordChannel } from './channels/DiscordChannel.js';
 import { EmailChannel } from './channels/EmailChannel.js';
 import { TelegramChannel } from './channels/TelegramChannel.js';
+
+// Question with optional per-question options
+interface EscalationQuestion {
+  text: string;
+  options?: Array<{ label: string; description: string }>;
+}
 
 // Import Escalation type from codex if available
 interface Escalation {
@@ -28,8 +36,9 @@ interface Escalation {
   type: 'clarification' | 'decision' | 'blocked' | 'approval';
   title: string;
   context: string;
-  questions?: string[];
-  options?: Array<{ label: string; description: string }>;
+  // Questions can be strings or objects with per-question options
+  questions?: Array<string | EscalationQuestion>;
+  options?: Array<{ label: string; description: string }>;  // Global options
   errors?: string[];
   blocking?: boolean;
 }
@@ -38,6 +47,18 @@ export class CommunicationManager {
   private config: CommunicationConfig;
   private channels: Map<ChannelType, IChannel> = new Map();
   private isInitialized: boolean = false;
+
+  /** Maximum number of questions to process in a queued escalation */
+  private readonly MAX_QUEUED_QUESTIONS = 7;
+
+  /** Auto-decision configuration */
+  private autoDecisionConfig: AutoDecisionConfig;
+
+  /** Pending override resolvers - maps requestId to resolver and timeout handle for cleanup */
+  private overridePending: Map<string, {
+    resolve: (response: EscalationResponse | null) => void;
+    timeoutHandle: NodeJS.Timeout;
+  }> = new Map();
 
   constructor(config: Partial<CommunicationConfig> = {}) {
     this.config = {
@@ -51,7 +72,14 @@ export class CommunicationManager {
       slack: config.slack,
       discord: config.discord,
       email: config.email,
-      telegram: config.telegram
+      telegram: config.telegram,
+      autoDecision: config.autoDecision
+    };
+
+    // Initialize auto-decision config with defaults
+    this.autoDecisionConfig = {
+      ...DEFAULT_AUTO_DECISION_CONFIG,
+      ...config.autoDecision
     };
   }
 
@@ -90,9 +118,9 @@ export class CommunicationManager {
     if (this.config.telegram?.enabled) {
       const telegramChannel = new TelegramChannel(this.config.telegram);
       this.channels.set('telegram', telegramChannel);
-      // Start polling for responses
-      telegramChannel.startPolling();
-      console.log('[CommunicationManager] Telegram channel initialized');
+      // DON'T start polling here - wait for setTelegramBotActive() to decide
+      // This prevents polling conflicts when TelegramBot is also running
+      console.log('[CommunicationManager] Telegram channel initialized (polling deferred)');
     }
 
     this.isInitialized = true;
@@ -103,6 +131,9 @@ export class CommunicationManager {
   /**
    * Main escalation method - tries each channel in fallback order
    * Blocks until response received or all channels exhausted
+   *
+   * If escalation has multiple questions, they are sent one-by-one
+   * and responses are collected sequentially (max 7 questions).
    */
   async escalate(escalation: Escalation): Promise<EscalationResponse | null> {
     if (!this.config.enabled) {
@@ -114,6 +145,16 @@ export class CommunicationManager {
       this.initialize();
     }
 
+    // Normalize questions to consistent format
+    const questions = this.normalizeQuestions(escalation);
+
+    // If multiple questions, use queue-based flow
+    if (questions.length > 1) {
+      console.log(`[CommunicationManager] Detected ${questions.length} questions, using queued flow`);
+      return await this.escalateQueued(escalation, questions);
+    }
+
+    // Single question - use standard flow
     // Build escalation request
     const request: EscalationRequest = {
       id: randomUUID(),
@@ -167,7 +208,381 @@ export class CommunicationManager {
     }
 
     console.log(`[CommunicationManager] All channels exhausted, no response received`);
+
+    // Try auto-decision if enabled and options are available
+    console.log(`[AutoDecision] All channels exhausted for request ${request.id.slice(0, 8)}`);
+    console.log(`[AutoDecision] Auto-decision enabled: ${this.autoDecisionConfig.enabled}`);
+    console.log(`[AutoDecision] Options available: ${request.options?.length || 0}`);
+
+    if (this.autoDecisionConfig.enabled && request.options && request.options.length > 0) {
+      console.log(`[AutoDecision] Triggering auto-decision flow...`);
+      return await this.handleAutoDecision(request);
+    }
+
+    console.log(`[AutoDecision] Auto-decision not triggered (disabled or no options)`);
     return null;
+  }
+
+  /**
+   * Handle auto-decision when all channels are exhausted
+   * Picks an option automatically, notifies user, and waits for override
+   */
+  private async handleAutoDecision(request: EscalationRequest): Promise<EscalationResponse | null> {
+    console.log(`[AutoDecision] === START handleAutoDecision ===`);
+    console.log(`[AutoDecision] Request ID: ${request.id}`);
+    console.log(`[AutoDecision] Request title: ${request.title}`);
+    console.log(`[AutoDecision] Options: ${JSON.stringify(request.options)}`);
+    console.log(`[AutoDecision] Strategy: ${this.autoDecisionConfig.strategy}`);
+    console.log(`[AutoDecision] Override window: ${this.autoDecisionConfig.overrideWindowMs}ms`);
+
+    try {
+      // 1. Pick an answer using configured strategy
+      const selectedOption = this.pickAutoDecision(request);
+      console.log(`[AutoDecision] Picked option: ${selectedOption}`);
+
+      // 2. Notify user with override option
+      const overrideDeadline = new Date(Date.now() + this.autoDecisionConfig.overrideWindowMs);
+
+      // Wrap notify in try/catch - don't fail if notification fails
+      if (this.autoDecisionConfig.notifyUser) {
+        console.log(`[AutoDecision] Sending notification to user...`);
+        try {
+          await this.notifyAutoDecision(request, selectedOption, overrideDeadline);
+          console.log(`[AutoDecision] Notification sent successfully`);
+        } catch (err) {
+          console.error(`[AutoDecision] Failed to send notification:`, err);
+          console.error(`[AutoDecision] Stack:`, err instanceof Error ? err.stack : 'no stack');
+          // Continue anyway - notification failure shouldn't block auto-decision
+        }
+      }
+
+      // 3. Wait for override window, listening for responses
+      console.log(`[AutoDecision] Starting override window (${this.autoDecisionConfig.overrideWindowMs}ms)...`);
+      const override = await this.waitForOverride(request.id, this.autoDecisionConfig.overrideWindowMs);
+      console.log(`[AutoDecision] Override window complete`);
+      console.log(`[AutoDecision] Override received: ${!!override}`);
+
+      // 4. Return override or auto-decision
+      if (override) {
+        console.log(`[AutoDecision] User overrode with: ${override.selectedOption || override.response}`);
+        console.log(`[AutoDecision] === END handleAutoDecision (overridden) ===`);
+        return {
+          ...override,
+          metadata: {
+            autoDecision: true,
+            strategy: this.autoDecisionConfig.strategy,
+            wasOverridden: true
+          }
+        };
+      }
+
+      console.log(`[AutoDecision] No override, proceeding with: ${selectedOption}`);
+      console.log(`[AutoDecision] === END handleAutoDecision (auto) ===`);
+      return {
+        requestId: request.id,
+        channel: 'auto_decision',
+        response: selectedOption,
+        selectedOption,
+        receivedAt: new Date(),
+        metadata: {
+          autoDecision: true,
+          strategy: this.autoDecisionConfig.strategy,
+          wasOverridden: false
+        }
+      };
+    } catch (err) {
+      console.error(`[AutoDecision] CRITICAL ERROR in handleAutoDecision:`, err);
+      console.error(`[AutoDecision] Stack:`, err instanceof Error ? err.stack : 'no stack');
+      console.log(`[AutoDecision] === END handleAutoDecision (error) ===`);
+      // Return null to fall back to original behavior (fail gracefully)
+      return null;
+    }
+  }
+
+  /**
+   * Pick an auto-decision option using configured strategy
+   */
+  private pickAutoDecision(request: EscalationRequest): string {
+    console.log(`[AutoDecision] pickAutoDecision called`);
+    const options = request.options || [];
+    console.log(`[AutoDecision] Number of options: ${options.length}`);
+
+    if (options.length === 0) {
+      console.log(`[AutoDecision] No options, returning 'proceed'`);
+      return 'proceed';
+    }
+
+    console.log(`[AutoDecision] Using strategy: ${this.autoDecisionConfig.strategy}`);
+
+    let result: string;
+    switch (this.autoDecisionConfig.strategy) {
+      case 'first_option':
+        result = options[0].value;
+        console.log(`[AutoDecision] first_option strategy: ${result}`);
+        break;
+
+      case 'random':
+        const randomIndex = Math.floor(Math.random() * options.length);
+        result = options[randomIndex].value;
+        console.log(`[AutoDecision] random strategy (index ${randomIndex}): ${result}`);
+        break;
+
+      case 'intelligent':
+        console.log(`[AutoDecision] Checking for safe options...`);
+        // Prefer safe options: "skip", "cancel", "default", "no", "abort"
+        const safeOption = options.find(o =>
+          /skip|cancel|default|no|abort|continue|proceed/i.test(o.value) ||
+          /skip|cancel|default|no|abort|continue|proceed/i.test(o.label)
+        );
+        console.log(`[AutoDecision] Safe option found: ${safeOption?.value || 'none'}`);
+        result = safeOption?.value || options[0].value;
+        break;
+
+      default:
+        console.log(`[AutoDecision] Unknown strategy, falling back to first_option`);
+        result = options[0].value;
+    }
+
+    console.log(`[AutoDecision] Final pick: ${result}`);
+    return result;
+  }
+
+  /**
+   * Notify user about auto-decision with override option
+   */
+  private async notifyAutoDecision(
+    request: EscalationRequest,
+    selectedOption: string,
+    overrideDeadline: Date
+  ): Promise<void> {
+    console.log(`[AutoDecision] notifyAutoDecision called`);
+    console.log(`[AutoDecision] Selected option: ${selectedOption}`);
+    console.log(`[AutoDecision] Override deadline: ${overrideDeadline.toISOString()}`);
+
+    const minutes = Math.ceil((overrideDeadline.getTime() - Date.now()) / 60000);
+    console.log(`[AutoDecision] Minutes until deadline: ${minutes}`);
+
+    const optionLabel = request.options?.find(o => o.value === selectedOption)?.label || selectedOption;
+
+    const message = `🤖 **Auto-Decision Made**
+
+No response received for: *${request.title}*
+
+**Selected:** ${optionLabel}
+**Strategy:** ${this.autoDecisionConfig.strategy}
+
+_Reply within ${minutes} minutes to override this decision._
+_Send any option number or text to change._`;
+
+    console.log(`[AutoDecision] Message to send: ${message.slice(0, 100)}...`);
+    console.log(`[AutoDecision] Calling notify()...`);
+    await this.notify('Auto-Decision', message, 'high');
+    console.log(`[AutoDecision] notify() complete`);
+  }
+
+  /**
+   * Wait for user override during override window
+   */
+  private waitForOverride(
+    requestId: string,
+    timeoutMs: number
+  ): Promise<EscalationResponse | null> {
+    console.log(`[AutoDecision] waitForOverride called for ${requestId.slice(0, 8)}`);
+    console.log(`[AutoDecision] Timeout: ${timeoutMs}ms`);
+    console.log(`[AutoDecision] Setting up timeout handler...`);
+
+    return new Promise((resolve) => {
+      const timeoutHandle = setTimeout(() => {
+        console.log(`[AutoDecision] Timeout fired for ${requestId.slice(0, 8)}`);
+        console.log(`[AutoDecision] Checking if still pending...`);
+        console.log(`[AutoDecision] Still pending: ${this.overridePending.has(requestId)}`);
+
+        if (this.overridePending.has(requestId)) {
+          this.overridePending.delete(requestId);
+          console.log(`[AutoDecision] Cleaning up and resolving null`);
+          console.log(`[AutoDecision] Override window expired for ${requestId.slice(0, 8)}`);
+          resolve(null);
+        }
+      }, timeoutMs);
+
+      // Store BOTH resolver and timeout handle for cleanup
+      this.overridePending.set(requestId, { resolve, timeoutHandle });
+      console.log(`[AutoDecision] Stored pending override in Map (size: ${this.overridePending.size})`);
+    });
+  }
+
+  /**
+   * Inject an override response for a pending auto-decision
+   * Called when user responds during the override window
+   */
+  injectOverrideResponse(requestId: string, response: EscalationResponse): boolean {
+    console.log(`[AutoDecision] injectOverrideResponse called`);
+    console.log(`[AutoDecision] Request ID: ${requestId.slice(0, 8)}`);
+    console.log(`[AutoDecision] Response: ${JSON.stringify(response).slice(0, 200)}`);
+    console.log(`[AutoDecision] Pending Map size: ${this.overridePending.size}`);
+
+    const pending = this.overridePending.get(requestId);
+    console.log(`[AutoDecision] Found pending: ${!!pending}`);
+
+    if (pending) {
+      // CRITICAL: Cancel the timeout to prevent double-resolve
+      console.log(`[AutoDecision] Clearing timeout handle...`);
+      clearTimeout(pending.timeoutHandle);
+      console.log(`[AutoDecision] Deleting from Map...`);
+      this.overridePending.delete(requestId);
+      console.log(`[AutoDecision] Calling resolver with response...`);
+      pending.resolve(response);
+      console.log(`[AutoDecision] Override injection complete for ${requestId.slice(0, 8)}`);
+      return true;
+    }
+    console.log(`[AutoDecision] No pending override found for ${requestId.slice(0, 8)}`);
+    return false;
+  }
+
+  /**
+   * Check if there's a pending override for any request
+   */
+  hasPendingOverride(): boolean {
+    return this.overridePending.size > 0;
+  }
+
+  /**
+   * Get list of pending override request IDs
+   */
+  getPendingOverrideRequestIds(): string[] {
+    return Array.from(this.overridePending.keys());
+  }
+
+  /**
+   * Normalize questions to consistent format: Array<{ text, options? }>
+   */
+  private normalizeQuestions(escalation: Escalation): Array<EscalationQuestion> {
+    if (!escalation.questions || escalation.questions.length === 0) {
+      // No questions array - treat context as single question with global options
+      return [{
+        text: escalation.context,
+        options: escalation.options
+      }];
+    }
+
+    return escalation.questions.slice(0, this.MAX_QUEUED_QUESTIONS).map(q => {
+      if (typeof q === 'string') {
+        // String question - no per-question options
+        return { text: q };
+      }
+      return q;  // Already in { text, options? } format
+    });
+  }
+
+  /**
+   * Queue-based escalation for multiple questions.
+   * Sends questions one-by-one and collects responses sequentially.
+   */
+  private async escalateQueued(
+    escalation: Escalation,
+    questions: Array<EscalationQuestion>
+  ): Promise<EscalationResponse | null> {
+    const responses: string[] = [];
+    const totalQuestions = questions.length;
+    let lastChannel: ChannelType = 'telegram';
+
+    console.log(`[CommunicationManager] Starting queued escalation with ${totalQuestions} questions`);
+
+    // Send title/context first as a header
+    await this.sendAcknowledgment(
+      `📋 *${escalation.title}*\n\n${escalation.context}\n\n_${totalQuestions} questions to answer:_`
+    );
+
+    for (let i = 0; i < questions.length; i++) {
+      const question = questions[i];
+      const questionNum = i + 1;
+
+      // Build single-question request
+      const request: EscalationRequest = {
+        id: `${escalation.id}-q${questionNum}`,
+        escalationId: escalation.id,
+        taskId: escalation.taskId,
+        type: escalation.type,
+        urgency: escalation.blocking ? 'critical' : 'high',
+        title: `📝 Question ${questionNum}/${totalQuestions}`,
+        message: question.text,
+        context: escalation.context,
+        options: question.options?.map(o => ({
+          label: o.label,
+          value: o.description
+        })),
+        timeout: this.config.timeoutMs,
+        createdAt: new Date()
+      };
+
+      console.log(`[CommunicationManager] Sending question ${questionNum}/${totalQuestions}: ${question.text.slice(0, 50)}...`);
+
+      // Try channels in order until we get a response
+      let questionResponse: EscalationResponse | null = null;
+
+      for (const channelType of this.config.fallbackOrder) {
+        const channel = this.channels.get(channelType);
+        if (!channel?.isConfigured) continue;
+
+        try {
+          questionResponse = await channel.sendAndWait(request);
+          if (questionResponse) {
+            lastChannel = channelType;
+            break;
+          }
+        } catch (error) {
+          console.error(`[CommunicationManager] ${channelType} error on question ${questionNum}:`, error);
+        }
+      }
+
+      if (!questionResponse) {
+        console.log(`[CommunicationManager] No response for question ${questionNum}, aborting queue`);
+        return null;
+      }
+
+      // Store response
+      responses.push(questionResponse.response);
+      console.log(`[CommunicationManager] Got answer ${questionNum}: ${questionResponse.response}`);
+
+      // Send acknowledgment
+      if (i < questions.length - 1) {
+        await this.sendAcknowledgment(`✓ Got it: ${questionResponse.response.slice(0, 50)}${questionResponse.response.length > 50 ? '...' : ''}`);
+      } else {
+        await this.sendAcknowledgment(`✓ Got all ${totalQuestions} answers. Processing...`);
+      }
+    }
+
+    // Return aggregated response
+    return {
+      requestId: escalation.id,
+      channel: lastChannel,
+      response: responses.join('\n---\n'),  // Combined text for backwards compat
+      responses,  // Array of individual responses
+      receivedAt: new Date()
+    };
+  }
+
+  /**
+   * Send a quick acknowledgment message (no response expected)
+   */
+  private async sendAcknowledgment(message: string): Promise<void> {
+    for (const channelType of this.config.fallbackOrder) {
+      const channel = this.channels.get(channelType);
+      if (channel?.isConfigured) {
+        await channel.send({
+          id: `ack-${Date.now()}`,
+          escalationId: 'ack',
+          taskId: 'ack',
+          type: 'clarification',
+          urgency: 'normal',
+          title: '',  // Empty title signals acknowledgment
+          message,
+          timeout: 0,
+          createdAt: new Date()
+        });
+        return;  // Only send to first available channel
+      }
+    }
   }
 
   /**
@@ -328,7 +743,19 @@ export class CommunicationManager {
       telegram: config.telegram !== undefined
         ? { ...this.config.telegram, ...config.telegram }
         : this.config.telegram,
+      autoDecision: config.autoDecision !== undefined
+        ? { ...this.config.autoDecision, ...config.autoDecision }
+        : this.config.autoDecision,
     };
+
+    // Update autoDecisionConfig instance variable as well
+    if (config.autoDecision) {
+      this.autoDecisionConfig = {
+        ...this.autoDecisionConfig,
+        ...config.autoDecision
+      };
+    }
+
     this.isInitialized = false;
     this.channels.clear();
     console.log('[CommunicationManager] Configuration updated, re-initialization required');
@@ -368,8 +795,27 @@ export class CommunicationManager {
       telegram: this.config.telegram ? {
         enabled: this.config.telegram.enabled,
         chatId: this.config.telegram.chatId ? '****' + this.config.telegram.chatId.slice(-4) : undefined
-      } : undefined
+      } : undefined,
+      autoDecision: this.autoDecisionConfig
     } as Partial<CommunicationConfig>;
+  }
+
+  /**
+   * Get auto-decision configuration
+   */
+  getAutoDecisionConfig(): AutoDecisionConfig {
+    return { ...this.autoDecisionConfig };
+  }
+
+  /**
+   * Update auto-decision configuration
+   */
+  updateAutoDecisionConfig(config: Partial<AutoDecisionConfig>): void {
+    this.autoDecisionConfig = {
+      ...this.autoDecisionConfig,
+      ...config
+    };
+    console.log('[CommunicationManager] Auto-decision config updated:', this.autoDecisionConfig);
   }
 
   /**
@@ -394,20 +840,80 @@ export class CommunicationManager {
   setTelegramBotActive(active: boolean): void {
     const telegramChannel = this.channels.get('telegram') as TelegramChannel | undefined;
     if (telegramChannel) {
-      telegramChannel.setSendOnlyMode(active);
-      console.log(`[CommunicationManager] Telegram send-only mode: ${active}`);
+      if (active) {
+        // TelegramBot will handle polling - use send-only mode
+        telegramChannel.setSendOnlyMode(true);
+        console.log('[CommunicationManager] Telegram send-only mode enabled (TelegramBot active)');
+      } else {
+        // No TelegramBot - CommunicationManager needs to poll itself
+        telegramChannel.setSendOnlyMode(false);
+        telegramChannel.startPolling();
+        console.log('[CommunicationManager] TelegramChannel started polling (no TelegramBot)');
+      }
     }
   }
 
   /**
    * Handle a Telegram response forwarded from TelegramBot.
    * Used when TelegramBot handles all polling and forwards escalation responses.
+   * Also checks for pending auto-decision overrides.
    */
   async handleTelegramResponse(message: {
     text: string;
     replyToText?: string;
     callbackData?: string;
   }): Promise<void> {
+    console.log(`[AutoDecision] handleTelegramResponse called`);
+    console.log(`[AutoDecision] Message text: ${message.text}`);
+    console.log(`[AutoDecision] Callback data: ${message.callbackData || 'none'}`);
+    console.log(`[AutoDecision] Pending overrides: ${this.overridePending.size}`);
+
+    // First check if this is an override for a pending auto-decision
+    if (this.overridePending.size > 0) {
+      console.log(`[AutoDecision] Checking for pending auto-decisions...`);
+
+      // Copy keys to avoid iterator invalidation (Map is modified during loop)
+      const pendingIds = Array.from(this.overridePending.keys());
+      console.log(`[AutoDecision] Pending IDs: ${JSON.stringify(pendingIds.map(id => id.slice(0, 8)))}`);
+
+      for (const requestId of pendingIds) {
+        console.log(`[AutoDecision] Processing override for ${requestId.slice(0, 8)}`);
+
+        // Safe JSON parse with try/catch
+        let selectedOption = message.text;
+        if (message.callbackData) {
+          console.log(`[AutoDecision] Parsing callback data...`);
+          try {
+            const parsed = JSON.parse(message.callbackData);
+            selectedOption = parsed?.opt || message.text;
+            console.log(`[AutoDecision] Parsed selectedOption: ${selectedOption}`);
+          } catch (err) {
+            console.error(`[AutoDecision] Failed to parse callback data:`, err);
+            console.error(`[AutoDecision] Stack:`, err instanceof Error ? err.stack : 'no stack');
+            // Fall back to text on parse failure
+          }
+        }
+
+        const response: EscalationResponse = {
+          requestId,
+          channel: 'telegram',
+          response: message.text,
+          selectedOption,
+          receivedAt: new Date(),
+          rawPayload: message
+        };
+
+        const injected = this.injectOverrideResponse(requestId, response);
+        console.log(`[AutoDecision] Inject result: ${injected}`);
+
+        if (injected) {
+          console.log(`[AutoDecision] Override received: ${message.text}`);
+          return;
+        }
+      }
+    }
+
+    // Normal response handling via Telegram channel
     const telegramChannel = this.channels.get('telegram') as TelegramChannel | undefined;
     if (telegramChannel) {
       const response = await telegramChannel.receiveForwardedResponse(message);
