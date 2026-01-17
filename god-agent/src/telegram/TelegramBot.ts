@@ -60,7 +60,7 @@ export class TelegramBot {
     this.bot.on('message', async (msg: TelegramMessage) => {
       try {
         if (!this.isUserAllowed(msg.from?.id)) {
-          await this.sendMessage(msg.chat.id, 'Unauthorized access');
+          await this.sendMessage(msg.chat.id, `Unauthorized. Your user ID is: ${msg.from?.id}\n\nAdd this to TELEGRAM_ALLOWED_USERS to gain access.`);
           return;
         }
 
@@ -87,7 +87,7 @@ export class TelegramBot {
   }
 
   private isUserAllowed(userId?: number): boolean {
-    if (this.allowedUsers.size === 0) return true;
+    if (this.allowedUsers.size === 0) return false;  // Deny all if no whitelist
     return userId ? this.allowedUsers.has(userId) : false;
   }
 

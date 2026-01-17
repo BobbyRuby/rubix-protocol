@@ -1,13 +1,19 @@
 import TelegramBotAPI from 'node-telegram-bot-api';
+import { existsSync, mkdirSync } from 'fs';
+import { resolve, normalize } from 'path';
 import { TelegramMessage, TaskRequest } from './types.js';
 import type { TaskExecutor } from '../codex/TaskExecutor.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
+import { MemorySource } from '../core/types.js';
 import type { ContainmentManager } from '../codex/ContainmentManager.js';
 import { PlanningSession } from '../codex/PlanningSession.js';
 import { ConversationSession } from '../codex/ConversationSession.js';
 import { InputCompressor } from '../prompts/InputCompressor.js';
 import { AutoRecall } from '../memory/AutoRecall.js';
+
+/** Session mode - MUST be set for non-command messages to be processed */
+export type SessionMode = 'task' | 'plan' | 'conversation' | null;
 
 /** Image attachment for messages */
 export interface ImageAttachment {
@@ -22,6 +28,9 @@ export class TelegramHandler {
   private containment: ContainmentManager | undefined;
   private activeTasks: Map<string, TaskRequest>;
   private defaultCodebase: string;
+
+  /** Per-chat project paths - maps chatId to project directory */
+  private projectPaths: Map<number, string> = new Map();
 
   /** AutoRecall for centralized brain */
   private autoRecall: AutoRecall;
@@ -40,6 +49,9 @@ export class TelegramHandler {
 
   /** Flag to track if we're currently processing a planning message */
   private isProcessingPlanning: boolean = false;
+
+  /** Per-chat session mode - MUST be set for non-command messages to be processed */
+  private chatModes: Map<number, SessionMode> = new Map();
 
   constructor(taskExecutor?: TaskExecutor, defaultCodebase?: string, engine?: MemoryEngine) {
     this.taskExecutor = taskExecutor;
@@ -89,6 +101,11 @@ export class TelegramHandler {
     // Wire AutoRecall to engine (centralized brain)
     this.autoRecall.setEngine(engine);
     console.log('[TelegramHandler] MemoryEngine connected for planning sessions and AutoRecall');
+
+    // Restore project paths from memory
+    this.restoreProjectPaths().catch(err => {
+      console.error('[TelegramHandler] Failed to restore project paths:', err);
+    });
   }
 
   /**
@@ -112,10 +129,15 @@ export class TelegramHandler {
 
   /**
    * Extract codebase path from user's task description.
-   * Looks for paths like /users/..., C:\..., etc.
-   * Falls back to defaultCodebase if no path found.
+   * Priority order:
+   * 1. Explicit path in message
+   * 2. projectPaths.get(chatId) - user's configured project
+   * 3. defaultCodebase (fallback)
+   *
+   * @param description The task description to search for paths
+   * @param chatId Optional chat ID to look up configured project path
    */
-  private extractCodebase(description: string): string {
+  private extractCodebase(description: string, chatId?: number): string {
     // Common patterns for codebase paths
     const patterns = [
       // Unix absolute paths: /users/..., /home/..., /var/..., etc.
@@ -138,9 +160,25 @@ export class TelegramHandler {
       }
     }
 
+    // Priority 2: Check if user has a configured project path for this chat
+    if (chatId !== undefined) {
+      const configuredPath = this.projectPaths.get(chatId);
+      if (configuredPath) {
+        console.log(`[TelegramHandler] Using configured project path for chat ${chatId}: ${configuredPath}`);
+        return configuredPath;
+      }
+    }
+
     // Fall back to default
-    console.log(`[TelegramHandler] No codebase path found in description, using default: ${this.defaultCodebase}`);
+    console.log(`[TelegramHandler] No codebase path found, using default: ${this.defaultCodebase}`);
     return this.defaultCodebase;
+  }
+
+  /**
+   * Get the current project path for a chat (or default if not set)
+   */
+  getProjectPath(chatId: number): string {
+    return this.projectPaths.get(chatId) || this.defaultCodebase;
   }
 
   async handleMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
@@ -187,30 +225,47 @@ export class TelegramHandler {
       });
     }
 
-    // Check if in active planning session first (non-command messages route there)
-    // Also handle photos in planning mode
-    if (!text.startsWith('/')) {
-      // Try to restore session if we don't have one (e.g., after server restart)
-      if (!this.planningSession && this.engine) {
-        await this.tryRestoreActiveSession(chatId);
-      }
+    // COMMANDS: Always process regardless of mode
+    if (text.startsWith('/')) {
+      await this.routeCommand(text, msg, bot, chatId);
+      return;
+    }
 
-      if (this.planningSession?.isActive()) {
+    // NON-COMMANDS: Require explicit mode (strict mode enforcement)
+    const mode = this.chatModes.get(chatId);
+
+    if (!mode) {
+      // NO MODE SET - Error message telling user to use a command
+      await bot.sendMessage(chatId,
+        '❌ Please start with a command:\n\n' +
+        '• `/plan <description>` - Start planning\n' +
+        '• `/task <description>` - Execute immediately\n' +
+        '• `/conversation` - Start chat mode\n\n' +
+        'Use `/help` for more options.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Route based on mode
+    switch (mode) {
+      case 'plan':
         await this.handlePlanningMessage(msg, bot, hasPhoto ? await this.extractImage(msg, bot) : null);
-        return;
-      }
+        break;
+      case 'conversation':
+        await this.handleConversationalMessage(msg, bot, hasPhoto ? await this.extractImage(msg, bot) : null);
+        break;
+      case 'task':
+        // Task mode is transient - shouldn't receive messages while task is running
+        await bot.sendMessage(chatId, '⏳ Task in progress. Use /status to check.');
+        break;
     }
+  }
 
-    // Handle photos outside of planning mode -> route to conversational
-    if (hasPhoto && !text.startsWith('/')) {
-      const image = await this.extractImage(msg, bot);
-      if (image) {
-        await this.handleConversationalMessage(msg, bot, image);
-        return;
-      }
-    }
-
-    // Command routing
+  /**
+   * Route commands to their handlers
+   */
+  private async routeCommand(text: string, msg: TelegramMessage, bot: TelegramBotAPI, chatId: number): Promise<void> {
     if (text.startsWith('/start')) {
       await this.handleStartCommand(chatId, bot);
     } else if (text.startsWith('/help')) {
@@ -249,8 +304,17 @@ export class TelegramHandler {
       await this.handleWaitCommand(msg, bot);
     } else if (text === '/restart') {
       await this.handleRestartCommand(chatId, bot);
+    } else if (text.startsWith('/setproject') || text.startsWith('/project')) {
+      await this.handleSetProjectCommand(msg, bot);
+    } else if (text === '/whereami') {
+      await this.handleWhereAmICommand(chatId, bot);
+    } else if (text === '/exit') {
+      await this.handleExitCommand(msg, bot);
+    } else if (text === '/conversation' || text.startsWith('/conversation ')) {
+      await this.handleConversationCommand(msg, bot);
     } else {
-      await this.handleConversationalMessage(msg, bot);
+      // Unknown command
+      await bot.sendMessage(chatId, `❓ Unknown command: ${text.split(' ')[0]}\n\nUse /help for available commands.`);
     }
   }
 
@@ -316,6 +380,21 @@ export class TelegramHandler {
       await this.handleTaskAction(taskId, chatId, bot);
     }
 
+    // Handle project creation cancellation
+    if (data === 'cancel_create_project') {
+      await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
+      await bot.sendMessage(chatId, '❌ Project creation cancelled.');
+      return;
+    }
+
+    // Handle project creation confirmation
+    if (data.startsWith('create_project:')) {
+      const projectPath = data.replace('create_project:', '');
+      await bot.answerCallbackQuery(query.id, { text: 'Creating...' });
+      await this.createAndSetProject(chatId, projectPath, bot);
+      return;
+    }
+
     await bot.answerCallbackQuery(query.id);
   }
 
@@ -325,18 +404,20 @@ Welcome to Rubix!
 
 I can help you execute various tasks and code generation.
 
-Available commands:
-/help - Show help message
-/task <description> - Execute a task immediately
-/plan <description> - Start a planning session
-/resume - Resume last planning session
-/plans - List all planning sessions
-/status - Check active tasks
+*Start with one of these commands:*
+• /conversation - Start chatting freely
+• /plan <description> - Start a planning session
+• /task <description> - Execute a task immediately
 
-Just send me a message describing what you need!
+*Other commands:*
+• /help - Show full help message
+• /resume - Resume last planning session
+• /plans - List all planning sessions
+• /status - Check active tasks
+• /exit - Leave current mode
     `.trim();
 
-    await bot.sendMessage(chatId, welcomeMessage);
+    await this.safeSendMarkdown(bot, chatId, welcomeMessage);
   }
 
   private async handleHelpCommand(chatId: number, bot: TelegramBotAPI): Promise<void> {
@@ -344,29 +425,45 @@ Just send me a message describing what you need!
 *RUBIX - Autonomous Developer Agent*
 
 *Quick Start:*
-Chat naturally → /rubixallize → /execute
-Or: /plan <idea> → discuss → /execute
+You must start with one of these commands:
+• /conversation → chat → /rubixallize → /execute
+• /plan <idea> → discuss → /execute
+• /task <desc> → immediate execution
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
+*Session Modes (Required)*
+All messages require an active mode. Use:
+• /conversation - Start chat mode
+• /plan <desc> - Start planning mode
+• /task <desc> - Execute immediately
+• /exit - Leave current mode
+
 *Conversation Mode*
-Just chat! I remember everything.
-• /rubixallize - Turn chat into executable plan
+• /conversation - Enter chat mode
+• /rubixallize - Turn chat into plan
+• /exit - Leave conversation mode
+
+*Planning Mode*
+• /plan <desc> - Start new planning session
+• /plans - List your sessions
+• /plans all - List ALL sessions
+• /resume - Resume most recent session
+• /resume N - Resume session #N
+• /delete N - Delete session #N
+• /plan-status - Current plan details
+• /execute - Preview & run the plan
+• /cancel - Abandon current session
+• /exit - Leave planning mode
 
 *Immediate Execution*
 • /task <desc> - Run task now (no planning)
 • /status - Check running task progress
 
-*Planning Sessions*
-• /plan <desc> - Start new planning session
-• /plans - List your sessions (most recent 3)
-• /plans all - List ALL sessions (any chat)
-• /resume - Resume most recent session
-• /resume N - Resume session #N from list
-• /delete N - Delete session #N from list
-• /plan-status - Current plan details
-• /execute - Preview & run the plan
-• /cancel - Abandon current session
+*Project Directory*
+• /setproject <path> - Set working directory
+• /project - Show current project
+• /whereami - Show working context
 
 *Path Permissions*
 • /paths - Show allowed paths
@@ -385,12 +482,12 @@ Just chat! I remember everything.
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 *Workflow Example:*
-1. /plans all - Browse old plans
-2. /resume 2 - Load plan #2
-3. Continue discussing...
-4. /execute - Run when ready
+1. /conversation - Start chatting
+2. Discuss your idea...
+3. /rubixallize - Create plan
+4. /execute - Run it
 
-*Or start fresh:*
+*Or go straight to planning:*
 1. /plan Build a REST API
 2. Discuss requirements...
 3. /execute - Approve & run
@@ -426,8 +523,8 @@ Just chat! I remember everything.
     await bot.sendMessage(chatId, `🎯 *Starting planning session*\n\n"${description}"\n\nLet's think this through together...`, { parse_mode: 'Markdown' });
 
     try {
-      // Extract codebase from user's description (e.g., "in /users/project")
-      const codebase = this.extractCodebase(description);
+      // Extract codebase from user's description (e.g., "in /users/project") or use configured project path
+      const codebase = this.extractCodebase(description, chatId);
 
       this.planningSession = new PlanningSession(this.engine, {
         taskDescription: description,
@@ -435,12 +532,16 @@ Just chat! I remember everything.
         chatId
       });
 
+      // SET MODE to 'plan' (strict mode enforcement)
+      this.chatModes.set(chatId, 'plan');
+
       const response = await this.planningSession.start();
       await this.sendConversationalMessages(chatId, response, bot);
     } catch (error) {
       console.error('[TelegramHandler] Failed to start planning session:', error);
       await bot.sendMessage(chatId, `Failed to start planning session: ${error instanceof Error ? error.message : 'Unknown error'}`);
       this.planningSession = null;
+      this.chatModes.delete(chatId);  // Clear mode on failure
     }
   }
 
@@ -509,41 +610,6 @@ Just chat! I remember everything.
     }
   }
 
-  /**
-   * Try to find and restore an active planning session for this chat.
-   * Called when planningSession is null but user sends a message that should
-   * continue an existing session (e.g., after server restart).
-   */
-  private async tryRestoreActiveSession(chatId: number): Promise<boolean> {
-    // Skip if we already have a session or no engine
-    if (!this.engine || this.planningSession) return false;
-
-    try {
-      // Find active sessions for this chat
-      const sessions = await PlanningSession.listSessions(this.engine, chatId, 5);
-      const activeSession = sessions.find(s => s.status === 'active');
-
-      if (activeSession) {
-        console.log(`[TelegramHandler] Auto-resuming active session: ${activeSession.id}`);
-
-        // Extract codebase from the session's task description
-        const codebase = this.extractCodebase(activeSession.taskDescription);
-
-        this.planningSession = await PlanningSession.load(this.engine, activeSession.id, {
-          codebase,
-          taskDescription: activeSession.taskDescription,
-          chatId
-        });
-
-        await this.planningSession.resume();
-        return true;
-      }
-    } catch (error) {
-      console.warn('[TelegramHandler] Failed to restore session:', error);
-    }
-    return false;
-  }
-
   private async resumePlanningSession(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
     const text = msg.text || '';
@@ -578,8 +644,8 @@ Just chat! I remember everything.
 
       await bot.sendMessage(chatId, `📂 Resuming: "${targetSession.taskDescription}"...`);
 
-      // Extract codebase from the session's task description
-      const codebase = this.extractCodebase(targetSession.taskDescription);
+      // Extract codebase from the session's task description or use configured project path
+      const codebase = this.extractCodebase(targetSession.taskDescription, chatId);
 
       this.planningSession = await PlanningSession.load(this.engine, targetSession.id, {
         taskDescription: targetSession.taskDescription,
@@ -587,11 +653,15 @@ Just chat! I remember everything.
         chatId
       });
 
+      // SET MODE to 'plan' (strict mode enforcement)
+      this.chatModes.set(chatId, 'plan');
+
       const summary = await this.planningSession.resume();
       await this.sendConversationalMessages(chatId, summary, bot);
     } catch (error) {
       console.error('[TelegramHandler] Failed to resume session:', error);
       await bot.sendMessage(chatId, `Failed to resume: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.chatModes.delete(chatId);  // Clear mode on failure
     }
   }
 
@@ -909,6 +979,65 @@ Just chat! I remember everything.
   }
 
   /**
+   * Handle /exit command - exit current mode and clear session
+   */
+  private async handleExitCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const currentMode = this.chatModes.get(chatId);
+
+    if (!currentMode) {
+      await bot.sendMessage(chatId, 'No active session to exit.');
+      return;
+    }
+
+    // Clean up based on mode
+    if (currentMode === 'plan' && this.planningSession) {
+      // Session state is already persisted - user can /resume later
+      // Just clear the in-memory reference
+      this.planningSession = null;
+    }
+
+    if (currentMode === 'conversation' && this.conversationSession) {
+      this.conversationSession = null;
+    }
+
+    // Clear mode
+    this.chatModes.delete(chatId);
+
+    await bot.sendMessage(chatId,
+      `✅ Exited ${currentMode} mode.\n\n` +
+      'Use /plan, /task, or /conversation to start a new session.'
+    );
+  }
+
+  /**
+   * Handle /conversation command - enter conversation mode
+   */
+  private async handleConversationCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+
+    // Set mode
+    this.chatModes.set(chatId, 'conversation');
+
+    // Initialize conversation session if needed
+    if (!this.conversationSession && this.engine) {
+      this.conversationSession = new ConversationSession(
+        this.engine,
+        chatId,
+        this.defaultCodebase || process.cwd()
+      );
+    }
+
+    await bot.sendMessage(chatId,
+      '💬 *Conversation Mode*\n\n' +
+      'Chat freely. I\'ll remember context.\n' +
+      'Use /rubixallize to turn this into a plan.\n' +
+      'Use /exit to leave conversation mode.',
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  /**
    * Confirm a pending deletion
    */
   private async confirmDeletion(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
@@ -1028,27 +1157,10 @@ Just chat! I remember everything.
       return;
     }
 
-    // Initialize conversation session if needed
-    if (!this.conversationSession && this.engine) {
-      // FIRST: Try to restore any active planning session
-      const restored = await this.tryRestoreActiveSession(chatId);
-      if (restored && this.planningSession?.isActive()) {
-        console.log('[TelegramHandler] Restored active planning session, routing there');
-        await this.handlePlanningMessage(msg, bot, image || null);
-        return;
-      }
-
-      // No active planning session - create new conversation
-      this.conversationSession = new ConversationSession(
-        this.engine,
-        chatId,
-        this.defaultCodebase || process.cwd()
-      );
-      console.log('[TelegramHandler] Started new conversation session');
-    }
-
+    // Strict mode: conversation session must be initialized by /conversation command
     if (!this.conversationSession) {
-      await bot.sendMessage(chatId, '❌ Conversation mode requires MemoryEngine. Use /task for direct execution.');
+      // This shouldn't happen in strict mode, but handle gracefully
+      await bot.sendMessage(chatId, '❌ No conversation session. Use /conversation to start one.');
       return;
     }
 
@@ -1102,6 +1214,9 @@ Just chat! I remember everything.
 
       // Clear conversation session
       this.conversationSession = null;
+
+      // TRANSITION MODE from 'conversation' to 'plan' (strict mode enforcement)
+      this.chatModes.set(chatId, 'plan');
 
       // Get plan preview
       const plan = await this.planningSession.previewPlan();
@@ -1332,6 +1447,245 @@ Just chat! I remember everything.
   }
 
   // ===========================================================================
+  // PROJECT PATH HANDLERS
+  // ===========================================================================
+
+  /**
+   * Handle /setproject or /project command - set working directory for this chat
+   * Usage:
+   *   /setproject D:\my-projects\calculator
+   *   /project C:\Users\user\projects\webapp
+   *   /project ./relative/path  (resolves to absolute)
+   *   /project (no args) - show current project
+   */
+  private async handleSetProjectCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+
+    // Parse the path argument
+    const match = text.match(/^\/(setproject|project)\s*(.*)$/i);
+    const pathArg = match?.[2]?.trim() || '';
+
+    // If no path provided, show current setting
+    if (!pathArg) {
+      const currentPath = this.projectPaths.get(chatId);
+      if (currentPath) {
+        await bot.sendMessage(chatId,
+          `📂 *Current Project*\n\n` +
+          `\`${currentPath}\`\n\n` +
+          `All tasks will execute in this directory.\n` +
+          `Use \`/setproject <path>\` to change.`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        await bot.sendMessage(chatId,
+          `📂 *No Project Set*\n\n` +
+          `Default: \`${this.defaultCodebase}\`\n\n` +
+          `Use \`/setproject <path>\` to set a project directory.\n` +
+          `Example: \`/setproject D:\\my-project\``,
+          { parse_mode: 'Markdown' }
+        );
+      }
+      return;
+    }
+
+    // Resolve the path to absolute
+    let resolvedPath: string;
+    try {
+      resolvedPath = resolve(pathArg);
+      resolvedPath = normalize(resolvedPath);
+    } catch (error) {
+      await bot.sendMessage(chatId, `❌ Invalid path format: ${pathArg}`);
+      return;
+    }
+
+    // If path doesn't exist, offer to create it
+    if (!existsSync(resolvedPath)) {
+      // Ask user if they want to create the directory
+      const keyboard = {
+        inline_keyboard: [[
+          { text: '✅ Yes, create it', callback_data: `create_project:${resolvedPath}` },
+          { text: '❌ Cancel', callback_data: 'cancel_create_project' }
+        ]]
+      };
+
+      await bot.sendMessage(chatId,
+        `📁 *Directory doesn't exist*\n\n` +
+        `\`${resolvedPath}\`\n\n` +
+        `Would you like to create it?`,
+        { parse_mode: 'Markdown', reply_markup: keyboard }
+      );
+      return;
+    }
+
+    // Warn if path is inside god-agent (they might want this, so allow it)
+    const isInsideGodAgent = resolvedPath.toLowerCase().includes('god-agent') ||
+                             resolvedPath.toLowerCase().includes('rubix-protocol');
+    const warningMsg = isInsideGodAgent
+      ? '\n\n⚠️ *Warning:* This path is inside the RUBIX system directory.'
+      : '';
+
+    // Store the project path
+    this.projectPaths.set(chatId, resolvedPath);
+
+    // Update ContainmentManager if available
+    if (this.containment) {
+      this.containment.setProjectRoot(resolvedPath);
+      console.log(`[TelegramHandler] Updated ContainmentManager projectRoot to: ${resolvedPath}`);
+    }
+
+    // Persist to memory for recovery after restart
+    await this.persistProjectPath(chatId, resolvedPath);
+
+    await bot.sendMessage(chatId,
+      `✅ *Project Set*\n\n` +
+      `\`${resolvedPath}\`\n\n` +
+      `All tasks will now execute in this directory.${warningMsg}`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[TelegramHandler] Set project path for chat ${chatId}: ${resolvedPath}`);
+  }
+
+  /**
+   * Create a directory and set it as the project path
+   * Called from the callback when user confirms creating a non-existent directory
+   */
+  private async createAndSetProject(
+    chatId: number,
+    projectPath: string,
+    bot: TelegramBotAPI
+  ): Promise<void> {
+    try {
+      // Create the directory recursively
+      mkdirSync(projectPath, { recursive: true });
+
+      // Store the project path
+      this.projectPaths.set(chatId, projectPath);
+
+      // Update ContainmentManager if available
+      if (this.containment) {
+        this.containment.setProjectRoot(projectPath);
+        console.log(`[TelegramHandler] Updated ContainmentManager projectRoot to: ${projectPath}`);
+      }
+
+      // Persist to memory for recovery after restart
+      await this.persistProjectPath(chatId, projectPath);
+
+      await bot.sendMessage(chatId,
+        `✅ *Project Created & Set*\n\n` +
+        `\`${projectPath}\`\n\n` +
+        `Directory created. All tasks will execute here.`,
+        { parse_mode: 'Markdown' }
+      );
+
+      console.log(`[TelegramHandler] Created and set project path for chat ${chatId}: ${projectPath}`);
+    } catch (error) {
+      await bot.sendMessage(chatId,
+        `❌ *Failed to create directory*\n\n` +
+        `\`${projectPath}\`\n\n` +
+        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { parse_mode: 'Markdown' }
+      );
+      console.error(`[TelegramHandler] Failed to create directory ${projectPath}:`, error);
+    }
+  }
+
+  /**
+   * Handle /whereami command - show current working context
+   */
+  private async handleWhereAmICommand(chatId: number, bot: TelegramBotAPI): Promise<void> {
+    const projectPath = this.projectPaths.get(chatId);
+    const effectivePath = projectPath || this.defaultCodebase;
+
+    let message = `📍 *Current Working Context*\n\n`;
+    message += `**Project Path:** \`${effectivePath}\`\n`;
+    message += `**Source:** ${projectPath ? 'Configured via /setproject' : 'Default (not set)'}\n`;
+    message += `**Default Codebase:** \`${this.defaultCodebase}\`\n`;
+
+    if (this.containment) {
+      const rules = this.containment.getUserRules();
+      message += `\n**Allowed Paths:** ${rules.length} configured`;
+    }
+
+    if (this.planningSession?.isActive()) {
+      message += `\n\n📝 *Active Planning Session*`;
+    }
+
+    message += `\n\n_Use \`/setproject <path>\` to change._`;
+
+    await this.safeSendMarkdown(bot, chatId, message);
+  }
+
+  /**
+   * Persist project path to memory for recovery after restart
+   */
+  private async persistProjectPath(chatId: number, projectPath: string): Promise<void> {
+    if (!this.engine) {
+      console.warn('[TelegramHandler] Cannot persist project path - no MemoryEngine');
+      return;
+    }
+
+    try {
+      // Store as a special memory entry
+      await this.engine.store(
+        `TELEGRAM_PROJECT_PATH:${chatId}:${projectPath}`,
+        {
+          tags: ['telegram', 'project_path', 'config', `chat_${chatId}`],
+          importance: 0.9,
+          source: MemorySource.USER_INPUT
+        }
+      );
+      console.log(`[TelegramHandler] Persisted project path to memory for chat ${chatId}`);
+    } catch (error) {
+      console.error('[TelegramHandler] Failed to persist project path:', error);
+    }
+  }
+
+  /**
+   * Restore project paths from memory on startup
+   * Called when TelegramHandler is initialized with an engine
+   */
+  async restoreProjectPaths(): Promise<void> {
+    if (!this.engine) {
+      console.log('[TelegramHandler] Cannot restore project paths - no MemoryEngine');
+      return;
+    }
+
+    try {
+      const results = await this.engine.query('TELEGRAM_PROJECT_PATH', {
+        topK: 100,
+        filters: { tags: ['telegram', 'project_path'] }
+      });
+
+      let restored = 0;
+      for (const result of results) {
+        // Parse the content: TELEGRAM_PROJECT_PATH:<chatId>:<path>
+        const match = result.entry.content.match(/^TELEGRAM_PROJECT_PATH:(-?\d+):(.+)$/);
+        if (match) {
+          const chatId = parseInt(match[1], 10);
+          const projectPath = match[2];
+
+          // Verify path still exists before restoring
+          if (existsSync(projectPath)) {
+            this.projectPaths.set(chatId, projectPath);
+            restored++;
+            console.log(`[TelegramHandler] Restored project path for chat ${chatId}: ${projectPath}`);
+          } else {
+            console.log(`[TelegramHandler] Skipping stale project path (doesn't exist): ${projectPath}`);
+          }
+        }
+      }
+
+      if (restored > 0) {
+        console.log(`[TelegramHandler] Restored ${restored} project path(s) from memory`);
+      }
+    } catch (error) {
+      console.error('[TelegramHandler] Failed to restore project paths:', error);
+    }
+  }
+
+  // ===========================================================================
   // TASK HANDLERS
   // ===========================================================================
 
@@ -1367,6 +1721,9 @@ Just chat! I remember everything.
 
     this.activeTasks.set(taskId, taskRequest);
 
+    // SET MODE to 'task' (transient - cleared when task completes)
+    this.chatModes.set(chatId, 'task');
+
     await bot.sendMessage(chatId, `Task started: ${compressed.compressed}\nTask ID: ${taskId}${compressionMsg}`);
 
     try {
@@ -1392,8 +1749,8 @@ Just chat! I remember everything.
         }
       }
 
-      // Extract codebase from the original (uncompressed) task description
-      const codebase = this.extractCodebase(taskDescription);
+      // Extract codebase from the original (uncompressed) task description or use configured project path
+      const codebase = this.extractCodebase(taskDescription, chatId);
 
       // Use the correct TaskExecutor API (with compressed description)
       const result = await this.taskExecutor.execute({
@@ -1425,6 +1782,9 @@ Just chat! I remember everything.
       console.error('Task execution error:', error);
       await bot.sendMessage(chatId, `Task failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       this.activeTasks.delete(taskId);
+    } finally {
+      // CLEAR MODE after task completes (success or failure)
+      this.chatModes.delete(chatId);
     }
   }
 
