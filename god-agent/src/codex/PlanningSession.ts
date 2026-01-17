@@ -349,13 +349,23 @@ export class PlanningSession {
    * @returns Welcome back message with context summary
    */
   async resume(): Promise<string> {
-    console.log(`[PlanningSession] Resuming session ${this.id}`);
+    console.log(`[PlanningSession] Resuming session ${this.id} (metadata: ${this.meta.exchangeCount} exchanges)`);
 
     // Load session metadata
     await this.loadSessionMeta();
 
     // Load recent exchanges
     await this.loadRecentExchanges();
+
+    // Verify exchange count matches reality
+    const actualExchanges = await this.engine.query('exchange', {
+      topK: 100,
+      filters: { tags: ['planning', 'exchange', `session:${this.id}`] }
+    });
+    if (actualExchanges.length !== this.meta.exchangeCount) {
+      console.log(`[PlanningSession] Exchange count mismatch: metadata=${this.meta.exchangeCount}, actual=${actualExchanges.length}. Correcting.`);
+      this.meta.exchangeCount = actualExchanges.length;
+    }
 
     // Load current plan if exists
     await this.loadCurrentPlan();
@@ -664,6 +674,7 @@ export class PlanningSession {
 
     // Store in memory - gracefully handle L-Score threshold failures
     let entryId: string | undefined;
+    let storageSucceeded = false;
     try {
       const entry = await this.engine.store(content, {
         tags: [
@@ -686,6 +697,7 @@ export class PlanningSession {
       this.lastExchangeId = entry.id;
       entryId = entry.id;
       console.log(`[PlanningSession] Stored ${role} exchange (${content.length} chars)`);
+      storageSucceeded = true;
     } catch (error) {
       // L-Score threshold or other storage failures shouldn't crash the session
       const errorName = error instanceof Error ? error.name : 'Unknown';
@@ -699,7 +711,9 @@ export class PlanningSession {
     }
 
     // Update metadata
-    this.meta.exchangeCount++;
+    if (storageSucceeded) {
+      this.meta.exchangeCount++;
+    }
     this.meta.lastActivityAt = new Date().toISOString();
 
     return entryId;
