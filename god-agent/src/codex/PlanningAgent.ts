@@ -12,6 +12,7 @@ import path from 'path';
 import { glob } from 'glob';
 import type { ContainmentManager } from './ContainmentManager.js';
 import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
+import type { MemoryEngine } from '../core/MemoryEngine.js';
 
 /**
  * Configuration for PlanningAgent
@@ -127,6 +128,23 @@ const PLANNING_TOOLS: Anthropic.Messages.Tool[] = [
       },
       required: ['path']
     }
+  },
+  {
+    name: 'god_query',
+    description: 'Search RUBIX memory for relevant patterns, past decisions, failures, and context. Use this FIRST before starting work to find: similar past tasks, solutions that worked, approaches to avoid, architecture decisions, user preferences.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Search query (e.g., "authentication patterns", "API design decisions", "past failures with caching")' },
+        topK: { type: 'number', description: 'Max results to return (default: 10)' },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter by tags (e.g., ["planning", "architecture", "failure"])'
+        }
+      },
+      required: ['query']
+    }
   }
 ];
 
@@ -141,13 +159,22 @@ PLAN_AGENT
 ROLE:planning_subsystem,perfect_memory,tool_access
 GOAL:think_through_project_BEFORE_code,store_exchanges_in_memory
 
+## MEMORY RECALL (MANDATORY - Do FIRST)
+Before starting ANY planning work:
+1. god_query "task keywords + domain" - Find similar past tasks and solutions
+2. god_query "decisions + architecture" - Check established patterns
+3. god_query "failures + problems" - Avoid approaches that failed before
+
+MEMORY CONTAINS: Past decisions, user preferences, successful patterns, failure records.
+RULE: Search memory FIRST. Questions may already be answered. Don't reinvent.
+
 CONTEXT_FIRST:
 - The CONTEXT section contains the current plan, past exchanges, and key decisions
-- ALWAYS use information from CONTEXT before searching
+- ALWAYS use information from CONTEXT before searching files
 - Do NOT grep/search for information already in CONTEXT
-- For follow-up questions, prefer CONTEXT over fresh tool calls
+- For follow-up questions, prefer CONTEXT over fresh file tool calls
 
-TOOLS:read_file,glob_files,grep_search,web_fetch,list_directory
+TOOLS:read_file,glob_files,grep_search,web_fetch,list_directory,god_query
 USE_TOOLS_ONLY_WHEN:
 - User explicitly asks to search/find NEW information
 - Information is NOT in the provided CONTEXT
@@ -180,6 +207,7 @@ export class PlanningAgent {
   private maxTokens: number;
   private codebaseRoot: string;
   private containment?: ContainmentManager;
+  private engine?: MemoryEngine;
   private lastApiCall = 0;
 
   constructor(config: PlanningAgentConfig) {
@@ -207,6 +235,14 @@ export class PlanningAgent {
   setCodebaseRoot(root: string): void {
     this.codebaseRoot = root;
     console.log(`[PlanningAgent] Codebase root: ${root}`);
+  }
+
+  /**
+   * Set the MemoryEngine for memory queries
+   */
+  setMemoryEngine(engine: MemoryEngine): void {
+    this.engine = engine;
+    console.log('[PlanningAgent] MemoryEngine connected - memory recall enabled');
   }
 
   /**
@@ -397,6 +433,43 @@ export class PlanningAgent {
           } catch (err) {
             const error = err as Error;
             return `Error listing directory: ${error.message}`;
+          }
+        }
+
+        case 'god_query': {
+          if (!this.engine) {
+            return 'Memory engine not connected. Memory recall is unavailable in this session.';
+          }
+
+          const query = input.query as string;
+          const topK = (input.topK as number) || 10;
+          const tags = input.tags as string[] | undefined;
+
+          try {
+            const results = await this.engine.query(query, {
+              topK,
+              filters: tags ? { tags } : undefined
+            });
+
+            if (results.length === 0) {
+              return `No memories found for: "${query}"\n\nThis might be a new topic. Consider storing important decisions with god_store after making them.`;
+            }
+
+            // Format results for readability
+            const formatted = results.map((r, i) => {
+              const tags = r.entry.metadata.tags?.join(', ') || 'none';
+              const score = (r.score * 100).toFixed(0);
+              const content = r.entry.content.length > 500
+                ? r.entry.content.substring(0, 500) + '...'
+                : r.entry.content;
+              return `[${i + 1}] (${score}% match, tags: ${tags})\n${content}`;
+            }).join('\n\n---\n\n');
+
+            console.log(`[PlanningAgent] Memory query "${query}" returned ${results.length} results`);
+            return `Found ${results.length} relevant memories:\n\n${formatted}`;
+          } catch (err) {
+            const error = err as Error;
+            return `Error querying memory: ${error.message}`;
           }
         }
 

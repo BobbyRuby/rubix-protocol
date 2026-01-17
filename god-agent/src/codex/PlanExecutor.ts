@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { execSync } from 'child_process';
-import type { PlanOutput, FileContent } from './OllamaReasoner.js';
+import type { PlanOutput, FileContent } from './ClaudeReasoner.js';
 import type { ValidationResult } from './PlanValidator.js';
 
 /**

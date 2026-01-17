@@ -20,6 +20,7 @@ import type { WolframManager } from '../capabilities/wolfram/WolframManager.js';
 import { ClaudeCodeExecutor } from './ClaudeCodeExecutor.js';
 import { SelfKnowledgeInjector } from '../prompts/SelfKnowledgeInjector.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
+import type { MemoryEngine } from '../core/MemoryEngine.js';
 
 const execAsync = promisify(exec);
 
@@ -98,6 +99,7 @@ export class CodeGenerator {
   private model: string;
   private containment: ContainmentManager | undefined;
   private wolfram: WolframManager | undefined;
+  private engine: MemoryEngine | undefined;
   private cliExecutor: ClaudeCodeExecutor;
   private executionMode: 'cli-first' | 'api-only' | 'cli-only';
   private useApiFallback = false;
@@ -179,7 +181,8 @@ export class CodeGenerator {
 
     // Build prompts
     const prompt = this.buildPrompt(task, subtask, attempt, codebaseContext, previousAttempts);
-    const systemPrompt = this.getSystemPrompt();
+    // Pass the task's codebase to inject project context into system prompt
+    const systemPrompt = this.getSystemPrompt(task.codebase);
 
     // Determine execution path
     const shouldTryCli = this.executionMode !== 'api-only' && !this.useApiFallback;
@@ -276,7 +279,8 @@ export class CodeGenerator {
     try {
       // Build the prompt
       const prompt = this.buildPrompt(task, subtask, attempt, codebaseContext, previousAttempts);
-      const systemPrompt = this.getSystemPrompt();
+      // Pass the task's codebase to inject project context into system prompt
+      const systemPrompt = this.getSystemPrompt(task.codebase);
 
       // Get available tools (Wolfram, web search, etc.)
       const tools = this.getTools();
@@ -569,11 +573,23 @@ export class CodeGenerator {
 
   /**
    * Get system prompt for code generation (compressed)
+   * @param projectPath Optional user-configured project path for working directory context
    */
-  private getSystemPrompt(): string {
+  private getSystemPrompt(projectPath?: string): string {
     // RUBIX identity + compressed generation prompt
     const identity = SelfKnowledgeInjector.getIdentity('code_generator');
-    return `${identity}
+
+    // Add project context warning at the top if we have a project path
+    // This ensures the model knows exactly where to work and what NOT to touch
+    const projectWarning = projectPath ? `
+# CRITICAL: PROJECT CONTEXT
+WORKING_PROJECT:${projectPath}
+DO_NOT_MODIFY:god-agent/,rubix-protocol/src/,node_modules/
+RULE:All file operations MUST be within ${projectPath}
+RULE:DO NOT modify RUBIX system files
+` : '';
+
+    return `${projectWarning}${identity}
 
 GEN
 ROLE:implement,ship,complete_code
@@ -1023,8 +1039,23 @@ CTX:${codebaseContext.slice(0, 1500)}
     return this.wolfram;
   }
 
+  /**
+   * Set MemoryEngine for memory recall (for late binding)
+   */
+  setMemoryEngine(engine: MemoryEngine): void {
+    this.engine = engine;
+    console.log('[CodeGenerator] MemoryEngine connected - memory recall enabled');
+  }
+
+  /**
+   * Get the MemoryEngine if available
+   */
+  getMemoryEngine(): MemoryEngine | undefined {
+    return this.engine;
+  }
+
   // ===========================================================================
-  // Tool Definitions for Claude (Wolfram + Web Search)
+  // Tool Definitions for Claude (Wolfram + Web Search + Memory)
   // ===========================================================================
 
   /**
@@ -1083,6 +1114,33 @@ CTX:${codebaseContext.slice(0, 1500)}
       }
     });
 
+    // Memory recall tool (if engine connected)
+    if (this.engine) {
+      tools.push({
+        name: 'god_query',
+        description: 'Search RUBIX memory for relevant patterns, past decisions, failures, and context. Use this FIRST before starting work to find: similar past tasks, solutions that worked, approaches to avoid, architecture decisions. MANDATORY: Search memory before implementing to avoid repeating failures.',
+        input_schema: {
+          type: 'object' as const,
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query (e.g., "authentication implementation", "API error handling patterns", "past failures with caching")'
+            },
+            topK: {
+              type: 'number',
+              description: 'Max results to return (default: 10)'
+            },
+            tags: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Filter by tags (e.g., ["failure", "success", "architecture"])'
+            }
+          },
+          required: ['query']
+        }
+      });
+    }
+
     return tools;
   }
 
@@ -1119,6 +1177,43 @@ CTX:${codebaseContext.slice(0, 1500)}
           const query = input.query as string;
           console.log(`[CodeGenerator] Web search requested: ${query}`);
           return `Web search for: "${query}"\n\nNote: Direct web search is not currently available during code generation. Consider:\n1. Using established patterns from the codebase context\n2. Following standard library documentation conventions\n3. Using well-known solutions for common problems\n\nIf this information is critical, you may need to ask the user for clarification.`;
+        }
+
+        case 'god_query': {
+          if (!this.engine) {
+            return 'Memory engine not connected. Memory recall is unavailable.';
+          }
+
+          const query = input.query as string;
+          const topK = (input.topK as number) || 10;
+          const tags = input.tags as string[] | undefined;
+
+          try {
+            const results = await this.engine.query(query, {
+              topK,
+              filters: tags ? { tags } : undefined
+            });
+
+            if (results.length === 0) {
+              return `No memories found for: "${query}"\n\nThis might be a new topic. Proceed with the implementation using best practices.`;
+            }
+
+            // Format results compactly for code generation context
+            const formatted = results.map((r, i) => {
+              const entryTags = r.entry.metadata.tags?.join(', ') || 'none';
+              const score = (r.score * 100).toFixed(0);
+              const content = r.entry.content.length > 300
+                ? r.entry.content.substring(0, 300) + '...'
+                : r.entry.content;
+              return `[${i + 1}] (${score}% match, tags: ${entryTags})\n${content}`;
+            }).join('\n\n');
+
+            console.log(`[CodeGenerator] Memory query "${query}" returned ${results.length} results`);
+            return `Found ${results.length} relevant memories:\n\n${formatted}`;
+          } catch (err) {
+            const error = err as Error;
+            return `Error querying memory: ${error.message}`;
+          }
         }
 
         default:

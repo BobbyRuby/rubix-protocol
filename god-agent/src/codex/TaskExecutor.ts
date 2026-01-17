@@ -54,6 +54,7 @@ import {
 } from './types.js';
 import type { VerificationResult } from '../playwright/types.js';
 import type { WorkflowResult } from '../playwright/VerificationService.js';
+import { CodexLogger, getCodexLogger } from './CodexLogger.js';
 
 /**
  * Task submission request
@@ -131,9 +132,10 @@ export class TaskExecutor {
   private rubixOrchestrator?: RubixOrchestrator;
   private useRubixMode: boolean = false;
 
-  // Phased Executor (6-phase tokenized execution with Ollama routing)
+  // Phased Executor (6-phase tokenized execution with Claude hybrid approach)
+  // THIS IS NOW THE PRIMARY EXECUTION PATH
   private phasedExecutor?: PhasedExecutor;
-  private usePhasedExecution: boolean = false;
+  private usePhasedExecution: boolean = true;  // DEFAULT: Phased execution is now primary
 
   // Runtime Context (compressed capabilities context for this instance)
   private runtimeContext: RuntimeContext | undefined;
@@ -141,6 +143,9 @@ export class TaskExecutor {
   private currentTask: CodexTask | undefined;
   private workLog: WorkLogEntry[] = [];
   private isExecuting = false;
+
+  // Persistent file logger
+  private codexLogger: CodexLogger;
 
   constructor(
     engine: MemoryEngine,
@@ -166,6 +171,9 @@ export class TaskExecutor {
 
     // Initialize deep work manager
     this.deepWork = new DeepWorkManager();
+
+    // Initialize persistent file logger
+    this.codexLogger = getCodexLogger();
   }
 
   /**
@@ -204,6 +212,9 @@ export class TaskExecutor {
       if (this.usePhasedExecution) {
         return await this.executeWithPhased(task, options);
       }
+
+      // Start persistent file logging
+      this.codexLogger.startTask(task.id, task.description);
 
       // Start deep work session
       this.deepWork.startSession(task.id, options.deepWork);
@@ -289,7 +300,7 @@ export class TaskExecutor {
               } else {
                 this.log('failure', 'No response to knowledge gap questions');
                 task.status = TaskStatus.FAILED;
-                return {
+                const failResult = {
                   success: false,
                   summary: `Task blocked: knowledge gaps require clarification.\n\nQuestions:\n${criticalGaps.map(g => `- ${g.question}`).join('\n')}`,
                   subtasksCompleted: 0,
@@ -300,6 +311,8 @@ export class TaskExecutor {
                   decisions: [],
                   assumptions: []
                 };
+                this.codexLogger.endTask({ success: false, summary: failResult.summary, duration: failResult.duration });
+                return failResult;
               }
             }
           }
@@ -370,7 +383,7 @@ export class TaskExecutor {
               if (decomposition.needsClarification) {
                 this.log('failure', 'Still needs clarification after user response');
                 task.status = TaskStatus.FAILED;
-                return {
+                const failResult1 = {
                   success: false,
                   summary: 'Unable to decompose task even with clarification',
                   subtasksCompleted: 0,
@@ -381,11 +394,13 @@ export class TaskExecutor {
                   decisions: [],
                   assumptions: []
                 };
+                this.codexLogger.endTask({ success: false, summary: failResult1.summary, duration: failResult1.duration });
+                return failResult1;
               }
             } else {
               this.log('failure', 'Clarification timeout or no response');
               task.status = TaskStatus.FAILED;
-              return {
+              const failResult2 = {
                 success: false,
                 summary: 'Task decomposition blocked: awaiting clarification',
                 subtasksCompleted: 0,
@@ -396,22 +411,26 @@ export class TaskExecutor {
                 decisions: [],
                 assumptions: []
               };
+              this.codexLogger.endTask({ success: false, summary: failResult2.summary, duration: failResult2.duration });
+              return failResult2;
             }
           } else {
             // No communication channels - fail immediately
             this.log('failure', 'Cannot get clarification: no communication channels configured');
             task.status = TaskStatus.FAILED;
-            return {
+            const failResult3 = {
               success: false,
               summary: `Task needs clarification but no communication channels available.\n\nQuestions:\n${decomposition.clarificationText}`,
               subtasksCompleted: 0,
               subtasksFailed: 0,
-              filesModified: [],
+              filesModified: [] as string[],
               testsWritten: 0,
               duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
               decisions: [],
               assumptions: []
             };
+            this.codexLogger.endTask({ success: false, summary: failResult3.summary, duration: failResult3.duration });
+            return failResult3;
           }
         }
 
@@ -457,17 +476,19 @@ export class TaskExecutor {
                 // No response after timeout - fail gracefully
                 this.log('failure', 'No response to decision request - cannot proceed');
                 task.status = TaskStatus.FAILED;
-                return {
+                const failResult4 = {
                   success: false,
                   summary: `Task blocked: ${criticalAmbiguities.length} decision(s) needed.\n\nQuestions:\n${criticalAmbiguities.map(a => `- ${a.description}`).join('\n')}\n\nPlease answer via Telegram or god_codex_answer.`,
                   subtasksCompleted: 0,
                   subtasksFailed: 0,
-                  filesModified: [],
+                  filesModified: [] as string[],
                   testsWritten: 0,
                   duration: Date.now() - (task.startedAt?.getTime() || Date.now()),
                   decisions: [],
                   assumptions: []
                 };
+                this.codexLogger.endTask({ success: false, summary: failResult4.summary, duration: failResult4.duration });
+                return failResult4;
               }
             } else {
               // No communications configured - proceed with first option as default
@@ -566,6 +587,13 @@ export class TaskExecutor {
 
       // Store completion in memory
       await this.storeTaskCompletion(task, result);
+
+      // End persistent file logging
+      this.codexLogger.endTask({
+        success: result.success,
+        summary: result.summary,
+        duration: result.duration
+      });
 
       return result;
     } finally {
@@ -2088,6 +2116,7 @@ Summary: ${result.summary}`;
     const entry: WorkLogEntry = {
       id: randomUUID(),
       taskId: this.currentTask?.id || '',
+      subtaskId: undefined, // Will be set by subtask-specific logging
       timestamp: new Date(),
       type,
       message,
@@ -2095,6 +2124,9 @@ Summary: ${result.summary}`;
     };
 
     this.workLog.push(entry);
+
+    // Write to persistent file log
+    this.codexLogger.log(entry);
 
     // Send notifications if service is available
     if (this.notifications) {
@@ -2244,10 +2276,16 @@ Summary: ${result.summary}`;
   }
 
   /**
-   * Cancel current task
+   * Cancel current task (aborts running CLI execution if any)
    */
   cancel(): boolean {
     if (!this.currentTask) return false;
+
+    // Abort running CLI if any
+    if (this.codeGenerator?.isExecuting?.()) {
+      this.codeGenerator.abort();
+      console.log('[TaskExecutor] Aborted running CLI execution');
+    }
 
     this.currentTask.status = TaskStatus.CANCELLED;
     this.log('complete', 'Task cancelled by user');
@@ -2276,6 +2314,13 @@ Summary: ${result.summary}`;
   }
 
   /**
+   * Get the persistent file logger
+   */
+  getLogger(): CodexLogger {
+    return this.codexLogger;
+  }
+
+  /**
    * Clear work log
    */
   clearWorkLog(): void {
@@ -2283,10 +2328,10 @@ Summary: ${result.summary}`;
   }
 
   /**
-   * Check if currently executing
+   * Check if currently executing (includes CLI execution)
    */
   isRunning(): boolean {
-    return this.isExecuting;
+    return this.isExecuting || (this.codeGenerator?.isExecuting?.() ?? false);
   }
 
   /**
@@ -2360,6 +2405,20 @@ Summary: ${result.summary}`;
    */
   setCodeGenerator(codeGenerator: CodeGenerator): void {
     this.codeGenerator = codeGenerator;
+
+    // Wire memory engine for recall
+    codeGenerator.setMemoryEngine(this.engine);
+
+    // Wire heartbeat callback if communications is available
+    if (this.communications) {
+      codeGenerator.setOnHeartbeat((progress) => {
+        // Send progress notification via Telegram
+        const msg = `Subtask: ${progress.subtask.substring(0, 50)}...\nElapsed: ${Math.round(progress.elapsedMs / 60000)}m\nOutput: ${progress.stdoutLines} lines\n\n(Reply /cancel to abort)`;
+        this.communications?.notify?.('⏳ Still working...', msg, 'normal').catch((err: Error) => {
+          console.error('[TaskExecutor] Failed to send heartbeat notification:', err);
+        });
+      });
+    }
   }
 
   /**
@@ -2914,13 +2973,15 @@ ${wolframResults.join('\n')}
   }
 
   /**
-   * Enable Phased Execution mode - uses 6-phase tokenized flow with Ollama routing
-   * Reduces Claude API calls from 15-25 to 2-3 (90% reduction)
+   * Enable Phased Execution mode - uses 6-phase tokenized flow with Claude hybrid approach
+   * CLI Opus for thinking (phases 1-2), API Sonnet for doing (phases 3-4)
    */
   enablePhasedExecution(codebasePath?: string): void {
     const codebase = codebasePath || process.cwd();
     if (!this.phasedExecutor) {
-      this.phasedExecutor = new PhasedExecutor(codebase);
+      this.phasedExecutor = new PhasedExecutor(codebase, false, this.engine);
+    } else {
+      this.phasedExecutor.setMemoryEngine(this.engine);
     }
     this.usePhasedExecution = true;
     console.log('[TaskExecutor] Phased execution enabled (6-phase tokenized flow)');
@@ -2938,12 +2999,12 @@ ${wolframResults.join('\n')}
    * Execute task using PhasedExecutor (6-phase tokenized flow)
    *
    * Phases:
-   * 1. CONTEXT SCOUT (Claude) → CTX tokens
-   * 2. ARCHITECT (Ollama) → DES tokens
-   * 3. ENGINEER (Ollama) → PLAN tokens
-   * 4. VALIDATOR (Claude) → VAL tokens
+   * 1. CONTEXT SCOUT (CLI Opus) → CTX tokens
+   * 2. ARCHITECT (CLI Opus) → DES tokens
+   * 3. ENGINEER (API Sonnet) → PLAN tokens
+   * 4. VALIDATOR (API Sonnet) → VAL tokens
    * 5. EXECUTOR (Local) → file writes/commands
-   * 6. FIX LOOP (5 attempts before human)
+   * 6. FIX LOOP (Sonnet → Opus escalation)
    */
   private async executeWithPhased(
     task: CodexTask,
@@ -2954,9 +3015,12 @@ ${wolframResults.join('\n')}
     try {
       this.log('start', `Executing with PhasedExecutor (6-phase tokenized flow)`);
 
-      // Ensure phased executor exists
+      // Ensure phased executor exists with memory engine for learning
       if (!this.phasedExecutor) {
-        this.phasedExecutor = new PhasedExecutor(task.codebase);
+        this.phasedExecutor = new PhasedExecutor(task.codebase, false, this.engine);
+      } else {
+        // Ensure engine is always wired up
+        this.phasedExecutor.setMemoryEngine(this.engine);
       }
 
       // Wire escalation callback to communication manager
@@ -2985,7 +3049,7 @@ ${wolframResults.join('\n')}
       // Log stats
       const stats = this.phasedExecutor.getStats(result);
       this.log('complete', `Phased execution completed in ${result.duration}ms`);
-      this.log('progress', `Claude: ${result.claudeCalls}, Ollama: ${result.ollamaCalls}, Fix attempts: ${result.fixAttempts}`);
+      this.log('progress', `CLI: ${result.cliCalls}, API: ${result.apiCalls}, Fix attempts: ${result.fixAttempts}`);
       this.log('progress', `${stats.reduction}`);
 
       // Mark task complete
@@ -3006,7 +3070,7 @@ ${wolframResults.join('\n')}
       const taskResult: TaskResult = {
         success: result.success,
         summary: result.success
-          ? `Phased execution completed (${stats.claudeCalls} Claude, ${stats.ollamaCalls} Ollama calls)`
+          ? `Phased execution completed (${stats.cliCalls} CLI, ${stats.apiCalls} API calls)`
           : `Phased execution failed: ${result.error || 'Unknown error'}`,
         subtasksCompleted: result.success ? 6 : result.fixAttempts,
         subtasksFailed: result.success ? 0 : 1,

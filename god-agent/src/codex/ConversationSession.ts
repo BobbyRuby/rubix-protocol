@@ -7,7 +7,7 @@
 
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { PlanningSession } from './PlanningSession.js';
-import { PlanningAgent } from './PlanningAgent.js';
+import { PlanningAgent, type ImageContent } from './PlanningAgent.js';
 
 export interface ConversationExchange {
   role: 'user' | 'assistant';
@@ -39,6 +39,8 @@ export class ConversationSession {
         throw new Error('ANTHROPIC_API_KEY required for conversational mode');
       }
       this.agent = new PlanningAgent({ apiKey, codebaseRoot: this.codebase });
+      // Connect memory engine for recall
+      this.agent.setMemoryEngine(this.engine);
     }
     return this.agent;
   }
@@ -46,12 +48,15 @@ export class ConversationSession {
   /**
    * Send a message and get a response
    * Stores both in the conversation history
+   * @param userMessage Text message from user
+   * @param image Optional image attachment
    */
-  async chat(userMessage: string): Promise<string> {
-    // Store user message
+  async chat(userMessage: string, image?: ImageContent): Promise<string> {
+    // Store user message (note if image was attached)
+    const storedMessage = image ? `${userMessage} [Image attached]` : userMessage;
     this.exchanges.push({
       role: 'user',
-      content: userMessage,
+      content: storedMessage,
       timestamp: new Date()
     });
 
@@ -60,9 +65,9 @@ export class ConversationSession {
       `${e.role.toUpperCase()}: ${e.content}`
     ).join('\n\n');
 
-    // Get Claude response (conversational, no plan generation)
+    // Get Claude response (conversational, no plan generation, with optional image)
     const agent = this.getAgent();
-    const response = await agent.chat(context, userMessage);
+    const response = await agent.chat(context, userMessage, image);
 
     // Store assistant response
     this.exchanges.push({

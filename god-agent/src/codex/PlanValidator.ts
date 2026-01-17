@@ -13,7 +13,7 @@
 import { spawn } from 'child_process';
 import { COMPRESSION_SCHEMAS } from '../memory/CompressionSchemas.js';
 import type { ContextBundle } from './ContextScout.js';
-import type { DesignOutput, PlanOutput } from './OllamaReasoner.js';
+import type { DesignOutput, PlanOutput } from './ClaudeReasoner.js';
 
 /**
  * Validation result from Phase 4.
@@ -73,6 +73,14 @@ export class PlanValidator {
 ## Your Role
 You are VALIDATOR (quality) and GUARDIAN (security) combined.
 Review the proposed code changes for issues.
+
+## MEMORY RECALL (Do this FIRST)
+Before reviewing, query memory for relevant context:
+- mcp__rubix__god_query "security vulnerabilities {file_type}" - Past security issues in similar code
+- mcp__rubix__god_query "validation failures" - Previous validation failures to avoid
+- mcp__rubix__god_query "code patterns {domain}" - Established patterns in this codebase
+
+Use memory to inform your review. Don't repeat past mistakes.
 
 ## Context Tokens
 ${context.compressedToken}
@@ -147,29 +155,34 @@ Provide ONLY the structured sections above.`;
     return new Promise((resolve, reject) => {
       const args = [
         '-p', prompt,
-        '--allowedTools', 'Read,Grep'  // Limited tools for review
+        '--allowedTools', 'Read,Grep,mcp__rubix__god_query'  // Includes memory for past security issues
       ];
 
       console.log('[PlanValidator] Executing Claude Code CLI...');
 
       const child = spawn('claude', args, {
         cwd: this.codebasePath,
-        shell: true,
-        timeout: this.cliTimeout
+        shell: false,                    // Direct execution (not through cmd.exe)
+        windowsHide: true,               // No console window on Windows
+        stdio: ['pipe', 'pipe', 'pipe'], // Explicit pipe configuration
+        env: process.env                 // Full environment inheritance
       });
 
       let stdout = '';
       let stderr = '';
+      let resolved = false;
 
-      child.stdout?.on('data', (data) => {
+      child.stdout.on('data', (data) => {
         stdout += data.toString();
       });
 
-      child.stderr?.on('data', (data) => {
+      child.stderr.on('data', (data) => {
         stderr += data.toString();
       });
 
       child.on('close', (code) => {
+        if (resolved) return;
+        resolved = true;
         if (code === 0) {
           resolve(stdout);
         } else {
@@ -179,8 +192,18 @@ Provide ONLY the structured sections above.`;
       });
 
       child.on('error', (error) => {
+        if (resolved) return;
+        resolved = true;
         reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
       });
+
+      // Manual timeout (more reliable than spawn timeout option)
+      setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        child.kill('SIGTERM');
+        reject(new Error(`Claude CLI timed out after ${this.cliTimeout}ms`));
+      }, this.cliTimeout);
     });
   }
 

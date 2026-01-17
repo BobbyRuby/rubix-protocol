@@ -38,12 +38,26 @@ export interface ClaudeCodeResult {
 }
 
 /**
+ * Progress info sent during heartbeat
+ */
+export interface HeartbeatProgress {
+  /** Current prompt/subtask description (truncated) */
+  subtask: string;
+  /** Elapsed time in ms */
+  elapsedMs: number;
+  /** Number of stdout lines so far */
+  stdoutLines: number;
+  /** Last 200 chars of output */
+  lastOutput: string;
+}
+
+/**
  * Configuration for ClaudeCodeExecutor
  */
 export interface ClaudeCodeExecutorConfig {
   /** Working directory for claude CLI */
   cwd: string;
-  /** Timeout in ms (default: 5 minutes) */
+  /** Timeout in ms. Set to 0 or undefined to disable (run until completion). Default: 0 (disabled) */
   timeout?: number;
   /** Model to request (default: opus) */
   model?: 'opus' | 'sonnet' | 'haiku';
@@ -51,6 +65,12 @@ export interface ClaudeCodeExecutorConfig {
   allowEdits?: boolean;
   /** Max output tokens hint */
   maxTokens?: number;
+  /** Heartbeat callback - called every heartbeatInterval ms */
+  onHeartbeat?: (progress: HeartbeatProgress) => void;
+  /** Heartbeat interval in ms (default: 30 seconds) */
+  heartbeatInterval?: number;
+  /** Real-time stdout callback - called on EVERY chunk for live streaming */
+  onStdout?: (chunk: string, accumulated: string) => void;
 }
 
 /**
@@ -113,12 +133,17 @@ export class ClaudeCodeExecutor {
   private lastQuotaError: Date | null = null;
   private comms: CommunicationManager | undefined;
   private permissionDetector: PermissionDetector;
+  /** Abort controller for interrupting execution */
+  private abortController: AbortController | null = null;
+  /** Current subtask description for heartbeat */
+  private currentSubtask: string = '';
 
   constructor(config: ClaudeCodeExecutorConfig, comms?: CommunicationManager) {
     this.config = {
-      timeout: 5 * 60 * 1000, // 5 minutes default
+      timeout: 0, // Disabled by default - run until completion
       model: 'opus',
       allowEdits: true,
+      heartbeatInterval: 30 * 1000, // 30 seconds default (reduced for better visibility)
       ...config
     };
     this.comms = comms;
@@ -130,6 +155,44 @@ export class ClaudeCodeExecutor {
    */
   setComms(comms: CommunicationManager): void {
     this.comms = comms;
+  }
+
+  /**
+   * Update the working directory for CLI execution
+   */
+  setCwd(cwd: string): void {
+    this.config.cwd = cwd;
+  }
+
+  /**
+   * Set the heartbeat callback
+   */
+  setOnHeartbeat(callback: (progress: HeartbeatProgress) => void): void {
+    this.config.onHeartbeat = callback;
+  }
+
+  /**
+   * Set the real-time stdout streaming callback
+   */
+  setOnStdout(callback: (chunk: string, accumulated: string) => void): void {
+    this.config.onStdout = callback;
+  }
+
+  /**
+   * Abort the currently running CLI execution
+   */
+  abort(): void {
+    if (this.abortController) {
+      console.log('[ClaudeCodeExecutor] Abort requested');
+      this.abortController.abort();
+    }
+  }
+
+  /**
+   * Check if execution is currently in progress
+   */
+  isExecuting(): boolean {
+    return this.abortController !== null;
   }
 
   /**
@@ -307,6 +370,13 @@ export class ClaudeCodeExecutor {
    * Run Claude CLI with the given prompt
    */
   private async runCli(prompt: string, systemPrompt?: string): Promise<ClaudeCodeResult> {
+    // Store current subtask for heartbeat
+    this.currentSubtask = prompt.substring(0, 100);
+
+    // Create abort controller for this execution
+    this.abortController = new AbortController();
+    const startTime = Date.now();
+
     return new Promise((resolve) => {
       // Build the full prompt with system context
       let fullPrompt = prompt;
@@ -325,9 +395,9 @@ export class ClaudeCodeExecutor {
         args.push('--model', this.config.model);
       }
 
-      // Add allowedTools if edits allowed
+      // Add allowedTools if edits allowed (includes MCP memory tools for recall)
       if (this.config.allowEdits) {
-        args.push('--allowedTools', 'Edit,Write,Read,Glob,Grep,Bash');
+        args.push('--allowedTools', 'Edit,Write,Read,Glob,Grep,Bash,mcp__rubix__god_query,mcp__rubix__god_failure_query,mcp__rubix__god_store');
       }
 
       // Add prompt as final argument
@@ -338,17 +408,20 @@ export class ClaudeCodeExecutor {
       console.log(`[ClaudeCodeExecutor] Prompt length: ${fullPrompt.length} chars`);
 
       // Create RUBIX CLAUDE.md for instance context
+      // Pass cwd as BOTH codebase and projectPath to ensure the project warning is injected
+      // This tells spawned instances exactly where to work and what NOT to modify
       try {
         const claudeMdPath = existsSync(join(this.config.cwd, 'CLAUDE.md'))
           ? join(this.config.cwd, 'RUBIX-CLAUDE.md')
           : join(this.config.cwd, 'CLAUDE.md');
-        
+
         const claudeMdContent = SelfKnowledgeInjector.generateInstanceClaudeMd({
           subsystem: 'code_generator',
           codebase: this.config.cwd,
+          projectPath: this.config.cwd,  // Enables project warning in CLAUDE.md
           model: this.config.model
         });
-        
+
         writeFileSync(claudeMdPath, claudeMdContent, 'utf-8');
         console.log(`[ClaudeCodeExecutor] Created instance context: ${claudeMdPath}`);
       } catch (e) {
@@ -372,11 +445,70 @@ export class ClaudeCodeExecutor {
         env: process.env
       });
 
+      // Timeout ID - declared here for cleanup, set later if timeout enabled
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      // Cleanup function to clear intervals and abort controller
+      const cleanup = () => {
+        if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
+        if (timeoutId) clearTimeout(timeoutId);
+        this.abortController = null;
+      };
+
+      // Heartbeat interval - send progress updates
+      let heartbeatIntervalId: ReturnType<typeof setInterval> | null = null;
+      if (this.config.onHeartbeat && this.config.heartbeatInterval) {
+        heartbeatIntervalId = setInterval(() => {
+          if (resolved) {
+            if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
+            return;
+          }
+
+          const progress: HeartbeatProgress = {
+            subtask: this.currentSubtask,
+            elapsedMs: Date.now() - startTime,
+            stdoutLines: stdout.split('\n').length,
+            lastOutput: stdout.slice(-200)
+          };
+
+          this.config.onHeartbeat!(progress);
+        }, this.config.heartbeatInterval);
+      }
+
+      // Handle abort signal
+      const abortHandler = () => {
+        if (resolved) return;
+        resolved = true;
+        console.log('[ClaudeCodeExecutor] Abort signal received');
+        child.kill('SIGTERM');
+        cleanup();
+        resolve({
+          success: false,
+          output: stdout,
+          error: 'Aborted by user',
+          quotaExhausted: false,
+          cliUnavailable: false,
+          modelDowngraded: false,
+          filesCreated: [],
+          filesModified: []
+        });
+      };
+      this.abortController?.signal.addEventListener('abort', abortHandler, { once: true });
+
       child.stdout.on('data', async (data) => {
         const chunk = data.toString();
         stdout += chunk;
 
-        // Log progress for long-running operations
+        // Real-time streaming callback - call on EVERY chunk
+        if (this.config.onStdout) {
+          try {
+            this.config.onStdout(chunk, stdout);
+          } catch (e) {
+            console.error('[ClaudeCodeExecutor] onStdout callback error:', e);
+          }
+        }
+
+        // Log progress for long-running operations (every ~1000 chars)
         if (stdout.length % 1000 < 100) {
           console.log(`[ClaudeCodeExecutor] Received ${stdout.length} chars...`);
         }
@@ -385,6 +517,17 @@ export class ClaudeCodeExecutor {
         if (!permissionPending) {
           const permRequest = this.permissionDetector.detect(chunk);
           if (permRequest) {
+            // Check for auto-response (safe prompts like continuation)
+            const autoResponse = this.getAutoResponse(permRequest);
+            if (autoResponse !== null) {
+              console.log(`[ClaudeCodeExecutor] Auto-responding to ${permRequest.type || 'unknown'} prompt: "${autoResponse.replace(/\n/g, '\\n')}"`);
+              if (child.stdin && !child.stdin.destroyed) {
+                child.stdin.write(autoResponse);
+              }
+              this.permissionDetector.removePendingRequest(permRequest.id);
+              return; // Skip Telegram routing
+            }
+
             permissionPending = true;
             console.log(`[ClaudeCodeExecutor] Permission request detected: ${permRequest.tool}(${permRequest.command})`);
 
@@ -417,6 +560,7 @@ export class ClaudeCodeExecutor {
       child.on('error', (error) => {
         if (resolved) return;
         resolved = true;
+        cleanup();
         resolve({
           success: false,
           output: stdout,
@@ -432,6 +576,7 @@ export class ClaudeCodeExecutor {
       child.on('close', (code) => {
         if (resolved) return;
         resolved = true;
+        cleanup();
 
         const output = stdout.trim();
         const errorOutput = stderr.trim();
@@ -468,23 +613,26 @@ export class ClaudeCodeExecutor {
         }
       });
 
-      // Handle timeout (timeoutId unused but kept for potential future clearTimeout)
-      void setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        console.log(`[ClaudeCodeExecutor] Timeout after ${this.config.timeout}ms`);
-        child.kill('SIGTERM');
-        resolve({
-          success: false,
-          output: stdout,
-          error: 'Timeout exceeded',
-          quotaExhausted: false,
-          cliUnavailable: false,
-          modelDowngraded: false,
-          filesCreated: [],
-          filesModified: []
-        });
-      }, this.config.timeout!);
+      // Handle timeout - only if configured (non-zero)
+      if (this.config.timeout && this.config.timeout > 0) {
+        timeoutId = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          console.log(`[ClaudeCodeExecutor] Timeout after ${this.config.timeout}ms`);
+          child.kill('SIGTERM');
+          cleanup();
+          resolve({
+            success: false,
+            output: stdout,
+            error: 'Timeout exceeded',
+            quotaExhausted: false,
+            cliUnavailable: false,
+            modelDowngraded: false,
+            filesCreated: [],
+            filesModified: []
+          });
+        }, this.config.timeout);
+      }
     });
   }
 
@@ -538,7 +686,7 @@ export class ClaudeCodeExecutor {
       }
 
       if (this.config.allowEdits) {
-        args.push('--allowedTools', 'Edit,Write,Read,Glob,Grep,Bash');
+        args.push('--allowedTools', 'Edit,Write,Read,Glob,Grep,Bash,mcp__rubix__god_query,mcp__rubix__god_failure_query,mcp__rubix__god_store');
       }
 
       // Read prompt from file
@@ -714,6 +862,49 @@ export class ClaudeCodeExecutor {
       consecutiveQuotaErrors: this.consecutiveQuotaErrors,
       inQuotaCooldown: this.shouldSkipCliDueToQuota()
     };
+  }
+
+  /**
+   * Determine if a prompt should be auto-responded (safe prompts)
+   * Returns the response string if auto-response is appropriate, null if routing to Telegram
+   */
+  private getAutoResponse(request: PermissionRequest): string | null {
+    // Auto-continue for continuation prompts
+    if (request.type === 'continuation') {
+      return '\n';  // Send Enter
+    }
+
+    // Auto-yes for retry prompts (typically safe)
+    if (request.type === 'retry') {
+      return 'y\n';
+    }
+
+    // Auto-yes for low-risk confirmations (but NOT high-risk ones)
+    if (request.type === 'confirmation') {
+      // Check for high-risk indicators
+      const highRiskPatterns = [
+        /cannot be undone/i,
+        /irreversible/i,
+        /delete/i,
+        /remove.*permanently/i,
+        /force/i,
+        /destructive/i,
+        /overwrite all/i,
+        /production/i,
+        /deploy/i
+      ];
+
+      const isHighRisk = highRiskPatterns.some(p =>
+        p.test(request.fullPrompt) || p.test(request.command)
+      );
+
+      if (!isHighRisk) {
+        return 'y\n';
+      }
+    }
+
+    // Route everything else to Telegram (permission, selection, input, high-risk confirmation)
+    return null;
   }
 
   /**
