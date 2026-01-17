@@ -354,6 +354,13 @@ export class PlanningSession {
     // Load session metadata
     await this.loadSessionMeta();
 
+    // If resuming a non-cancelled session, reset to active so chat() works
+    if (this.meta.status !== 'active' && this.meta.status !== 'cancelled') {
+      console.log(`[PlanningSession] Resetting status from '${this.meta.status}' to 'active' for resume`);
+      this.meta.status = 'active';
+      await this.storeSessionMeta();
+    }
+
     // Load recent exchanges
     await this.loadRecentExchanges();
 
