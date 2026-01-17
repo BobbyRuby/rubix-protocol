@@ -46,7 +46,9 @@ import { TokenBudgetManager } from './curiosity/TokenBudgetManager.js';
 import { AutonomousDiscoveryEngine } from './curiosity/AutonomousDiscoveryEngine.js';
 import type { ProbeStatus } from './curiosity/types.js';
 import { memoryCompressor } from './memory/MemoryCompressor.js';
+import { LLMCompressor } from './memory/LLMCompressor.js';
 import type { MemoryType } from './memory/types.js';
+import { AutoRecall, type RecallResult, type RecalledMemory } from './memory/AutoRecall.js';
 import { SelfKnowledgeBootstrap } from './bootstrap/SelfKnowledgeBootstrap.js';
 import { SelfKnowledgeCompressor } from './prompts/SelfKnowledgeCompressor.js';
 import { createRuntimeContext } from './context/RuntimeContext.js';
@@ -1735,7 +1737,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'god_codex_log',
-    description: `Get the full work log from RUBIX.
+    description: `Get the full work log from RUBIX (in-memory, current session only).
 
     Shows chronological log of all actions taken:
     - Task start/complete
@@ -1743,10 +1745,46 @@ const TOOLS: Tool[] = [
     - Successes and failures
     - Decisions and escalations
 
-    Useful for understanding what RUBIX did.`,
+    Useful for understanding what RUBIX did. For persistent logs, use god_codex_logs.`,
     inputSchema: {
       type: 'object',
       properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'god_codex_logs',
+    description: `List and read persistent CODEX execution logs from disk.
+
+    Logs are stored in data/codex-logs/ with one file per task execution.
+    These persist across sessions and can be reviewed later.
+
+    Operations:
+    - list: List recent log files (default)
+    - read: Read a specific log file
+    - latest: Read the most recent log file
+
+    Examples:
+    - god_codex_logs() - List recent logs
+    - god_codex_logs({ action: "latest" }) - Read latest log
+    - god_codex_logs({ action: "read", filename: "codex_2026-01-16_abc123.log" }) - Read specific log`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'read', 'latest'],
+          description: 'Action to perform (default: list)'
+        },
+        filename: {
+          type: 'string',
+          description: 'Log filename to read (for action: read)'
+        },
+        limit: {
+          type: 'number',
+          description: 'Max files to list (default: 20)'
+        }
+      },
       required: []
     }
   },
@@ -1981,12 +2019,19 @@ const TOOLS: Tool[] = [
     name: 'god_lsp_start',
     description: `Start the Language Server Protocol integration.
 
-    Initializes TypeScript/JavaScript language server for:
-    - Go-to-definition
-    - Find references
-    - Diagnostics
-    - Symbol search
+    Supports 10 languages:
+    - TypeScript (.ts, .tsx) - typescript-language-server
+    - JavaScript (.js, .jsx, .mjs) - typescript-language-server
+    - PHP (.php) - intelephense
+    - CSS (.css, .scss, .less) - vscode-css-language-server
+    - HTML (.html, .htm) - vscode-html-language-server
+    - SQL (.sql) - sql-language-server
+    - Java (.java) - jdtls
+    - Python (.py) - pyright
+    - Go (.go) - gopls
+    - Rust (.rs) - rust-analyzer
 
+    Features: go-to-definition, find-references, diagnostics, symbol search.
     Must be called before using other LSP tools.`,
     inputSchema: {
       type: 'object',
@@ -2002,6 +2047,31 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'god_lsp_available',
+    description: `Check which language servers are installed and available.
+
+    Returns availability status for all 10 supported languages:
+    - typescript, javascript, php, css, html, sql, java, python, go, rust
+
+    For each language shows:
+    - Whether the server is installed
+    - The command being used
+    - Install instructions if not available
+
+    Use this to diagnose LSP issues or see what's supported.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        language: {
+          type: 'string',
+          description: 'Check specific language (optional, checks all if omitted)',
+          enum: ['typescript', 'javascript', 'php', 'css', 'html', 'sql', 'java', 'python', 'go', 'rust']
+        }
+      },
       required: []
     }
   },
@@ -3488,6 +3558,62 @@ const TOOLS: Tool[] = [
         }
       }
     }
+  },
+  // AutoRecall (Centralized Brain)
+  {
+    name: 'god_autorecall_config',
+    description: `Configure the AutoRecall system (centralized brain).
+
+    AutoRecall automatically queries memory before processing any tool call,
+    injecting relevant context into task execution. This makes the system
+    work as a true centralized brain that never forgets.
+
+    Options:
+    - enabled: Enable/disable AutoRecall
+    - topK: Number of memories to recall (default: 5)
+    - minScore: Minimum similarity score (default: 0.3)
+    - debug: Enable debug logging
+
+    With compressed memories, always-on recall is essentially free (~250 tokens per request).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: {
+          type: 'boolean',
+          description: 'Enable/disable AutoRecall'
+        },
+        topK: {
+          type: 'number',
+          description: 'Number of memories to recall (default: 5)',
+          minimum: 1,
+          maximum: 20
+        },
+        minScore: {
+          type: 'number',
+          description: 'Minimum similarity score (default: 0.3)',
+          minimum: 0,
+          maximum: 1
+        },
+        debug: {
+          type: 'boolean',
+          description: 'Enable debug logging'
+        }
+      }
+    }
+  },
+  {
+    name: 'god_autorecall_status',
+    description: `Get AutoRecall system status and configuration.
+
+    Shows:
+    - Whether AutoRecall is enabled
+    - Current configuration (topK, minScore, debug)
+    - Number of excluded tools
+    - Last recall result (if any)`,
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
   }
 ];
 
@@ -3541,10 +3667,23 @@ class GodAgentMCPServer {
   private curiosityTracker: CuriosityTracker | null = null;
   private tokenBudget: TokenBudgetManager | null = null;
   private discoveryEngine: AutonomousDiscoveryEngine | null = null;
+  // LLM compression
+  private llmCompressor: LLMCompressor | null = null;
+  // Automated memory recall (centralized brain)
+  private autoRecall: AutoRecall;
+  private _currentRecallResult: RecallResult | null = null;
 
   constructor() {
     this.dataDir = process.env.GOD_AGENT_DATA_DIR || './data';
     this.configManager = ConfigurationManager.getInstance();
+
+    // Initialize AutoRecall (centralized brain)
+    this.autoRecall = new AutoRecall({
+      enabled: true,
+      topK: 5,
+      minScore: 0.3,
+      debug: process.env.AUTORECALL_DEBUG === 'true'
+    });
 
     // Try to load configuration from file
     try {
@@ -3574,8 +3713,26 @@ class GodAgentMCPServer {
         dataDir: this.dataDir
       });
       await this.engine.initialize();
+
+      // Wire AutoRecall to the engine (enables centralized brain from any entry point)
+      this.autoRecall.setEngine(this.engine);
     }
     return this.engine;
+  }
+
+  private getLLMCompressor(): LLMCompressor {
+    if (!this.llmCompressor) {
+      this.llmCompressor = new LLMCompressor({
+        anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+        model: process.env.RUBIX_MODEL || 'claude-opus-4-5-20251101',
+        ollamaConfig: process.env.OLLAMA_ENDPOINT ? {
+          provider: 'ollama',
+          model: process.env.OLLAMA_MODEL || 'qwen2.5-coder:32b',
+          apiEndpoint: process.env.OLLAMA_ENDPOINT || 'http://localhost:11434'
+        } : undefined
+      });
+    }
+    return this.llmCompressor;
   }
 
   private async getScheduler(): Promise<SchedulerDaemon> {
@@ -3715,6 +3872,28 @@ class GodAgentMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
+      // ==========================================
+      // AUTORECALL: Centralized Brain Hook
+      // Automatically recall relevant memories before processing any tool
+      // ==========================================
+      try {
+        // Ensure engine is initialized for AutoRecall
+        await this.getEngine();
+
+        // Perform automated recall (skip for excluded tools like god_query, god_store)
+        this._currentRecallResult = await this.autoRecall.recall(name, args);
+
+        if (this._currentRecallResult.memories.length > 0 && process.env.AUTORECALL_DEBUG === 'true') {
+          console.error(`[AutoRecall] ${name}: Recalled ${this._currentRecallResult.memories.length} memories in ${this._currentRecallResult.recallTimeMs}ms`);
+        }
+      } catch (recallError) {
+        // AutoRecall failures should not block the request
+        if (process.env.AUTORECALL_DEBUG === 'true') {
+          console.error(`[AutoRecall] Error: ${recallError instanceof Error ? recallError.message : String(recallError)}`);
+        }
+        this._currentRecallResult = null;
+      }
+
       try {
         switch (name) {
           case 'god_store':
@@ -3808,6 +3987,8 @@ class GodAgentMCPServer {
             return await this.handleCodexCancel();
           case 'god_codex_log':
             return await this.handleCodexLog();
+          case 'god_codex_logs':
+            return await this.handleCodexLogs(args);
           case 'god_codex_wait':
             return await this.handleCodexWait(args);
 
@@ -3839,6 +4020,8 @@ class GodAgentMCPServer {
             return await this.handleLspStart(args);
           case 'god_lsp_stop':
             return await this.handleLspStop();
+          case 'god_lsp_available':
+            return await this.handleLspAvailable(args);
           case 'god_lsp_definition':
             return await this.handleLspDefinition(args);
           case 'god_lsp_references':
@@ -4012,6 +4195,12 @@ class GodAgentMCPServer {
           case 'god_recompress_all':
             return await this.handleRecompressAll(args);
 
+          // AutoRecall (Centralized Brain)
+          case 'god_autorecall_config':
+            return await this.handleAutoRecallConfig(args);
+          case 'god_autorecall_status':
+            return await this.handleAutoRecallStatus();
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -4021,24 +4210,131 @@ class GodAgentMCPServer {
           content: [{ type: 'text', text: `Error: ${message}` }],
           isError: true
         };
+      } finally {
+        // Cleanup recall result after request completes
+        this._currentRecallResult = null;
       }
     });
+  }
+
+  /**
+   * Get recalled memories for current request (available to handlers)
+   */
+  get recalledMemories(): RecalledMemory[] {
+    return this._currentRecallResult?.memories ?? [];
+  }
+
+  /**
+   * Get full recall result for current request
+   */
+  get currentRecallResult(): RecallResult | null {
+    return this._currentRecallResult;
+  }
+
+  // ===========================================================================
+  // AUTORECALL HANDLERS (Centralized Brain)
+  // ===========================================================================
+
+  private async handleAutoRecallConfig(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      enabled: z.boolean().optional(),
+      topK: z.number().min(1).max(20).optional(),
+      minScore: z.number().min(0).max(1).optional(),
+      debug: z.boolean().optional()
+    }).parse(args);
+
+    // Update config
+    this.autoRecall.configure({
+      enabled: input.enabled,
+      topK: input.topK,
+      minScore: input.minScore,
+      debug: input.debug
+    });
+
+    const config = this.autoRecall.getConfig();
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          message: 'AutoRecall configuration updated',
+          config: {
+            enabled: config.enabled,
+            topK: config.topK,
+            minScore: config.minScore,
+            debug: config.debug,
+            excludedToolsCount: config.excludeTools.length
+          }
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleAutoRecallStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const config = this.autoRecall.getConfig();
+    const lastResult = this.autoRecall.getLastRecallResult();
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          status: config.enabled ? 'enabled' : 'disabled',
+          config: {
+            enabled: config.enabled,
+            topK: config.topK,
+            minScore: config.minScore,
+            debug: config.debug,
+            expandCompressed: config.expandCompressed,
+            excludedToolsCount: config.excludeTools.length
+          },
+          lastRecall: lastResult ? {
+            memoriesFound: lastResult.memories.length,
+            context: lastResult.context.slice(0, 100) + (lastResult.context.length > 100 ? '...' : ''),
+            recallTimeMs: lastResult.recallTimeMs,
+            skipped: lastResult.skipped,
+            skipReason: lastResult.skipReason
+          } : null,
+          description: 'AutoRecall automatically queries memory before processing any tool call, making the system work as a centralized brain that never forgets relevant context.'
+        }, null, 2)
+      }]
+    };
   }
 
   private async handleStore(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = StoreInputSchema.parse(args);
     const engine = await this.getEngine();
 
-    // Compress content using the specified or auto-detected type
-    const compressionResult = memoryCompressor.encode(
-      input.content,
-      input.type as MemoryType | undefined
-    );
-    const detectedType = input.type || memoryCompressor.detectTypeFromContent(input.content);
+    const originalLength = input.content.length;
+    let content = input.content;
+    let compressionMethod = 'none';
+    const tags = [...(input.tags || [])];
+
+    // Use LLM compression if available
+    const llmCompressor = this.getLLMCompressor();
+    if (llmCompressor.isAvailable()) {
+      content = await llmCompressor.compress(input.content);
+      compressionMethod = 'llm';
+      tags.push('llm-compressed');
+    } else {
+      // Fallback to legacy compression
+      const detectedType = input.type || memoryCompressor.detectTypeFromContent(input.content);
+      const compressionResult = memoryCompressor.encode(
+        input.content,
+        input.type as MemoryType | undefined
+      );
+      content = compressionResult.compressed;
+      compressionMethod = 'legacy';
+      tags.push('compressed', `type:${detectedType}`);
+    }
+
+    const compressedLength = content.length;
+    const ratio = originalLength > 0 ? 1 - (compressedLength / originalLength) : 0;
+    const tokensSaved = Math.round((originalLength - compressedLength) / 4); // ~4 chars per token
 
     // Store the compressed content
-    const entry = await engine.store(compressionResult.compressed, {
-      tags: [...(input.tags || []), 'compressed', `type:${detectedType}`],
+    const entry = await engine.store(content, {
+      tags,
       source: parseSource(input.source),
       importance: input.importance,
       parentIds: input.parentIds,
@@ -4047,9 +4343,9 @@ class GodAgentMCPServer {
       agentId: input.agentId,
       context: {
         compressed: true,
-        originalType: detectedType,
-        compressionRatio: compressionResult.ratio,
-        tokensSaved: compressionResult.tokensSaved
+        compressionMethod,
+        originalLength,
+        compressedLength
       }
     });
 
@@ -4061,11 +4357,11 @@ class GodAgentMCPServer {
           id: entry.id,
           lScore: entry.provenance.lScore,
           lineageDepth: entry.provenance.lineageDepth,
-          compressed: compressionResult.compressed,
-          type: detectedType,
-          ratio: Math.round(compressionResult.ratio * 100) + '%',
-          tokensSaved: compressionResult.tokensSaved,
-          message: `Stored with compression (${Math.round(compressionResult.ratio * 100)}% saved, ${compressionResult.tokensSaved} tokens)`
+          compressed: content,
+          compressionMethod,
+          ratio: Math.round(ratio * 100) + '%',
+          tokensSaved,
+          message: `Stored with ${compressionMethod} compression (${Math.round(ratio * 100)}% saved, ${tokensSaved} tokens)`
         }, null, 2)
       }]
     };
@@ -5481,6 +5777,12 @@ class GodAgentMCPServer {
             codebaseRoot: process.cwd(),
             extendedThinking: llmConfig.extendedThinking
           });
+
+          // Wire CommunicationManager BEFORE setCodeGenerator so heartbeat callback gets wired
+          const comms = this.getCommunicationManager();
+          this.taskExecutor.setCommunications(comms);
+          codeGenerator.setComms(comms);
+
           this.taskExecutor.setCodeGenerator(codeGenerator);
 
           // Set extended thinking on TaskExecutor for budget calculation
@@ -5535,11 +5837,7 @@ class GodAgentMCPServer {
           this.taskExecutor.setCodeReviewer(this.reviewer);
           console.log('[MCP Server] CodeReviewer wired - RUBIX will self-review generated code');
 
-          // Wire CommunicationManager for escalations (Telegram, Phone, SMS, etc.)
-          const comms = this.getCommunicationManager();
-          this.taskExecutor.setCommunications(comms);
-          codeGenerator.setComms(comms);
-          console.log('[MCP Server] CommunicationManager wired - escalations and permission routing enabled');
+          console.log('[MCP Server] CommunicationManager wired - escalations, permission routing, and heartbeat enabled');
 
           // Generate RuntimeContext - compressed capabilities context for this instance
           const configuredChannels = comms.getConfiguredChannels?.() || [];
@@ -5595,10 +5893,19 @@ class GodAgentMCPServer {
       };
     }
 
+    // Inject recalled memories into context (centralized brain)
+    let specification = input.specification || '';
+    if (this.recalledMemories.length > 0) {
+      const recalledContext = this.recalledMemories
+        .map(m => `- ${m.content.slice(0, 300)}${m.content.length > 300 ? '...' : ''} (score: ${m.score.toFixed(2)})`)
+        .join('\n');
+      specification = `[Recalled Context from Memory]\n${recalledContext}\n\n${specification}`;
+    }
+
     // Start execution (async, don't await completion for long tasks)
     const submission = {
       description: input.description,
-      specification: input.specification,
+      specification,
       codebase: input.codebase,
       constraints: input.constraints,
       verificationPlan: input.verificationUrl ? {
@@ -5865,6 +6172,129 @@ class GodAgentMCPServer {
             entries: [],
             count: 0,
             message: 'No work log available.'
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleCodexLogs(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      action: z.enum(['list', 'read', 'latest']).optional().default('list'),
+      filename: z.string().optional(),
+      limit: z.number().optional().default(20)
+    }).parse(args || {});
+
+    try {
+      await this.getEngine();
+      const executor = await this.getTaskExecutor();
+      const logger = executor.getLogger();
+
+      switch (input.action) {
+        case 'list': {
+          const logs = logger.listLogs(input.limit);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                action: 'list',
+                logDir: 'data/codex-logs/',
+                currentLogPath: logger.getCurrentLogPath(),
+                files: logs.map(f => ({
+                  filename: f.filename,
+                  taskId: f.taskId,
+                  createdAt: f.createdAt.toISOString(),
+                  entryCount: f.entryCount,
+                  sizeKB: Math.round(f.sizeBytes / 1024 * 10) / 10
+                })),
+                totalFiles: logs.length
+              }, null, 2)
+            }]
+          };
+        }
+
+        case 'read': {
+          if (!input.filename) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  error: 'filename required for read action'
+                }, null, 2)
+              }]
+            };
+          }
+          const content = logger.readLog(input.filename);
+          if (!content) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  error: `Log file not found: ${input.filename}`
+                }, null, 2)
+              }]
+            };
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                action: 'read',
+                filename: input.filename,
+                content: content
+              }, null, 2)
+            }]
+          };
+        }
+
+        case 'latest': {
+          const latest = logger.readLatestLog();
+          if (!latest) {
+            return {
+              content: [{
+                type: 'text',
+                text: JSON.stringify({
+                  success: false,
+                  error: 'No log files found'
+                }, null, 2)
+              }]
+            };
+          }
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                action: 'latest',
+                filename: latest.filename,
+                content: latest.content
+              }, null, 2)
+            }]
+          };
+        }
+
+        default:
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: `Unknown action: ${input.action}`
+              }, null, 2)
+            }]
+          };
+      }
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to access logs'
           }, null, 2)
         }]
       };
@@ -6658,6 +7088,58 @@ class GodAgentMCPServer {
           text: JSON.stringify({
             success: true,
             message: 'All LSP servers stopped'
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleLspAvailable(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const caps = await this.getCapabilities();
+    const input = args as { language?: string } | undefined;
+
+    try {
+      let results;
+      if (input?.language) {
+        // Check specific language
+        const result = await caps.checkLspAvailability(input.language);
+        results = [result];
+      } else {
+        // Check all languages
+        results = await caps.checkAllLspAvailability();
+      }
+
+      const available = results.filter(r => r.available);
+      const unavailable = results.filter(r => !r.available);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            summary: {
+              available: available.length,
+              unavailable: unavailable.length,
+              total: results.length
+            },
+            servers: results.map(r => ({
+              language: r.languageId,
+              name: r.name,
+              available: r.available,
+              command: r.command,
+              ...(r.installInstructions && { installInstructions: r.installInstructions }),
+              ...(r.error && { error: r.error })
+            }))
           }, null, 2)
         }]
       };
@@ -9333,23 +9815,34 @@ god_comms_setup mode="set" channel="email" config={
 
     const engine = await this.getEngine();
     const shouldExpand = input.expand !== false;
+    const llmCompressor = this.getLLMCompressor();
 
     const results = await engine.query(input.query, {
       topK: input.topK || 10,
       filters: { tags: input.tags }
     });
 
-    const expandedResults = results.map(r => {
+    // Use Promise.all since LLM decompression is async
+    const expandedResults = await Promise.all(results.map(async r => {
       const tags = r.entry.metadata.tags || [];
-      const isCompressed = tags.includes('compressed');
+      const isLLMCompressed = tags.includes('llm-compressed');
+      const isLegacyCompressed = tags.includes('compressed');
       let content = r.entry.content;
+      let compressionMethod = 'none';
 
-      // Expand if compressed and expansion requested
-      if (shouldExpand && isCompressed) {
-        // Extract type from tags (format: "type:arch_insight")
-        const typeTag = tags.find((t: string) => t.startsWith('type:'));
-        const memType = typeTag ? typeTag.replace('type:', '') : undefined;
-        content = memoryCompressor.decode(r.entry.content, memType as import('./memory/types.js').MemoryType);
+      if (shouldExpand) {
+        // LLM compressed entries - use LLM decompression
+        if (isLLMCompressed && llmCompressor.isAvailable()) {
+          content = await llmCompressor.decompress(r.entry.content);
+          compressionMethod = 'llm';
+        }
+        // Legacy compressed entries - use regex decoder
+        else if (isLegacyCompressed) {
+          const typeTag = tags.find((t: string) => t.startsWith('type:'));
+          const memType = typeTag ? typeTag.replace('type:', '') : undefined;
+          content = memoryCompressor.decode(r.entry.content, memType as import('./memory/types.js').MemoryType);
+          compressionMethod = 'legacy';
+        }
       }
 
       return {
@@ -9357,10 +9850,11 @@ god_comms_setup mode="set" channel="email" config={
         content,
         score: r.score,
         tags,
-        compressed: isCompressed,
+        compressed: isLLMCompressed || isLegacyCompressed,
+        compressionMethod,
         type: tags.find((t: string) => t.startsWith('type:'))?.replace('type:', '')
       };
-    });
+    }));
 
     return {
       content: [{
