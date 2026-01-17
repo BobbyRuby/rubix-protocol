@@ -45,10 +45,10 @@ export class ContextScout {
   private polyglotContext: string;
   private cliTimeout: number;
 
-  constructor(codebasePath: string, polyglotContext = '', cliTimeout = 300000) {
+  constructor(codebasePath: string, polyglotContext = '', cliTimeout = 0) {
     this.codebasePath = codebasePath;
     this.polyglotContext = polyglotContext;
-    this.cliTimeout = cliTimeout;
+    this.cliTimeout = cliTimeout; // 0 = no timeout
   }
 
   /**
@@ -181,13 +181,15 @@ Begin your research now.`;
         reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
       });
 
-      // Manual timeout (more reliable than spawn timeout option)
-      setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        child.kill('SIGTERM');
-        reject(new Error(`Claude CLI timed out after ${this.cliTimeout}ms`));
-      }, this.cliTimeout);
+      // Manual timeout (only if cliTimeout > 0, otherwise run until completion)
+      if (this.cliTimeout > 0) {
+        setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          child.kill('SIGTERM');
+          reject(new Error(`Claude CLI timed out after ${this.cliTimeout}ms`));
+        }, this.cliTimeout);
+      }
     });
   }
 
@@ -305,6 +307,6 @@ Begin your research now.`;
 }
 
 // Factory function
-export function createContextScout(codebasePath: string, polyglotContext = ''): ContextScout {
-  return new ContextScout(codebasePath, polyglotContext);
+export function createContextScout(codebasePath: string, polyglotContext = '', cliTimeout = 0): ContextScout {
+  return new ContextScout(codebasePath, polyglotContext, cliTimeout);
 }
