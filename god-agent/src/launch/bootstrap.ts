@@ -156,9 +156,10 @@ export function setupShutdown(cleanup: () => Promise<void>): void {
     await shutdown('uncaughtException');
   });
 
-  process.on('unhandledRejection', async (reason) => {
-    console.error('[Fatal] Unhandled rejection:', reason);
-    await shutdown('unhandledRejection');
+  process.on('unhandledRejection', (reason) => {
+    // Log but DON'T exit - fire-and-forget async operations can reject after task completion
+    // Exiting here would crash the daemon when a task completes successfully
+    console.error('[Warning] Unhandled rejection (non-fatal):', reason);
   });
 }
 
