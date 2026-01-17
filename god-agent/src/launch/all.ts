@@ -11,6 +11,8 @@
  * - Communication manager
  */
 
+import fs from 'fs';
+import path from 'path';
 import { bootstrap, setupShutdown, printBanner } from './bootstrap.js';
 import { requireEnvInteractive, ENV_REQUIREMENTS } from './env.js';
 
@@ -27,6 +29,11 @@ interface Service {
 
 async function main(): Promise<void> {
   printBanner('Full Stack');
+
+  // Write PID file for /restart command
+  const pidFile = path.join(process.cwd(), 'god-agent.pid');
+  fs.writeFileSync(pidFile, process.pid.toString());
+  console.log(`[Launch] PID ${process.pid} written to god-agent.pid`);
 
   // Validate environment - prompts for missing required config
   await requireEnvInteractive(ENV_REQUIREMENTS.all, 'Full Stack');
@@ -109,6 +116,8 @@ async function main(): Promise<void> {
     console.log('[Launch] Escalation responses will be forwarded through TelegramBot');
   } else {
     console.log('[Launch] Telegram bot skipped (TELEGRAM_BOT_TOKEN not set)');
+    // No TelegramBot - if Telegram channel exists (chatId only), let it poll itself
+    comms.setTelegramBotActive(false);
   }
 
   // 4. Scheduler Daemon

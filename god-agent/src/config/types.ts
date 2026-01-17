@@ -24,6 +24,23 @@ export interface WorkModeConfig {
 }
 
 /**
+ * Auto-decision configuration
+ * Controls behavior when user doesn't respond to escalations
+ */
+export interface AutoDecisionConfig {
+  /** Enable auto-decision on timeout */
+  enabled: boolean;
+  /** Primary timeout before auto-decision (ms) - default 10 minutes */
+  primaryTimeoutMs: number;
+  /** Override window after auto-decision notification (ms) - default 5 minutes */
+  overrideWindowMs: number;
+  /** Strategy for picking auto-decision: first_option, random, intelligent */
+  strategy: 'first_option' | 'random' | 'intelligent';
+  /** Notify user about auto-decision */
+  notifyUser: boolean;
+}
+
+/**
  * Escalation configuration
  * Controls when and how RUBIX escalates to humans
  */
@@ -34,6 +51,8 @@ export interface EscalationConfig {
   autonomousDecisions: string[];
   /** Decision types that always require user approval */
   requireApproval: string[];
+  /** Auto-decision config for handling timeout scenarios */
+  autoDecision?: AutoDecisionConfig;
 }
 
 /**
@@ -362,7 +381,14 @@ export const DEFAULT_CODEX_CONFIGURATION: CodexConfiguration = {
       'architecture_changes',
       'security_sensitive_changes',
       'production_deployment'
-    ]
+    ],
+    autoDecision: {
+      enabled: true,
+      primaryTimeoutMs: 600000,    // 10 minutes
+      overrideWindowMs: 300000,    // 5 minutes
+      strategy: 'first_option',
+      notifyUser: true
+    }
   },
 
   workMode: {

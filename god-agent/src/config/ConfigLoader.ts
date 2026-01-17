@@ -204,6 +204,18 @@ escalation:
       yaml += `    - ${approval}\n`;
     }
 
+    // Add autoDecision config if present
+    if (config.escalation.autoDecision) {
+      yaml += `  # Auto-decision settings for timeout scenarios
+  autoDecision:
+    enabled: ${config.escalation.autoDecision.enabled}
+    primaryTimeoutMs: ${config.escalation.autoDecision.primaryTimeoutMs}
+    overrideWindowMs: ${config.escalation.autoDecision.overrideWindowMs}
+    strategy: "${config.escalation.autoDecision.strategy}"
+    notifyUser: ${config.escalation.autoDecision.notifyUser}
+`;
+    }
+
     yaml += `
 # Work Mode Settings
 # Controls notification behavior and interruptions
@@ -437,7 +449,8 @@ memory:
           raw.escalation,
           'requireApproval',
           DEFAULT_CODEX_CONFIGURATION.escalation.requireApproval
-        )
+        ),
+        autoDecision: this.parseAutoDecisionConfig(raw.escalation)
       },
 
       workMode: {
@@ -578,6 +591,40 @@ memory:
       webhookUrl,
       username: typeof discordObj.username === 'string' ? discordObj.username : undefined,
       avatarUrl: typeof discordObj.avatarUrl === 'string' ? discordObj.avatarUrl : undefined
+    };
+  }
+
+  /**
+   * Parse auto-decision configuration
+   */
+  private parseAutoDecisionConfig(escalation: unknown): {
+    enabled: boolean;
+    primaryTimeoutMs: number;
+    overrideWindowMs: number;
+    strategy: 'first_option' | 'random' | 'intelligent';
+    notifyUser: boolean;
+  } | undefined {
+    const { DEFAULT_CODEX_CONFIGURATION } = require('./types.js');
+    const defaults = DEFAULT_CODEX_CONFIGURATION.escalation.autoDecision;
+
+    if (!escalation || typeof escalation !== 'object') return defaults;
+    const esc = escalation as Record<string, unknown>;
+    const autoDecision = esc.autoDecision;
+    if (!autoDecision || typeof autoDecision !== 'object') return defaults;
+    const adObj = autoDecision as Record<string, unknown>;
+
+    // Validate strategy
+    let strategy: 'first_option' | 'random' | 'intelligent' = defaults.strategy;
+    if (adObj.strategy === 'first_option' || adObj.strategy === 'random' || adObj.strategy === 'intelligent') {
+      strategy = adObj.strategy;
+    }
+
+    return {
+      enabled: typeof adObj.enabled === 'boolean' ? adObj.enabled : defaults.enabled,
+      primaryTimeoutMs: typeof adObj.primaryTimeoutMs === 'number' ? adObj.primaryTimeoutMs : defaults.primaryTimeoutMs,
+      overrideWindowMs: typeof adObj.overrideWindowMs === 'number' ? adObj.overrideWindowMs : defaults.overrideWindowMs,
+      strategy,
+      notifyUser: typeof adObj.notifyUser === 'boolean' ? adObj.notifyUser : defaults.notifyUser
     };
   }
 

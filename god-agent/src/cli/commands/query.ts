@@ -8,6 +8,27 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { MemoryEngine, MemorySource } from '../../index.js';
+import { getLLMCompressor } from '../../memory/LLMCompressor.js';
+
+/**
+ * Decompress LLM-compressed content.
+ */
+async function decompressContent(content: string, tags: string[]): Promise<string> {
+  if (!tags.includes('llm-compressed')) {
+    return content;
+  }
+
+  try {
+    const compressor = getLLMCompressor();
+    if (compressor.isAvailable()) {
+      return await compressor.decompress(content);
+    }
+  } catch {
+    // Not initialized or failed
+  }
+
+  return content;
+}
 
 export const queryCommand = new Command('query')
   .description('Search memories by semantic similarity')
@@ -71,24 +92,30 @@ export const queryCommand = new Command('query')
       }
 
       if (options.output === 'json') {
-        const output = results.map(r => ({
-          id: r.entry.id,
-          content: r.entry.content,
-          score: r.score,
-          lScore: r.lScore,
-          metadata: r.entry.metadata,
-          provenance: r.entry.provenance
+        const output = await Promise.all(results.map(async r => {
+          const tags = r.entry.metadata.tags || [];
+          const content = await decompressContent(r.entry.content, tags);
+          return {
+            id: r.entry.id,
+            content,
+            score: r.score,
+            lScore: r.lScore,
+            metadata: r.entry.metadata,
+            provenance: r.entry.provenance
+          };
         }));
         console.log(JSON.stringify(output, null, 2));
       } else {
         console.log();
         for (let i = 0; i < results.length; i++) {
           const r = results[i];
+          const tags = r.entry.metadata.tags || [];
+          const content = await decompressContent(r.entry.content, tags);
           console.log(chalk.cyan(`[${i + 1}]`), chalk.dim('Score:'), r.score.toFixed(4));
           console.log(chalk.dim('    ID:'), r.entry.id);
-          console.log(chalk.dim('    Content:'), r.entry.content.substring(0, 80) + (r.entry.content.length > 80 ? '...' : ''));
-          if (r.entry.metadata.tags.length > 0) {
-            console.log(chalk.dim('    Tags:'), r.entry.metadata.tags.join(', '));
+          console.log(chalk.dim('    Content:'), content.substring(0, 80) + (content.length > 80 ? '...' : ''));
+          if (tags.length > 0) {
+            console.log(chalk.dim('    Tags:'), tags.join(', '));
           }
           if (options.trace && r.lScore !== undefined) {
             console.log(chalk.dim('    L-Score:'), r.lScore.toFixed(4));

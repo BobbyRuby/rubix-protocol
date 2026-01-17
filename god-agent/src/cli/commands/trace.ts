@@ -8,6 +8,27 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { MemoryEngine } from '../../index.js';
+import { getLLMCompressor } from '../../memory/LLMCompressor.js';
+
+/**
+ * Decompress LLM-compressed content.
+ */
+async function decompressContent(content: string, tags: string[]): Promise<string> {
+  if (!tags.includes('llm-compressed')) {
+    return content;
+  }
+
+  try {
+    const compressor = getLLMCompressor();
+    if (compressor.isAvailable()) {
+      return await compressor.decompress(content);
+    }
+  } catch {
+    // Not initialized or failed
+  }
+
+  return content;
+}
 
 export const traceCommand = new Command('trace')
   .description('Trace provenance lineage for an entry')
@@ -54,7 +75,9 @@ export const traceCommand = new Command('trace')
       } else {
         console.log();
         console.log(chalk.cyan('Entry:'), id);
-        console.log(chalk.dim('Content:'), entry.content.substring(0, 100) + (entry.content.length > 100 ? '...' : ''));
+        const tags = entry.metadata.tags || [];
+        const content = await decompressContent(entry.content, tags);
+        console.log(chalk.dim('Content:'), content.substring(0, 100) + (content.length > 100 ? '...' : ''));
         console.log();
 
         console.log(chalk.cyan('Provenance Summary:'));
@@ -68,7 +91,7 @@ export const traceCommand = new Command('trace')
         console.log(chalk.cyan('Lineage Tree:'));
         const rootNode = chain.nodes.get(id);
         if (rootNode) {
-          printTree(rootNode, engine, '', true);
+          await printTree(rootNode, engine, '', true);
         }
       }
 
@@ -79,15 +102,20 @@ export const traceCommand = new Command('trace')
     }
   });
 
-function printTree(
+async function printTree(
   node: { entryId: string; depth: number; confidence: number; relevance: number; lScore: number; children: unknown[] },
   engine: MemoryEngine,
   prefix: string,
   isLast: boolean
-): void {
+): Promise<void> {
   const connector = isLast ? '└── ' : '├── ';
   const entry = engine.getEntry(node.entryId);
-  const contentPreview = entry?.content.substring(0, 40) ?? '(unknown)';
+  let contentPreview = '(unknown)';
+  if (entry) {
+    const tags = entry.metadata.tags || [];
+    const content = await decompressContent(entry.content, tags);
+    contentPreview = content.substring(0, 40);
+  }
 
   console.log(
     prefix + connector +
@@ -102,7 +130,7 @@ function printTree(
     const child = children[i];
     const childIsLast = i === children.length - 1;
     const newPrefix = prefix + (isLast ? '    ' : '│   ');
-    printTree(child, engine, newPrefix, childIsLast);
+    await printTree(child, engine, newPrefix, childIsLast);
   }
 }
 

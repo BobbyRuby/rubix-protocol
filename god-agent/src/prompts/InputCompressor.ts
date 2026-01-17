@@ -260,12 +260,20 @@ export class InputCompressor {
         continue;
       }
 
-      // Extract file paths (must have slash or look like a real file)
+      // Extract file paths (must look like a real file path)
       if (word.includes('/') && word.length > 3) {
-        result.location.push(word);
-        continue;
+        // Stricter validation: only treat as path if it looks like a real file path
+        const startsLikePath = /^[.~\/]|^[A-Za-z]:[\\/]/.test(word);  // /, ./, ../, ~/, C:/, D:\
+        const hasExtension = /\.[a-z]{1,5}$/i.test(word);             // Has file extension
+        const hasCommonDir = /\/(src|lib|dist|node_modules|components|pages|api|test|spec|utils|hooks|services|models|views|controllers|routes|middleware|config|public|assets|images|styles|types)\//.test(word);
+
+        if (startsLikePath || hasExtension || hasCommonDir) {
+          result.location.push(word);
+          continue;
+        }
+        // Skip words like "strategic/randomized", "input/output", "80%" that contain /
       }
-      // File extensions
+      // File extensions without path
       if (/\.(ts|tsx|js|jsx|py|go|rs|java|cpp|c|h|rb|php|vue|svelte)x?$/i.test(word)) {
         result.location.push(word);
         continue;

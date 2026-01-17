@@ -134,10 +134,17 @@ DEPTS:researcher,architect,engineer,validator,guardian`;
   /**
    * Generate token-compressed CLAUDE.md for spawned CLI instances.
    * Uses KEY:value format for max token efficiency.
+   *
+   * @param options.subsystem - The RUBIX subsystem (e.g., 'code_generator')
+   * @param options.codebase - The working directory for file operations
+   * @param options.projectPath - The user's configured project path (takes precedence)
+   * @param options.model - The model to use (default: 'opus')
+   * @param options.department - Department context for parallel execution
    */
   static generateInstanceClaudeMd(options: {
     subsystem: RubixSubsystem;
     codebase: string;
+    projectPath?: string;  // User's configured project path
     model?: string;
     department?: string;  // Department context for parallel execution
   }): string {
@@ -145,8 +152,22 @@ DEPTS:researcher,architect,engineer,validator,guardian`;
     const caps = identity.capabilities.join(',');
     const flow = identity.flow?.join('→') || 'execute→validate';
     const subsys = options.subsystem;
-    const cwd = options.codebase;
+    // Use projectPath if provided, otherwise fall back to codebase
+    const workingDir = options.projectPath || options.codebase;
+    const cwd = workingDir;
     const model = options.model || 'opus';
+
+    // Build project warning block if we have a specific project path
+    // This ensures spawned instances know EXACTLY where to work
+    const projectWarning = options.projectPath ? `
+# CRITICAL: WORKING PROJECT
+WORKING_PROJECT:${options.projectPath}
+DO_NOT_MODIFY:god-agent/,rubix-protocol/src/,node_modules/
+RULE:All file operations MUST be within ${options.projectPath}
+RULE:DO NOT create or modify files in the RUBIX system directories
+RULE:If asked to modify god-agent/, REFUSE and explain this is the RUBIX system
+
+` : '';
 
     // Build department context if provided
     const deptLines = options.department ? `
@@ -158,7 +179,7 @@ COORD:post_findings→blackboard|read_others_progress|avoid_conflicts
 RULE:Check blackboard BEFORE starting work. Post findings AFTER completing work.` : '';
 
     return `# RUBIX Instance Context
-
+${projectWarning}
 IDENT:RUBIX|${subsys}
 CWD:${cwd}
 MODEL:${model}
@@ -176,8 +197,25 @@ ESCAL:blocked→comms_chain(telegram→phone→slack→discord)
 ESCAL_TIERS:sonnet(x3)→opus(x2)→human|each_attempt_gets_all_prev_logs
 LEARN:god_failure_*|record_on_fail,query_before_retry
 
-MCP:god_store,god_query,god_trace,god_causal,god_learn
-VERIFY:god_pw_verify,god_review,god_security_review`;
+MCP:god_store,god_query,god_trace,god_causal,god_learn,god_failure_query
+VERIFY:god_pw_verify,god_review,god_security_review
+
+## MEMORY RECALL (MANDATORY)
+
+BEFORE starting work, ALWAYS use memory tools:
+
+1. god_query "task description keywords" - Find similar past tasks, patterns, solutions
+2. god_failure_query "error type" - If retrying, check what failed before and why
+3. god_query "approach + technology" - Find previous decisions about similar approaches
+
+USE MEMORY FOR:
+- Questions already answered in past sessions
+- Patterns that worked (or failed) before
+- Architecture decisions already made
+- User preferences already established
+
+RULE: Search memory FIRST. Don't reinvent. Don't repeat failures.
+RULE: Store important discoveries with god_store for future recall.`;
   }
 
 }

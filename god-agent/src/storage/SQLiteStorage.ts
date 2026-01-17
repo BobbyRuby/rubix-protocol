@@ -734,14 +734,48 @@ export class SQLiteStorage {
   // ==========================================
 
   /**
-   * Get entry IDs that have ANY of the specified tags
+   * Get entry IDs that have ALL of the specified tags
+   * Uses GROUP BY + HAVING COUNT to ensure all tags are present
    */
-  getEntryIdsByTags(tags: string[]): string[] {
+  getEntryIdsByTags(tags: string[], matchAll: boolean = true): string[] {
     if (tags.length === 0) return [];
     const placeholders = tags.map(() => '?').join(',');
+
+    if (matchAll) {
+      // Require ALL tags to match
+      const rows = this.db.prepare(`
+        SELECT entry_id FROM memory_tags
+        WHERE tag IN (${placeholders})
+        GROUP BY entry_id
+        HAVING COUNT(DISTINCT tag) = ?
+      `).all(...tags, tags.length) as { entry_id: string }[];
+      return rows.map(r => r.entry_id);
+    } else {
+      // ANY tag matches
+      const rows = this.db.prepare(`
+        SELECT DISTINCT entry_id FROM memory_tags WHERE tag IN (${placeholders})
+      `).all(...tags) as { entry_id: string }[];
+      return rows.map(r => r.entry_id);
+    }
+  }
+
+  /**
+   * Debug: List all unique tags in the database
+   */
+  getAllTags(): string[] {
     const rows = this.db.prepare(`
-      SELECT DISTINCT entry_id FROM memory_tags WHERE tag IN (${placeholders})
-    `).all(...tags) as { entry_id: string }[];
+      SELECT DISTINCT tag FROM memory_tags ORDER BY tag
+    `).all() as { tag: string }[];
+    return rows.map(r => r.tag);
+  }
+
+  /**
+   * Debug: Get entries by tag prefix (e.g., 'session:' to find all sessions)
+   */
+  getEntryIdsByTagPrefix(prefix: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT entry_id FROM memory_tags WHERE tag LIKE ?
+    `).all(`${prefix}%`) as { entry_id: string }[];
     return rows.map(r => r.entry_id);
   }
 

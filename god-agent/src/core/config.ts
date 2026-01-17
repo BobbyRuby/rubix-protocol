@@ -5,7 +5,7 @@
  */
 
 import { config as loadDotenv } from 'dotenv';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { MemoryEngineConfig, HNSWConfig, EmbeddingConfig, StorageConfig, LScoreConfig, CodexLLMConfig } from './types.js';
 import type { ProviderConfig, DepartmentConfig } from '../providers/types.js';
@@ -26,7 +26,9 @@ const dotenvResult = loadDotenv({ path: envPath });
 console.log(`[Config] dotenv result: ${JSON.stringify(dotenvResult)}`);
 
 export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {
-  const baseDir = dataDir ?? process.env.GOD_AGENT_DATA_DIR ?? './data';
+  const rawDir = dataDir ?? process.env.GOD_AGENT_DATA_DIR ?? './data';
+  // Resolve relative paths against god-agent root, not process.cwd()
+  const baseDir = rawDir.startsWith('.') ? resolve(godAgentRoot, rawDir) : rawDir;
 
   const hnswConfig: HNSWConfig = {
     maxElements: parseInt(process.env.GOD_AGENT_HNSW_MAX_ELEMENTS ?? '100000', 10),

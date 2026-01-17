@@ -8,9 +8,10 @@ export const CAPABILITY_KNOWLEDGE: SelfKnowledgeEntry[] = [
   {
     type: 'capability',
     compressed: `CAP:LSP
-DOES:goto_def,find_refs,diagnostics,symbols
-LANG:ts,js,py
-API:goToDefinition(),findReferences(),getDiagnostics(),getSymbols()
+DOES:goto_def,find_refs,diagnostics,symbols,check_availability
+LANG:ts,js,php,css,html,sql,java,py,go,rust
+SERVERS:typescript-language-server,intelephense,vscode-langservers-extracted,sql-language-server,jdtls,pyright,gopls,rust-analyzer
+API:goToDefinition(),findReferences(),getDiagnostics(),getSymbols(),checkAvailability()
 LOC:src/capabilities/lsp/`,
   },
   {
