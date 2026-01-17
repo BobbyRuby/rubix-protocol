@@ -1,5 +1,19 @@
 # God-Agent Architecture
 
+## Primary Purpose
+
+**God-Agent is a development tool for building OTHER software projects.**
+
+This system exists to assist in developing external codebases - not to be self-referentially worked on. When given tasks:
+- Focus on the TARGET project/codebase being developed
+- Use memory and capabilities to understand and modify external code
+- Apply CODEX for implementing features, fixing bugs, and refactoring in user projects
+- Store learnings about external projects and patterns
+
+Do NOT assume tasks are about modifying God-Agent itself unless explicitly stated.
+
+---
+
 ## Communication Protocol (MANDATORY)
 
 **ALL questions, clarifications, and user interactions MUST go through Telegram via `god_comms_escalate`.**
@@ -213,6 +227,39 @@ bot.start();  // Independent of MCP
 const daemon = new SchedulerDaemon(engine);
 daemon.start();  // Runs cron jobs, file watchers, event triggers
 ```
+
+---
+
+## Telegram Bot Commands
+
+The Telegram bot uses **strict session mode enforcement**. All non-command messages require an active mode.
+
+### Session Modes
+
+| Mode | Command | Behavior |
+|------|---------|----------|
+| `conversation` | `/conversation` | Free-form chat, can `/rubixallize` to plan |
+| `plan` | `/plan <desc>` | Planning session with Claude |
+| `task` | `/task <desc>` | Immediate execution (transient) |
+
+### Mode Transitions
+
+```
+NONE -> /conversation -> CHAT -> /rubixallize -> PLAN
+NONE -> /plan -> PLAN
+NONE -> /task -> TASK -> (completes) -> NONE
+ANY -> /exit -> NONE
+```
+
+### Quick Reference
+
+**Start modes:** `/conversation`, `/plan <desc>`, `/task <desc>`
+**Exit mode:** `/exit`
+**Convert:** `/rubixallize` (conversation -> plan)
+**Execute:** `/execute` (plan -> run)
+**Resume:** `/resume` or `/resume N`
+
+For full command reference, see [Telegram Bot Guide](docs/communication/telegram-bot-guide.md).
 
 ---
 
