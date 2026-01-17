@@ -139,6 +139,7 @@ Begin your research now.`;
     return new Promise((resolve, reject) => {
       const args = [
         '-p', prompt,
+        '--dangerously-skip-permissions',
         '--allowedTools', 'Read,Glob,Grep,mcp__rubix__god_query'
       ];
 

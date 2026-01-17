@@ -387,7 +387,8 @@ export class ClaudeCodeExecutor {
       // Build args array
       const args: string[] = [
         '--print',
-        '--output-format', 'text'
+        '--output-format', 'text',
+        '--dangerously-skip-permissions'
       ];
 
       // Add model preference

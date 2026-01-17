@@ -155,6 +155,7 @@ Provide ONLY the structured sections above.`;
     return new Promise((resolve, reject) => {
       const args = [
         '-p', prompt,
+        '--dangerously-skip-permissions',
         '--allowedTools', 'Read,Grep,mcp__rubix__god_query'  // Includes memory for past security issues
       ];
 

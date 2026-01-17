@@ -149,6 +149,7 @@ export class ClaudeReasoner {
       const args = [
         '-p', prompt,
         '--model', 'opus',
+        '--dangerously-skip-permissions',
         '--allowedTools', 'Read,Glob,Grep,mcp__rubix__god_query,mcp__rubix__god_store'
       ];
 

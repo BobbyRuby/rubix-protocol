@@ -849,6 +849,7 @@ ${FIX_ESCALATION_TIERS.map(t => `${t.attempt}. ${t.description}`).join('\n')}`;
         '-p', prompt,
         '--model', 'opus',
         '--max-turns', String(maxTurns),  // Enforce turn limit
+        '--dangerously-skip-permissions',
         '--allowedTools', 'Read,Glob,Grep,mcp__rubix__god_query,mcp__rubix__god_failure_query'
       ];
 
