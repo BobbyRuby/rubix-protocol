@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   await requireEnvInteractive(ENV_REQUIREMENTS.telegram, 'Telegram');
 
   // Bootstrap core systems (includes capability pre-warming)
-  const { executor, engine, containment, capabilities, codeGenerator } = await bootstrap({ showEnvSummary: true });
+  const { executor, engine, containment, capabilities } = await bootstrap({ showEnvSummary: true });
 
   // Create CommunicationManager with Telegram channel
   const comms = new CommunicationManager({
@@ -36,12 +36,6 @@ async function main(): Promise<void> {
     }
   });
   comms.initialize();
-
-  // Wire comms to codeGenerator for permission routing
-  if (codeGenerator) {
-    codeGenerator.setComms(comms);
-    console.log('[Launch] CommunicationManager wired to CodeGenerator for permission routing');
-  }
 
   // Start Telegram bot with TaskExecutor and Engine
   const bot = new TelegramBot(

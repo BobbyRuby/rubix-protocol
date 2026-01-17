@@ -13,12 +13,6 @@
 // Main executor
 export { TaskExecutor, type TaskSubmission, type ExecutionOptions } from './TaskExecutor.js';
 
-// Code generation
-export { CodeGenerator, type CodeGenRequest, type CodeGenResult, type CodeGeneratorConfig } from './CodeGenerator.js';
-
-// Claude Code CLI executor (for Max subscription integration)
-export { ClaudeCodeExecutor, type ClaudeCodeResult, type ClaudeCodeExecutorConfig } from './ClaudeCodeExecutor.js';
-
 // Task decomposition
 export { TaskDecomposer } from './TaskDecomposer.js';
 

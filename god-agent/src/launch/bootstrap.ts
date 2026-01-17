@@ -2,7 +2,7 @@
  * Bootstrap
  *
  * Shared initialization for all launch scripts.
- * Handles MemoryEngine, TaskExecutor, and CodeGenerator setup.
+ * Handles MemoryEngine, TaskExecutor, and subsystem setup.
  */
 
 import { config as loadDotenv } from 'dotenv';
@@ -11,10 +11,8 @@ import { fileURLToPath } from 'url';
 
 import { MemoryEngine } from '../core/MemoryEngine.js';
 import { TaskExecutor } from '../codex/TaskExecutor.js';
-import { CodeGenerator } from '../codex/CodeGenerator.js';
 import { ContainmentManager } from '../codex/ContainmentManager.js';
 import { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js';
-import { getCodexLLMConfig } from '../core/config.js';
 import { getEnvSummary } from './env.js';
 
 // Get module directory for .env loading
@@ -28,7 +26,6 @@ const godAgentRoot = join(__dirname, '..', '..');
 export interface BootstrapResult {
   engine: MemoryEngine;
   executor: TaskExecutor;
-  codeGenerator?: CodeGenerator;
   containment: ContainmentManager;
   capabilities: CapabilitiesManager;
 }
@@ -39,19 +36,17 @@ export interface BootstrapResult {
 export interface BootstrapOptions {
   /** Custom data directory (defaults to GOD_AGENT_DATA_DIR or ./data) */
   dataDir?: string;
-  /** Custom codebase root for CodeGenerator (defaults to cwd) */
+  /** Custom codebase root (defaults to cwd) */
   codebaseRoot?: string;
   /** Show environment summary on start */
   showEnvSummary?: boolean;
-  /** Skip CodeGenerator initialization even if API key is present */
-  skipCodeGenerator?: boolean;
 }
 
 /**
  * Initialize core God-Agent systems
  *
  * @param options - Bootstrap configuration
- * @returns Initialized engine, executor, and optionally codeGenerator
+ * @returns Initialized engine, executor, containment, and capabilities
  */
 export async function bootstrap(options: BootstrapOptions = {}): Promise<BootstrapResult> {
   // Load .env from god-agent root
@@ -74,33 +69,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
   const executor = new TaskExecutor(engine);
   console.log('[Bootstrap] TaskExecutor created');
 
-  // 3. Initialize CodeGenerator if API key available and not skipped
-  let codeGenerator: CodeGenerator | undefined;
-
-  if (!options.skipCodeGenerator) {
-    const llmConfig = getCodexLLMConfig();
-
-    if (llmConfig.apiKey) {
-      const codebaseRoot = options.codebaseRoot || process.cwd();
-
-      codeGenerator = new CodeGenerator({
-        apiKey: llmConfig.apiKey,
-        model: llmConfig.model,
-        maxTokens: llmConfig.maxTokens,
-        codebaseRoot,
-        extendedThinking: llmConfig.extendedThinking
-      });
-
-      executor.setCodeGenerator(codeGenerator);
-      console.log(`[Bootstrap] CodeGenerator initialized (model: ${llmConfig.model})`);
-      console.log(`[Bootstrap] Codebase root: ${codebaseRoot}`);
-    } else {
-      console.warn('[Bootstrap] ANTHROPIC_API_KEY not set - RUBIX in simulation mode');
-      console.warn('[Bootstrap] Set ANTHROPIC_API_KEY to enable code generation');
-    }
-  }
-
-  // 4. Initialize ContainmentManager and load persisted rules
+  // 3. Initialize ContainmentManager and load persisted rules
   const containment = new ContainmentManager({
     projectRoot: options.codebaseRoot || process.cwd()
   });
@@ -118,12 +87,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     console.log('[Bootstrap] Containment - No custom paths configured');
   }
 
-  // Set containment on code generator
-  if (codeGenerator) {
-    codeGenerator.setContainment(containment);
-  }
-
-  // 5. Initialize CapabilitiesManager with all capabilities enabled
+  // 4. Initialize CapabilitiesManager with all capabilities enabled
   const codebaseRoot = options.codebaseRoot || process.cwd();
   const capabilities = new CapabilitiesManager({
     projectRoot: codebaseRoot,
@@ -156,7 +120,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
       console.warn('[Bootstrap] Capability prewarm error:', err.message);
     });
 
-  return { engine, executor, codeGenerator, containment, capabilities };
+  return { engine, executor, containment, capabilities };
 }
 
 /**

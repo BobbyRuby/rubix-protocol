@@ -22,12 +22,10 @@ import { EscalationGate, type Situation } from './EscalationGate.js';
 import { LearningIntegration, type LearningSuggestion } from './LearningIntegration.js';
 import { AlternativesFinder, type AlternativeApproach } from './AlternativesFinder.js';
 import { CausalDebugger, type CausalChain } from './CausalDebugger.js';
-import { CodeGenerator } from './CodeGenerator.js';
 import { CollaborativePartner } from './CollaborativePartner.js';
 import { WorkingMemoryManager } from './WorkingMemoryManager.js';
 import type { NotificationService } from '../notification/NotificationService.js';
 import type { CodeReviewer } from '../review/CodeReviewer.js';
-import type { ReviewIssue } from '../review/types.js';
 import { DeepWorkManager, type DeepWorkSession, type DeepWorkOptions, type FocusLevel } from '../deepwork/index.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { EscalationResponse } from '../communication/types.js';
@@ -109,9 +107,6 @@ export class TaskExecutor {
 
   // Deep Work Mode
   private deepWork: DeepWorkManager;
-
-  // Code Generator (Claude API integration)
-  private codeGenerator: CodeGenerator | undefined;
 
   // Extended thinking (ultrathink) configuration
   private extendedThinking: ExtendedThinkingConfig | undefined;
@@ -1305,7 +1300,7 @@ export class TaskExecutor {
     consoleErrors?: string[];
     screenshot?: string;
   }> {
-    // Execute based on subtask type, using CodeGenerator when available
+    // Execute based on subtask type (legacy path - phased execution is now primary)
     switch (subtask.type) {
       case 'research':
         return this.executeResearch(task, subtask, attempt, codebaseContext);
@@ -1340,34 +1335,12 @@ export class TaskExecutor {
    * Execute research subtask
    */
   private async executeResearch(
-    task: CodexTask,
+    _task: CodexTask,
     subtask: Subtask,
-    attempt: SubtaskAttempt,
-    codebaseContext: string
+    _attempt: SubtaskAttempt,
+    _codebaseContext: string
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    // If CodeGenerator is available, use Claude for intelligent analysis
-    if (this.codeGenerator) {
-      try {
-        const result = await this.codeGenerator.analyzeCode({
-          task,
-          subtask,
-          attempt,
-          codebaseContext,
-          previousAttempts: subtask.attempts.slice(0, -1)
-        });
-
-        return {
-          success: result.success,
-          output: result.output,
-          error: result.error
-        };
-      } catch (error) {
-        // Fall back to memory-based research
-        console.log('[TaskExecutor] CodeGenerator research failed, falling back to memory search');
-      }
-    }
-
-    // Fallback: Query memory for relevant context
+    // Query memory for relevant context
     try {
       const results = await this.engine.query(subtask.description, {
         topK: 10,
@@ -1391,36 +1364,15 @@ export class TaskExecutor {
   }
 
   /**
-   * Execute design subtask
+   * Execute design subtask (legacy - phased execution is now primary)
    */
   private async executeDesign(
-    task: CodexTask,
+    _task: CodexTask,
     subtask: Subtask,
-    attempt: SubtaskAttempt,
-    codebaseContext: string
+    _attempt: SubtaskAttempt,
+    _codebaseContext: string
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    // If CodeGenerator is available, use Claude for design
-    if (this.codeGenerator) {
-      try {
-        const result = await this.codeGenerator.generateDesign({
-          task,
-          subtask,
-          attempt,
-          codebaseContext,
-          previousAttempts: subtask.attempts.slice(0, -1)
-        });
-
-        return {
-          success: result.success,
-          output: result.output,
-          error: result.error
-        };
-      } catch (error) {
-        console.log('[TaskExecutor] CodeGenerator design failed, using placeholder');
-      }
-    }
-
-    // Fallback: placeholder design
+    // Placeholder design (legacy path - phased execution handles design via ClaudeReasoner)
     return {
       success: true,
       output: `Design complete for: ${subtask.description}\n\nBased on existing patterns in codebase.`
@@ -1428,15 +1380,15 @@ export class TaskExecutor {
   }
 
   /**
-   * Execute code subtask
-   * @param thinkingBudget Optional thinking budget for ultrathink mode
+   * Execute code subtask (legacy - phased execution is now primary)
+   * @param _thinkingBudget Optional thinking budget for ultrathink mode
    */
   private async executeCode(
-    task: CodexTask,
+    _task: CodexTask,
     subtask: Subtask,
-    attempt: SubtaskAttempt,
-    codebaseContext: string,
-    thinkingBudget?: number
+    _attempt: SubtaskAttempt,
+    _codebaseContext: string,
+    _thinkingBudget?: number
   ): Promise<{
     success: boolean;
     output?: string;
@@ -1444,300 +1396,14 @@ export class TaskExecutor {
     filesModified?: string[];
     consoleErrors?: string[];
   }> {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-
-    try {
-      // Pre-coding analysis with capabilities
-      if (this.capabilities) {
-        try {
-          const preAnalysis = await this.capabilities.analyze();
-          if (preAnalysis.totalErrors > 0) {
-            warnings.push(`Pre-existing errors: ${preAnalysis.totalErrors}`);
-          }
-        } catch {
-          // Static analysis optional
-        }
-
-        try {
-          const diagnostics = await this.capabilities.getDiagnostics();
-          const criticalDiags = diagnostics.filter(d => d.errorCount > 0);
-          if (criticalDiags.length > 0) {
-            warnings.push(`${criticalDiags.length} files have existing errors`);
-          }
-        } catch {
-          // LSP diagnostics optional
-        }
-      }
-
-      // CODE GENERATION - Use Claude API via CodeGenerator
-      if (!this.codeGenerator) {
-        return {
-          success: false,
-          error: 'CodeGenerator not configured. Set ANTHROPIC_API_KEY to enable code generation.',
-          filesModified: [],
-          consoleErrors: ['CodeGenerator not available']
-        };
-      }
-
-      // WOLFRAM ENHANCEMENT - Inject deterministic math for math-heavy subtasks
-      let enhancedContext = codebaseContext;
-      if (this.wolfram && this.isMathHeavy(subtask)) {
-        console.log('[TaskExecutor] Math-heavy subtask detected, querying Wolfram Alpha');
-        enhancedContext = await this.enhanceWithWolframMath(subtask, codebaseContext);
-      }
-
-      console.log(`[TaskExecutor] Generating code for: ${subtask.description}`);
-
-      // === STORE CODE GENERATION CONTEXT IN WORKING MEMORY ===
-      let generationContextId: string | undefined;
-      if (this.workingMemory) {
-        generationContextId = await this.workingMemory.storeContext(
-          `CODE GENERATION: ${subtask.description}\n` +
-          `APPROACH: ${attempt.approach}\n` +
-          `ATTEMPT: ${attempt.attemptNumber}/${subtask.maxAttempts}`,
-          subtask.id
-        );
-      }
-
-      const genResult = await this.codeGenerator.generate({
-        task,
-        subtask,
-        attempt,
-        codebaseContext: enhancedContext,
-        previousAttempts: subtask.attempts.slice(0, -1)
-      }, thinkingBudget);
-
-      if (!genResult.success) {
-        // Check if Claude asked clarifying questions instead of generating code
-        if (genResult.error === 'CLARIFICATION_NEEDED') {
-          console.log('[TaskExecutor] Claude requested clarification - escalating to user');
-
-          // Create escalation with Claude's questions
-          const clarificationEscalation: Escalation = {
-            id: randomUUID(),
-            taskId: task.id,
-            subtaskId: subtask.id,
-            type: 'clarification',
-            title: 'Questions before starting',
-            context: genResult.output || 'Claude needs clarification before proceeding.',
-            questions: [], // Questions are embedded in context
-            options: [],
-            blocking: true,
-            createdAt: new Date()
-          };
-
-          // Try to reach user via communication channels
-          if (this.communications) {
-            this.log('progress', 'Sending clarification questions to user', {
-              escalationId: clarificationEscalation.id
-            });
-
-            const userResponse = await this.attemptCommunicationEscalation(
-              clarificationEscalation,
-              task,
-              subtask
-            );
-
-            if (userResponse) {
-              // User responded - store their clarification and retry
-              console.log('[TaskExecutor] User provided clarification:', userResponse.response);
-              this.log('progress', `User clarification received: ${userResponse.response}`);
-
-              // Return partial success to trigger retry with clarification
-              // The caller can use the output to feed back into the next attempt
-              return {
-                success: false,
-                error: 'CLARIFICATION_RECEIVED',
-                output: `User clarification: ${userResponse.response}\n\nOriginal questions:\n${genResult.output}`,
-                filesModified: [],
-                consoleErrors: []
-              };
-            }
-
-            // No response - fail with questions shown
-            this.log('escalation', 'No response to clarification request');
-          }
-
-          return {
-            success: false,
-            error: 'Clarification needed but no response received',
-            output: genResult.output,
-            filesModified: [],
-            consoleErrors: ['Claude requested clarification but could not reach user']
-          };
-        }
-
-        return {
-          success: false,
-          error: genResult.error || 'Code generation failed',
-          filesModified: [],
-          consoleErrors: genResult.error ? [genResult.error] : []
-        };
-      }
-
-      const filesModified = [...genResult.filesCreated, ...genResult.filesModified];
-      console.log(`[TaskExecutor] Generated ${filesModified.length} files`);
-
-      // === STORE CODE GENERATION RESULT IN WORKING MEMORY ===
-      if (this.workingMemory && filesModified.length > 0) {
-        await this.workingMemory.storeCodeGeneration(
-          filesModified,
-          attempt.approach,
-          genResult.output.substring(0, 500),
-          subtask.id,
-          generationContextId
-        );
-
-        // Link the generation context to the result
-        if (generationContextId) {
-          const resultId = await this.workingMemory.storeFinding(
-            `Generated ${filesModified.length} files: ${filesModified.slice(0, 5).join(', ')}${filesModified.length > 5 ? '...' : ''}`,
-            'CodeGenerator',
-            subtask.id
-          );
-          await this.workingMemory.linkCause(generationContextId, resultId, 'causes');
-        }
-      }
-
-      // VALIDATION STEP 1: Ensure files were actually generated
-      if (filesModified.length === 0) {
-        return {
-          success: false,
-          error: 'Code generation produced no files',
-          output: genResult.output,
-          filesModified: [],
-          consoleErrors: ['Expected code output but no files were created or modified']
-        };
-      }
-
-      // VALIDATION STEP 2: Verify all files exist on disk
-      const existsSync = await import('fs').then(m => m.existsSync);
-      const { join } = await import('path');
-      const codebase = task.codebase;
-      const missingFiles = filesModified.filter(f => !existsSync(join(codebase, f)));
-      if (missingFiles.length > 0) {
-        return {
-          success: false,
-          error: `Generated files not found on disk: ${missingFiles.join(', ')}`,
-          filesModified: filesModified.filter(f => existsSync(join(codebase, f))),
-          consoleErrors: missingFiles.map(f => `File not found: ${f}`)
-        };
-      }
-
-      // Post-coding verification with capabilities
-      if (this.capabilities && filesModified.length > 0) {
-        // Run type checking on modified files
-        try {
-          const typeResults = await this.capabilities.runTypeCheck(filesModified);
-          for (const result of typeResults) {
-            if (result.errors.length > 0) {
-              errors.push(...result.errors.map(e => `${result.file}:${e.line}: ${e.message}`));
-            }
-          }
-        } catch {
-          // Type checking optional
-        }
-
-        // Run linting on modified files
-        try {
-          const lintResults = await this.capabilities.runLint(filesModified);
-          for (const result of lintResults) {
-            const lintErrors = result.messages.filter(m => m.severity === 'error');
-            if (lintErrors.length > 0) {
-              warnings.push(`${result.file}: ${lintErrors.length} lint errors`);
-            }
-          }
-        } catch {
-          // Linting optional
-        }
-
-        // Check impact of changes
-        try {
-          for (const file of filesModified) {
-            const impact = await this.capabilities.analyzeImpact(file);
-            if (impact.riskLevel === 'high') {
-              warnings.push(`High-impact change to ${file}: affects ${impact.totalImpact} dependents`);
-            }
-          }
-        } catch {
-          // Impact analysis optional
-        }
-      }
-
-      // If we have errors from post-coding verification, report them
-      if (errors.length > 0) {
-        return {
-          success: false,
-          error: `Code changes introduced errors:\n${errors.join('\n')}`,
-          filesModified,
-          consoleErrors: errors
-        };
-      }
-
-      // SELF-REVIEW STEP: Run quick review on generated code
-      if (this.codeReviewer && filesModified.length > 0) {
-        try {
-          this.log('progress', 'Running self-review on generated code');
-          const review = await this.codeReviewer.quickReview(filesModified);
-
-          if (review && review.criticalIssues.length > 0) {
-            this.log('progress', `Self-review found ${review.criticalIssues.length} critical issue(s)`);
-
-            // Attempt auto-fix for fixable issues
-            const fixableIssues = review.criticalIssues.filter((i: ReviewIssue) => i.fix?.autoApplicable);
-            if (fixableIssues.length > 0) {
-              this.log('progress', `Attempting auto-fix for ${fixableIssues.length} issue(s)`);
-              const fixCount = await this.applyAutoFixes(fixableIssues);
-              if (fixCount > 0) {
-                this.log('progress', `Auto-fixed ${fixCount} issue(s)`);
-              }
-            }
-
-            // If review didn't pass (critical issues remain), fail for retry
-            if (!review.pass) {
-              return {
-                success: false,
-                error: `Self-review found ${review.criticalIssues.length} critical issue(s)`,
-                output: review.summary,
-                filesModified,
-                consoleErrors: review.criticalIssues.map((i: ReviewIssue) =>
-                  `${i.file}:${i.line}: [${i.severity}] ${i.title}: ${i.description}`
-                )
-              };
-            }
-
-            // Non-critical issues become warnings
-            warnings.push(...review.criticalIssues.map((i: ReviewIssue) =>
-              `${i.file}:${i.line}: [${i.severity}] ${i.title}`
-            ));
-          } else if (review.pass) {
-            this.log('progress', 'Self-review passed - no critical issues found');
-          }
-        } catch (reviewError) {
-          // Self-review is optional, don't fail if it errors
-          console.warn('[TaskExecutor] Self-review failed:', reviewError);
-        }
-      }
-
-      const outputParts = [genResult.output];
-      if (warnings.length > 0) {
-        outputParts.push(`Warnings:\n${warnings.join('\n')}`);
-      }
-
-      return {
-        success: true,
-        output: outputParts.join('\n'),
-        filesModified
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Code execution failed',
-        filesModified: [],
-        consoleErrors: [error instanceof Error ? error.message : 'Unknown error']
-      };
-    }
+    // Legacy code generation path is no longer supported
+    // Phased execution via PhasedExecutor is now the primary execution method
+    return {
+      success: false,
+      error: `Legacy code generation path not available. Use phased execution (usePhasedExecution=true) for task: ${subtask.description}`,
+      filesModified: [],
+      consoleErrors: ['Legacy CodeGenerator has been removed. Phased execution is now primary.']
+    };
   }
 
   /**
@@ -1799,87 +1465,16 @@ export class TaskExecutor {
   }
 
   /**
-   * Execute integration subtask
+   * Execute integration subtask (legacy - phased execution is now primary)
    */
   private async executeIntegration(
-    task: CodexTask,
+    _task: CodexTask,
     subtask: Subtask,
-    attempt: SubtaskAttempt,
-    codebaseContext: string,
-    thinkingBudget?: number
+    _attempt: SubtaskAttempt,
+    _codebaseContext: string,
+    _thinkingBudget?: number
   ): Promise<{ success: boolean; output?: string; error?: string; filesModified?: string[] }> {
-    // Integration often requires code changes too - use CodeGenerator
-    if (this.codeGenerator) {
-      try {
-        // WOLFRAM ENHANCEMENT - Inject deterministic math for math-heavy subtasks
-        let enhancedContext = codebaseContext;
-        if (this.wolfram && this.isMathHeavy(subtask)) {
-          console.log('[TaskExecutor] Math-heavy integration detected, querying Wolfram Alpha');
-          enhancedContext = await this.enhanceWithWolframMath(subtask, codebaseContext);
-        }
-
-        const result = await this.codeGenerator.generate({
-          task,
-          subtask,
-          attempt,
-          codebaseContext: enhancedContext,
-          previousAttempts: subtask.attempts.slice(0, -1)
-        }, thinkingBudget);
-
-        // Handle clarification requests in integration too
-        if (!result.success && result.error === 'CLARIFICATION_NEEDED') {
-          console.log('[TaskExecutor] Claude requested clarification during integration');
-
-          const clarificationEscalation: Escalation = {
-            id: randomUUID(),
-            taskId: task.id,
-            subtaskId: subtask.id,
-            type: 'clarification',
-            title: 'Integration questions',
-            context: result.output || 'Claude needs clarification for integration.',
-            questions: [],
-            options: [],
-            blocking: true,
-            createdAt: new Date()
-          };
-
-          if (this.communications) {
-            const userResponse = await this.attemptCommunicationEscalation(
-              clarificationEscalation,
-              task,
-              subtask
-            );
-
-            if (userResponse) {
-              return {
-                success: false,
-                error: 'CLARIFICATION_RECEIVED',
-                output: `User clarification: ${userResponse.response}\n\nOriginal questions:\n${result.output}`,
-                filesModified: []
-              };
-            }
-          }
-
-          return {
-            success: false,
-            error: 'Clarification needed but no response received',
-            output: result.output,
-            filesModified: []
-          };
-        }
-
-        return {
-          success: result.success,
-          output: result.output,
-          error: result.error,
-          filesModified: [...result.filesCreated, ...result.filesModified]
-        };
-      } catch (error) {
-        console.log('[TaskExecutor] CodeGenerator integration failed, using placeholder');
-      }
-    }
-
-    // Fallback: placeholder
+    // Placeholder (legacy path - phased execution handles integration via ClaudeReasoner)
     return {
       success: true,
       output: `Integration complete for: ${subtask.description}`,
@@ -2276,16 +1871,10 @@ Summary: ${result.summary}`;
   }
 
   /**
-   * Cancel current task (aborts running CLI execution if any)
+   * Cancel current task
    */
   cancel(): boolean {
     if (!this.currentTask) return false;
-
-    // Abort running CLI if any
-    if (this.codeGenerator?.isExecuting?.()) {
-      this.codeGenerator.abort();
-      console.log('[TaskExecutor] Aborted running CLI execution');
-    }
 
     this.currentTask.status = TaskStatus.CANCELLED;
     this.log('complete', 'Task cancelled by user');
@@ -2328,10 +1917,10 @@ Summary: ${result.summary}`;
   }
 
   /**
-   * Check if currently executing (includes CLI execution)
+   * Check if currently executing
    */
   isRunning(): boolean {
-    return this.isExecuting || (this.codeGenerator?.isExecuting?.() ?? false);
+    return this.isExecuting;
   }
 
   /**
@@ -2398,34 +1987,6 @@ Summary: ${result.summary}`;
    */
   getCommunications(): CommunicationManager | undefined {
     return this.communications;
-  }
-
-  /**
-   * Set code generator (for late binding)
-   */
-  setCodeGenerator(codeGenerator: CodeGenerator): void {
-    this.codeGenerator = codeGenerator;
-
-    // Wire memory engine for recall
-    codeGenerator.setMemoryEngine(this.engine);
-
-    // Wire heartbeat callback if communications is available
-    if (this.communications) {
-      codeGenerator.setOnHeartbeat((progress) => {
-        // Send progress notification via Telegram
-        const msg = `Subtask: ${progress.subtask.substring(0, 50)}...\nElapsed: ${Math.round(progress.elapsedMs / 60000)}m\nOutput: ${progress.stdoutLines} lines\n\n(Reply /cancel to abort)`;
-        this.communications?.notify?.('⏳ Still working...', msg, 'normal').catch((err: Error) => {
-          console.error('[TaskExecutor] Failed to send heartbeat notification:', err);
-        });
-      });
-    }
-  }
-
-  /**
-   * Get the code generator if available
-   */
-  getCodeGenerator(): CodeGenerator | undefined {
-    return this.codeGenerator;
   }
 
   /**
@@ -2496,13 +2057,6 @@ Summary: ${result.summary}`;
    */
   hasCodeReviewer(): boolean {
     return this.codeReviewer !== undefined;
-  }
-
-  /**
-   * Check if code generation is available
-   */
-  hasCodeGenerator(): boolean {
-    return this.codeGenerator !== undefined;
   }
 
   /**
@@ -2605,143 +2159,6 @@ Summary: ${result.summary}`;
     }
 
     return false;
-  }
-
-  // ==========================================
-  // Wolfram Alpha Integration (Deterministic Math)
-  // ==========================================
-
-  /**
-   * Check if a subtask is math-heavy and would benefit from Wolfram
-   */
-  private isMathHeavy(subtask: Subtask): boolean {
-    const mathKeywords = [
-      'calculate', 'compute', 'formula', 'equation', 'percentage',
-      'percent', 'ratio', 'convert', 'unit', 'math', 'arithmetic',
-      'sum', 'average', 'mean', 'median', 'total', 'multiply',
-      'divide', 'subtract', 'sqrt', 'square root', 'power', 'exponent',
-      'interest', 'compound', 'rate', 'growth', 'decay', 'logarithm',
-      'trigonometry', 'sin', 'cos', 'tan', 'derivative', 'integral'
-    ];
-
-    const text = subtask.description.toLowerCase();
-    return mathKeywords.some(kw => text.includes(kw));
-  }
-
-  /**
-   * Extract math expressions from text for Wolfram queries
-   * Looks for: calculations, percentages, equations, unit conversions
-   */
-  private extractMathExpressions(text: string): string[] {
-    const expressions: string[] = [];
-
-    // Percentage calculations: "15% of 500", "calculate 25% of 1000"
-    const percentRegex = /(\d+(?:\.\d+)?)\s*%\s*(?:of|from)\s*(\d+(?:\.\d+)?)/gi;
-    let match;
-    while ((match = percentRegex.exec(text)) !== null) {
-      expressions.push(`${match[1]}% of ${match[2]}`);
-    }
-
-    // Basic arithmetic with keywords: "calculate 1000 / 4"
-    const calcRegex = /(?:calculate|compute|what is)\s+([0-9\s+\-*/().^]+)/gi;
-    while ((match = calcRegex.exec(text)) !== null) {
-      const expr = match[1].trim();
-      if (expr.length > 0 && /\d/.test(expr)) {
-        expressions.push(expr);
-      }
-    }
-
-    // Square roots: "sqrt(144)", "square root of 100"
-    const sqrtRegex = /(?:sqrt|square\s*root\s*(?:of)?)\s*\(?\s*(\d+(?:\.\d+)?)\s*\)?/gi;
-    while ((match = sqrtRegex.exec(text)) !== null) {
-      expressions.push(`sqrt(${match[1]})`);
-    }
-
-    // Unit conversions: "100 miles to kilometers", "50 kg to pounds"
-    const unitRegex = /(\d+(?:\.\d+)?)\s*(miles?|km|kilometers?|feet|meters?|pounds?|kg|kilograms?|celsius|fahrenheit|inches?|cm|centimeters?)\s+(?:to|in)\s+(\w+)/gi;
-    while ((match = unitRegex.exec(text)) !== null) {
-      expressions.push(`${match[1]} ${match[2]} to ${match[3]}`);
-    }
-
-    // Explicit solve: "solve x^2 + 5x + 6 = 0"
-    const solveRegex = /solve\s+([^,.\n]+)/gi;
-    while ((match = solveRegex.exec(text)) !== null) {
-      expressions.push(`solve ${match[1].trim()}`);
-    }
-
-    // Interest formulas: "compound interest on $1000 at 5% for 10 years"
-    const interestRegex = /(?:compound|simple)\s+interest.*?(\$?\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:at|@)\s*(\d+(?:\.\d+)?)\s*%\s*(?:for|over)\s*(\d+)\s*(?:years?|months?)/gi;
-    while ((match = interestRegex.exec(text)) !== null) {
-      const principal = match[1].replace(/[$,]/g, '');
-      const rate = match[2];
-      const time = match[3];
-      expressions.push(`compound interest on ${principal} at ${rate}% for ${time} years`);
-    }
-
-    // Power/exponent: "2^10", "2 to the power of 10"
-    const powerRegex = /(\d+(?:\.\d+)?)\s*(?:\^|to\s*the\s*power\s*(?:of)?)\s*(\d+(?:\.\d+)?)/gi;
-    while ((match = powerRegex.exec(text)) !== null) {
-      expressions.push(`${match[1]}^${match[2]}`);
-    }
-
-    // Dedupe and return
-    return [...new Set(expressions)];
-  }
-
-  /**
-   * Enhance context with Wolfram-computed math values
-   * Called before code generation for math-heavy subtasks
-   */
-  private async enhanceWithWolframMath(
-    subtask: Subtask,
-    context: string
-  ): Promise<string> {
-    if (!this.wolfram || !this.wolfram.isConfigured()) {
-      return context;
-    }
-
-    // Combine subtask description and context for expression extraction
-    const fullText = `${subtask.description}\n${context}`;
-
-    // Extract math expressions
-    const mathExpressions = this.extractMathExpressions(fullText);
-
-    if (mathExpressions.length === 0) {
-      return context;
-    }
-
-    this.log('progress', `Wolfram: querying ${mathExpressions.length} expression(s)`, {
-      expressions: mathExpressions
-    });
-
-    const wolframResults: string[] = [];
-
-    for (const expr of mathExpressions) {
-      try {
-        const result = await this.wolfram.query(expr);
-        if (result.success && result.result) {
-          wolframResults.push(`${expr} = ${result.result}`);
-          this.log('progress', `Wolfram computed: ${expr} = ${result.result}`);
-        }
-      } catch (error) {
-        // Skip failed expressions but log for debugging
-        console.log(`[TaskExecutor] Wolfram query failed for "${expr}":`, error);
-      }
-    }
-
-    if (wolframResults.length === 0) {
-      return context;
-    }
-
-    // Inject computed values into context with clear markers
-    const wolframContext = `\n\n=== WOLFRAM ALPHA COMPUTED VALUES ===
-IMPORTANT: Use these exact computed values in your implementation.
-Do NOT recalculate these - they are verified deterministic results.
-
-${wolframResults.join('\n')}
-=== END WOLFRAM ===`;
-
-    return context + wolframContext;
   }
 
   /**
@@ -3179,30 +2596,6 @@ ${wolframResults.join('\n')}
       decisions: [],
       assumptions: []
     };
-  }
-
-  /**
-   * Apply auto-fixes for fixable issues using CapabilitiesManager
-   * @param issues Review issues with autoApplicable fixes
-   * @returns Number of issues fixed
-   */
-  private async applyAutoFixes(issues: ReviewIssue[]): Promise<number> {
-    if (!this.capabilities) return 0;
-
-    // Get unique files that need fixing
-    const filesToFix = [...new Set(issues.map(i => i.file).filter(Boolean))] as string[];
-
-    if (filesToFix.length === 0) return 0;
-
-    try {
-      // Run ESLint with --fix via CapabilitiesManager
-      const result = await this.capabilities.fixLintIssues(filesToFix);
-      this.log('progress', `Auto-fixed ${result.fixedCount} issues in ${filesToFix.length} file(s)`);
-      return result.fixedCount;
-    } catch (error) {
-      console.warn('[TaskExecutor] Auto-fix failed:', error);
-      return 0;
-    }
   }
 }
 

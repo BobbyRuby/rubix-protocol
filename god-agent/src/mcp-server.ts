@@ -25,7 +25,6 @@ import type { ScheduleTrigger, TaskNotification } from './scheduler/index.js';
 import { PlaywrightManager, VerificationService, ConsoleCapture } from './playwright/index.js';
 import type { ActionType, AssertionType } from './playwright/index.js';
 import { TaskExecutor } from './codex/TaskExecutor.js';
-import { CodeGenerator } from './codex/CodeGenerator.js';
 import { CollaborativePartner } from './codex/CollaborativePartner.js';
 import { ContainmentManager } from './codex/ContainmentManager.js';
 import type { StatusReport, WorkLogEntry } from './codex/types.js';
@@ -5766,108 +5765,89 @@ class GodAgentMCPServer {
         this.verificationService || undefined
       );
 
-      // Initialize CodeGenerator with Anthropic API and ultrathink configuration
+      // Initialize RUBIX subsystems (Phased Execution is now the primary execution method)
       const llmConfig = getCodexLLMConfig();
-      if (llmConfig.apiKey) {
-        try {
-          const codeGenerator = new CodeGenerator({
-            apiKey: llmConfig.apiKey,
-            model: llmConfig.model,
-            maxTokens: llmConfig.maxTokens,
-            codebaseRoot: process.cwd(),
-            extendedThinking: llmConfig.extendedThinking
-          });
+      try {
+        // Wire CommunicationManager for escalations
+        const comms = this.getCommunicationManager();
+        this.taskExecutor.setCommunications(comms);
+        console.log('[MCP Server] CommunicationManager wired - escalations enabled');
 
-          // Wire CommunicationManager BEFORE setCodeGenerator so heartbeat callback gets wired
-          const comms = this.getCommunicationManager();
-          this.taskExecutor.setCommunications(comms);
-          codeGenerator.setComms(comms);
-
-          this.taskExecutor.setCodeGenerator(codeGenerator);
-
-          // Set extended thinking on TaskExecutor for budget calculation
-          if (llmConfig.extendedThinking) {
-            this.taskExecutor.setExtendedThinking(llmConfig.extendedThinking);
-            console.log(`[MCP Server] Ultrathink enabled: base=${llmConfig.extendedThinking.baseBudget}, max=${llmConfig.extendedThinking.maxBudget}`);
-          }
-
-          // Initialize CollaborativePartner and ContainmentManager
-          const containmentManager = new ContainmentManager({
-            enabled: true,
-            projectRoot: process.cwd()
-          });
-
-          // Load persisted user rules from containment.json
-          containmentManager.setRulesFilePath(this.dataDir);
-
-          const collaborativePartner = new CollaborativePartner(engine, {
-            enabled: true,
-            containment: containmentManager.getConfig()
-          });
-
-          // Wire into TaskExecutor and CodeGenerator
-          this.taskExecutor.setCollaborativePartner(collaborativePartner);
-          codeGenerator.setContainment(containmentManager);
-
-          console.log('[MCP Server] CollaborativePartner initialized - proactive curiosity and challenge decisions enabled');
-          console.log('[MCP Server] ContainmentManager initialized - path-based permissions active');
-
-          // Wire Wolfram Alpha for deterministic math (both TaskExecutor and CodeGenerator)
-          const wolframAppId = process.env.WOLFRAM_APP_ID || '';
-          if (wolframAppId) {
-            const wolfram = this.getWolfram();
-            this.taskExecutor.setWolfram(wolfram);  // For pre-enhancement
-            codeGenerator.setWolfram(wolfram);       // For active tool use during generation
-            console.log('[MCP Server] Wolfram Alpha integrated - RUBIX can verify math on-demand');
-          }
-
-          // Wire CodeReviewer for self-review after code generation
-          // Create synchronously since engine is already available
-          if (!this.reviewer) {
-            const caps = await this.getCapabilities();
-            this.reviewer = new CodeReviewer(
-              engine,
-              process.cwd(),
-              {},
-              caps,
-              this.playwright ?? undefined,
-              this.verificationService ?? undefined
-            );
-          }
-          this.taskExecutor.setCodeReviewer(this.reviewer);
-          console.log('[MCP Server] CodeReviewer wired - RUBIX will self-review generated code');
-
-          console.log('[MCP Server] CommunicationManager wired - escalations, permission routing, and heartbeat enabled');
-
-          // Generate RuntimeContext - compressed capabilities context for this instance
-          const configuredChannels = comms.getConfiguredChannels?.() || [];
-          const runtimeCtx = createRuntimeContext({
-            capabilities: {
-              lsp: true, git: true, analysis: true, ast: true,
-              deps: true, stacktrace: true, docs: true
-            },
-            channels: configuredChannels,
-            toolCount: 50,
-            wolfram: !!process.env.WOLFRAM_APP_ID,
-            playwright: !!this.playwright,
-            containment: true,
-            codebaseRoot: process.cwd()
-          });
-          this.taskExecutor.setRuntimeContext(runtimeCtx.readable);
-          console.log(`[MCP Server] RuntimeContext generated (${runtimeCtx.tokenEstimate} tokens):`);
-          console.log(runtimeCtx.compressed);
-
-          // Enable Phased Execution by default (6-phase tokenized flow with Ollama)
-          // Reduces Claude API calls from 15-25 to 2-3 (90% reduction)
-          this.taskExecutor.enablePhasedExecution(process.cwd());
-          console.log('[MCP Server] PhasedExecution enabled - using 6-phase tokenized flow');
-
-          console.log('[MCP Server] CodeGenerator initialized - RUBIX can now write real code');
-        } catch (error) {
-          console.error('[MCP Server] Failed to initialize CodeGenerator:', error);
+        // Set extended thinking on TaskExecutor for budget calculation
+        if (llmConfig.extendedThinking) {
+          this.taskExecutor.setExtendedThinking(llmConfig.extendedThinking);
+          console.log(`[MCP Server] Ultrathink enabled: base=${llmConfig.extendedThinking.baseBudget}, max=${llmConfig.extendedThinking.maxBudget}`);
         }
-      } else {
-        console.warn('[MCP Server] ANTHROPIC_API_KEY not set - RUBIX will run in simulation mode');
+
+        // Initialize CollaborativePartner and ContainmentManager
+        const containmentManager = new ContainmentManager({
+          enabled: true,
+          projectRoot: process.cwd()
+        });
+
+        // Load persisted user rules from containment.json
+        containmentManager.setRulesFilePath(this.dataDir);
+
+        const collaborativePartner = new CollaborativePartner(engine, {
+          enabled: true,
+          containment: containmentManager.getConfig()
+        });
+
+        // Wire into TaskExecutor
+        this.taskExecutor.setCollaborativePartner(collaborativePartner);
+
+        console.log('[MCP Server] CollaborativePartner initialized - proactive curiosity and challenge decisions enabled');
+        console.log('[MCP Server] ContainmentManager initialized - path-based permissions active');
+
+        // Wire Wolfram Alpha for deterministic math
+        const wolframAppId = process.env.WOLFRAM_APP_ID || '';
+        if (wolframAppId) {
+          const wolfram = this.getWolfram();
+          this.taskExecutor.setWolfram(wolfram);
+          console.log('[MCP Server] Wolfram Alpha integrated - RUBIX can verify math on-demand');
+        }
+
+        // Wire CodeReviewer for self-review after code generation
+        if (!this.reviewer) {
+          const caps = await this.getCapabilities();
+          this.reviewer = new CodeReviewer(
+            engine,
+            process.cwd(),
+            {},
+            caps,
+            this.playwright ?? undefined,
+            this.verificationService ?? undefined
+          );
+        }
+        this.taskExecutor.setCodeReviewer(this.reviewer);
+        console.log('[MCP Server] CodeReviewer wired - RUBIX will self-review generated code');
+
+        // Generate RuntimeContext - compressed capabilities context for this instance
+        const configuredChannels = comms.getConfiguredChannels?.() || [];
+        const runtimeCtx = createRuntimeContext({
+          capabilities: {
+            lsp: true, git: true, analysis: true, ast: true,
+            deps: true, stacktrace: true, docs: true
+          },
+          channels: configuredChannels,
+          toolCount: 50,
+          wolfram: !!process.env.WOLFRAM_APP_ID,
+          playwright: !!this.playwright,
+          containment: true,
+          codebaseRoot: process.cwd()
+        });
+        this.taskExecutor.setRuntimeContext(runtimeCtx.readable);
+        console.log(`[MCP Server] RuntimeContext generated (${runtimeCtx.tokenEstimate} tokens):`);
+        console.log(runtimeCtx.compressed);
+
+        // Enable Phased Execution by default (6-phase tokenized flow)
+        // This is now the primary execution method (legacy CodeGenerator removed)
+        this.taskExecutor.enablePhasedExecution(process.cwd());
+        console.log('[MCP Server] PhasedExecution enabled - using 6-phase tokenized flow (primary execution path)');
+
+        console.log('[MCP Server] TaskExecutor initialized - RUBIX ready');
+      } catch (error) {
+        console.error('[MCP Server] Failed to initialize TaskExecutor subsystems:', error);
       }
     }
     return this.taskExecutor;
