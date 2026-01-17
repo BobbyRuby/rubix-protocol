@@ -588,6 +588,35 @@ export class CapabilitiesManager {
     await lsp.shutdown();
   }
 
+  async checkLspAvailability(languageId: string): Promise<{
+    languageId: string;
+    available: boolean;
+    name: string;
+    command: string;
+    installInstructions?: string;
+    error?: string;
+  }> {
+    const lsp = await this.ensureLsp();
+    return lsp.checkServerAvailability(languageId);
+  }
+
+  async checkAllLspAvailability(): Promise<Array<{
+    languageId: string;
+    available: boolean;
+    name: string;
+    command: string;
+    installInstructions?: string;
+    error?: string;
+  }>> {
+    const lsp = await this.ensureLsp();
+    return lsp.checkAllServersAvailability();
+  }
+
+  getSupportedLspLanguages(): string[] {
+    if (!this.lsp) return [];
+    return this.lsp.getSupportedLanguages();
+  }
+
   getLspStatus(): Array<{ languageId: string; running: boolean; capabilities: { definitionProvider: boolean; referencesProvider: boolean; documentSymbolProvider: boolean; workspaceSymbolProvider: boolean; diagnosticProvider: boolean; hoverProvider: boolean; completionProvider: boolean; renameProvider: boolean }; error?: string }> {
     if (!this.lsp) return [];
     return this.lsp.getStatus();

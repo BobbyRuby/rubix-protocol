@@ -37,82 +37,74 @@ import type {
   LSPDiagnostic
 } from '../types.js';
 import type { LSPServerConfig, LSPServerStatus, LSPCapabilities } from './types.js';
+import {
+  getLanguageEntry,
+  getServerForExtension,
+  getLanguageIdForExtension,
+  getSupportedLanguages,
+  formatInstallInstructions
+} from './registry.js';
 
 /**
- * Resolve command path, checking npm global bin on Windows
+ * Resolve command path, checking various bin locations on Windows
  * Called at spawn time to ensure environment is available
  *
  * IMPORTANT: Returns paths with forward slashes on Windows to avoid
  * backslash escaping issues when using shell: 'cmd.exe'
  */
-function resolveCommand(command: string): string {
+function resolveCommand(command: string, windowsCommand?: string): string {
+  const cmdName = process.platform === 'win32' && windowsCommand ? windowsCommand : command;
+
   if (process.platform === 'win32') {
-    // Check npm global bin location on Windows
-    const appData = process.env.APPDATA || process.env.AppData;
-    if (appData) {
-      const npmGlobalBin = path.join(appData, 'npm', `${command}.cmd`);
+    const userProfile = process.env.USERPROFILE || '';
+
+    // Paths to check (in order of priority)
+    const pathsToCheck = [
+      // npm global bin (most common for JS tooling)
+      path.join(process.env.APPDATA || '', 'npm', cmdName),
+      path.join(userProfile, 'AppData', 'Roaming', 'npm', cmdName),
+      // Go bin (for gopls)
+      path.join(process.env.GOPATH || path.join(userProfile, 'go'), 'bin', `${command}.exe`),
+      // Cargo bin (for rust-analyzer)
+      path.join(process.env.CARGO_HOME || path.join(userProfile, '.cargo'), 'bin', `${command}.exe`),
+      // Scoop bin
+      path.join(userProfile, 'scoop', 'shims', `${command}.exe`),
+      // Python scripts (for pyright)
+      path.join(userProfile, 'AppData', 'Local', 'Programs', 'Python', 'Python*', 'Scripts', cmdName),
+    ];
+
+    for (const checkPath of pathsToCheck) {
       try {
-        if (existsSync(npmGlobalBin)) {
-          // Use forward slashes to avoid cmd.exe backslash escaping issues
-          const normalizedPath = npmGlobalBin.replace(/\\/g, '/');
+        if (existsSync(checkPath)) {
+          const normalizedPath = checkPath.replace(/\\/g, '/');
           console.log(`[LSP] Resolved ${command} to: ${normalizedPath}`);
           return normalizedPath;
         }
       } catch {
-        // Fall through to default
-      }
-    }
-    // Also try common Windows paths
-    const userProfile = process.env.USERPROFILE;
-    if (userProfile) {
-      const altPath = path.join(userProfile, 'AppData', 'Roaming', 'npm', `${command}.cmd`);
-      try {
-        if (existsSync(altPath)) {
-          // Use forward slashes to avoid cmd.exe backslash escaping issues
-          const normalizedPath = altPath.replace(/\\/g, '/');
-          console.log(`[LSP] Resolved ${command} to: ${normalizedPath}`);
-          return normalizedPath;
-        }
-      } catch {
-        // Fall through to default
+        // Continue to next path
       }
     }
   }
-  console.log(`[LSP] Using default command: ${command}`);
-  return command;
+
+  console.log(`[LSP] Using default command: ${cmdName}`);
+  return cmdName;
 }
 
 /**
  * Get server config with resolved command (called at spawn time)
+ * Uses centralized registry for all 10 supported languages
  */
 function getServerConfig(languageId: string): LSPServerConfig | undefined {
-  const configs: Record<string, Omit<LSPServerConfig, 'command'> & { commandName: string }> = {
-    'typescript': {
-      languageId: 'typescript',
-      commandName: 'typescript-language-server',
-      args: ['--stdio'],
-      patterns: ['**/*.ts', '**/*.tsx']
-    },
-    'javascript': {
-      languageId: 'javascript',
-      commandName: 'typescript-language-server',
-      args: ['--stdio'],
-      patterns: ['**/*.js', '**/*.jsx']
-    }
-  };
-
-  const config = configs[languageId];
-  if (!config) return undefined;
+  const entry = getLanguageEntry(languageId);
+  if (!entry) return undefined;
 
   return {
-    languageId: config.languageId,
-    command: resolveCommand(config.commandName),
-    args: config.args,
-    patterns: config.patterns
+    languageId: entry.languageId,
+    command: resolveCommand(entry.command, entry.windowsCommand),
+    args: entry.args,
+    patterns: entry.patterns
   };
 }
-
-// Server configs are now generated dynamically via getServerConfig()
 
 /**
  * LSPManager - Language Server Protocol manager
@@ -137,6 +129,101 @@ export class LSPManager {
   async initialize(): Promise<void> {
     // Start TypeScript language server by default
     await this.startServer('typescript');
+  }
+
+  /**
+   * Check if a language server is available (installed)
+   */
+  async checkServerAvailability(languageId: string): Promise<{
+    languageId: string;
+    available: boolean;
+    name: string;
+    command: string;
+    installInstructions?: string;
+    error?: string;
+  }> {
+    const entry = getLanguageEntry(languageId);
+    if (!entry) {
+      return {
+        languageId,
+        available: false,
+        name: 'Unknown',
+        command: 'unknown',
+        error: `Unknown language: ${languageId}. Supported: ${getSupportedLanguages().join(', ')}`
+      };
+    }
+
+    const command = resolveCommand(entry.command, entry.windowsCommand);
+
+    try {
+      // Try to spawn the server briefly to check if it exists
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(command, ['--version'], {
+          shell: process.platform === 'win32' ? 'cmd.exe' : false,
+          stdio: 'pipe',
+          timeout: 5000
+        });
+
+        const timeout = setTimeout(() => {
+          proc.kill();
+          resolve(); // Timeout means process started (good)
+        }, 3000);
+
+        proc.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+
+        proc.on('spawn', () => {
+          clearTimeout(timeout);
+          proc.kill();
+          resolve();
+        });
+
+        proc.on('close', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+
+      return {
+        languageId,
+        available: true,
+        name: entry.name,
+        command
+      };
+    } catch (error) {
+      return {
+        languageId,
+        available: false,
+        name: entry.name,
+        command,
+        installInstructions: formatInstallInstructions(entry),
+        error: error instanceof Error ? error.message : 'Server not found'
+      };
+    }
+  }
+
+  /**
+   * Check availability of all supported language servers
+   */
+  async checkAllServersAvailability(): Promise<Array<{
+    languageId: string;
+    available: boolean;
+    name: string;
+    command: string;
+    installInstructions?: string;
+    error?: string;
+  }>> {
+    const languages = getSupportedLanguages();
+    return Promise.all(languages.map(lang => this.checkServerAvailability(lang)));
+  }
+
+  /**
+   * Get list of supported languages
+   */
+  getSupportedLanguages(): string[] {
+    return getSupportedLanguages();
   }
 
   /**
@@ -596,16 +683,20 @@ export class LSPManager {
   // ===========================================================================
 
   private getServerForFile(file: string): typeof this.servers extends Map<string, infer V> ? V : never {
-    const ext = path.extname(file);
+    const ext = path.extname(file).slice(1); // Remove leading dot
+    const serverKey = getServerForExtension(ext);
 
-    if (['.ts', '.tsx'].includes(ext)) {
-      return this.servers.get('typescript') as ReturnType<typeof this.getServerForFile>;
-    }
-    if (['.js', '.jsx'].includes(ext)) {
-      return (this.servers.get('javascript') ?? this.servers.get('typescript')) as ReturnType<typeof this.getServerForFile>;
+    if (serverKey && this.servers.has(serverKey)) {
+      return this.servers.get(serverKey) as ReturnType<typeof this.getServerForFile>;
     }
 
-    // Return first available server
+    // Fallback: JS files can use TypeScript server
+    if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) {
+      const fallback = this.servers.get('javascript') ?? this.servers.get('typescript');
+      if (fallback) return fallback as ReturnType<typeof this.getServerForFile>;
+    }
+
+    // Return first available server as last resort
     return this.servers.values().next().value as ReturnType<typeof this.getServerForFile>;
   }
 
@@ -638,14 +729,7 @@ export class LSPManager {
 
   private getLanguageId(file: string): string {
     const ext = path.extname(file);
-    switch (ext) {
-      case '.ts': return 'typescript';
-      case '.tsx': return 'typescriptreact';
-      case '.js': return 'javascript';
-      case '.jsx': return 'javascriptreact';
-      case '.json': return 'json';
-      default: return 'plaintext';
-    }
+    return getLanguageIdForExtension(ext);
   }
 
   private pathToUri(filePath: string): string {
