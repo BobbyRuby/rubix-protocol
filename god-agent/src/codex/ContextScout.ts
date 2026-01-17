@@ -42,10 +42,12 @@ export interface ContextBundle {
  */
 export class ContextScout {
   private codebasePath: string;
+  private polyglotContext: string;
   private cliTimeout: number;
 
-  constructor(codebasePath: string, cliTimeout = 300000) {
+  constructor(codebasePath: string, polyglotContext = '', cliTimeout = 300000) {
     this.codebasePath = codebasePath;
+    this.polyglotContext = polyglotContext;
     this.cliTimeout = cliTimeout;
   }
 
@@ -78,8 +80,13 @@ export class ContextScout {
    * Build the scout prompt for Claude Code CLI.
    */
   private buildScoutPrompt(task: CodexTask): string {
-    return `# CONTEXT SCOUT - Research Phase
+    // Inject polyglot context at the top if available
+    const polyglotSection = this.polyglotContext
+      ? `${this.polyglotContext}\n\n---\n\n`
+      : '';
 
+    return `# CONTEXT SCOUT - Research Phase
+${polyglotSection}
 ## Your Role
 You are the RESEARCHER. Your job is to gather all context needed for implementing this task.
 DO NOT implement anything. Only research and report findings.
@@ -139,22 +146,27 @@ Begin your research now.`;
 
       const child = spawn('claude', args, {
         cwd: this.codebasePath,
-        shell: true,
-        timeout: this.cliTimeout
+        shell: false,                    // Direct execution (not through cmd.exe)
+        windowsHide: true,               // No console window on Windows
+        stdio: ['pipe', 'pipe', 'pipe'], // Explicit pipe configuration
+        env: process.env                 // Full environment inheritance
       });
 
       let stdout = '';
       let stderr = '';
+      let resolved = false;
 
-      child.stdout?.on('data', (data) => {
+      child.stdout.on('data', (data) => {
         stdout += data.toString();
       });
 
-      child.stderr?.on('data', (data) => {
+      child.stderr.on('data', (data) => {
         stderr += data.toString();
       });
 
       child.on('close', (code) => {
+        if (resolved) return;
+        resolved = true;
         if (code === 0) {
           resolve(stdout);
         } else {
@@ -164,8 +176,18 @@ Begin your research now.`;
       });
 
       child.on('error', (error) => {
+        if (resolved) return;
+        resolved = true;
         reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
       });
+
+      // Manual timeout (more reliable than spawn timeout option)
+      setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        child.kill('SIGTERM');
+        reject(new Error(`Claude CLI timed out after ${this.cliTimeout}ms`));
+      }, this.cliTimeout);
     });
   }
 
@@ -283,6 +305,6 @@ Begin your research now.`;
 }
 
 // Factory function
-export function createContextScout(codebasePath: string): ContextScout {
-  return new ContextScout(codebasePath);
+export function createContextScout(codebasePath: string, polyglotContext = ''): ContextScout {
+  return new ContextScout(codebasePath, polyglotContext);
 }

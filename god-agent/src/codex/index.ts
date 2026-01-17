@@ -117,14 +117,12 @@ export type {
 export { DEFAULT_RUBIX_CONFIG, ESCALATION_TIERS, DEPARTMENTS, DEPARTMENT_ROLES } from './types.js';
 export type { Department } from './types.js';
 
-// Phased Execution (6-Phase Tokenized Architecture - Rate Limit Solution)
-export { TokenRouter, getTokenRouter, resetTokenRouter, estimateTokens, routeToProvider } from './TokenRouter.js';
-
+// Phased Execution (6-Phase Tokenized Architecture - Claude Hybrid Approach)
 export { ContextScout, createContextScout } from './ContextScout.js';
 export type { ResearchResult, ContextBundle } from './ContextScout.js';
 
-export { OllamaReasoner, createOllamaReasoner } from './OllamaReasoner.js';
-export type { DesignOutput, PlanOutput, FileContent } from './OllamaReasoner.js';
+export { ClaudeReasoner, createClaudeReasoner, createDefaultClaudeReasoner } from './ClaudeReasoner.js';
+export type { DesignOutput, PlanOutput, FileContent, ClaudeReasonerConfig } from './ClaudeReasoner.js';
 
 export { PlanValidator, createPlanValidator } from './PlanValidator.js';
 export type { ValidationResult } from './PlanValidator.js';
@@ -134,3 +132,12 @@ export type { ExecutionResult as PlanExecutionResult, ExecutionError } from './P
 
 export { PhasedExecutor, getPhasedExecutor, resetPhasedExecutor } from './PhasedExecutor.js';
 export type { PhasedExecutionResult, HumanEscalationCallback } from './PhasedExecutor.js';
+
+// Skill Detection (Polyglot Context Loading)
+export {
+  detectSkills,
+  loadPolyglotContext,
+  getAvailableSkills,
+  getTagsForKeyword
+} from './SkillDetector.js';
+export type { PolyglotContextResult } from './SkillDetector.js';

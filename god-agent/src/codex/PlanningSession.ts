@@ -18,6 +18,7 @@ import { MemorySource } from '../core/types.js';
 import { PlanningAgent, type PlanDocument, type PlanningExchange, type ImageContent } from './PlanningAgent.js';
 import type { TaskSubmission } from './TaskExecutor.js';
 import { getLLMCompressor } from '../memory/LLMCompressor.js';
+import { detectSkills } from './SkillDetector.js';
 
 /**
  * Standalone decompression helper for static methods and contexts without instance access.
@@ -194,6 +195,9 @@ export class PlanningSession {
     }
 
     this.agent = new PlanningAgent({ apiKey, codebaseRoot: config.codebase });
+
+    // Connect memory engine for recall
+    this.agent.setMemoryEngine(engine);
 
     // Initialize session metadata
     this.meta = {
@@ -705,35 +709,68 @@ export class PlanningSession {
    * Retrieve relevant context for a query
    */
   private async retrieveRelevantContext(query: string, limit: number = 15): Promise<string> {
+    const parts: string[] = [];
+
+    // === SKILL DETECTION & POLYGLOT LOADING ===
+    // Detect skills from query and load relevant polyglot knowledge
+    const detectedSkills = detectSkills(query + ' ' + this.config.taskDescription);
+
+    if (detectedSkills.length > 0) {
+      console.log(`[PlanningSession] Detected skills: ${detectedSkills.join(', ')}`);
+
+      try {
+        const polyglotResults = await this.engine.query('polyglot knowledge patterns', {
+          topK: 3,
+          filters: { tags: detectedSkills },
+          minScore: 0.2
+        });
+
+        if (polyglotResults.length > 0) {
+          parts.push('## POLYGLOT KNOWLEDGE (auto-loaded)');
+          for (const r of polyglotResults) {
+            const tags = r.entry.metadata.tags || [];
+            const polyglotTags = tags.filter((t: string) => t.startsWith('polyglot:'));
+            const content = r.entry.content.length > 400
+              ? r.entry.content.substring(0, 400) + '...'
+              : r.entry.content;
+            parts.push(`### ${polyglotTags.join(', ')}\n${content}`);
+          }
+          console.log(`[PlanningSession] Loaded ${polyglotResults.length} polyglot entries`);
+        }
+      } catch (error) {
+        console.warn('[PlanningSession] Failed to load polyglot context:', error);
+      }
+    }
+
+    // === REGULAR SESSION CONTEXT ===
     const results = await this.engine.query(query, {
-      topK: limit,
+      topK: limit - Math.min(3, parts.length), // Adjust limit for polyglot results
       filters: {
         tags: [`session:${this.id}`],
         minImportance: 0.5
       }
     });
 
-    if (results.length === 0) {
-      return '';
+    if (results.length > 0) {
+      if (parts.length > 0) {
+        parts.push('\n## SESSION CONTEXT');
+      }
+
+      for (const r of results) {
+        const tags = r.entry.metadata.tags || [];
+        let content = r.entry.content;
+
+        // Decompress if needed (LLM or legacy compression)
+        content = await this.decompressContent(content, tags);
+
+        const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
+        const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
+
+        parts.push(`[${role}] ${truncated}`);
+      }
+
+      console.log(`[PlanningSession] Retrieved ${results.length} relevant exchanges`);
     }
-
-    // Format results
-    const parts: string[] = [];
-
-    for (const r of results) {
-      const tags = r.entry.metadata.tags || [];
-      let content = r.entry.content;
-
-      // Decompress if needed (LLM or legacy compression)
-      content = await this.decompressContent(content, tags);
-
-      const role = tags.includes('user') ? 'USER' : 'ASSISTANT';
-      const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
-
-      parts.push(`[${role}] ${truncated}`);
-    }
-
-    console.log(`[PlanningSession] Retrieved ${results.length} relevant exchanges`);
 
     return parts.join('\n\n');
   }
