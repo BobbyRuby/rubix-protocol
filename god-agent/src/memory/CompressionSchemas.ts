@@ -630,16 +630,7 @@ const ARCH_INSIGHT_SCHEMA: CompressionSchema = {
  * Strips articles, pronouns, hedging, filler -> compact text
  */
 const GENERIC_SCHEMA: CompressionSchema = {
-  encode: (text: string) => {
-    return text
-      .replace(/\b(a|an|the)\b/gi, '')
-      .replace(/\b(you|I|we|they|he|she|it|your|my|our|their)\b/gi, '')
-      .replace(/\b(please|thanks|thank you|kindly)\b/gi, '')
-      .replace(/\b(maybe|might|could|would|should|perhaps|possibly)\b/gi, '')
-      .replace(/\b(basically|actually|really|very|just|simply|quite)\b/gi, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  },
+  encode: (text: string) => text,
 
   decode: (compressed: string) => compressed,
 };
@@ -775,44 +766,7 @@ const CONVERSATION_SCHEMA: CompressionSchema = {
  * Example: CTX|TSK001|build_auth_system|files:src/auth/,src/types/|mem:abc123.def456|deps:express.jwt|patterns:snake.vitest|style:ts.strict
  */
 const CONTEXT_BUNDLE_SCHEMA: CompressionSchema = {
-  encode: (text: string) => {
-    const taskMatch = text.match(/task[:\s]*(\w+)/i);
-    const taskId = taskMatch?.[1] || `TSK${Date.now().toString(36)}`;
-
-    const descMatch = text.match(/(?:description|desc|task)[:\s]+([^.\n]+)/i);
-    const desc = descMatch ? sanitize(descMatch[1], 50) : '';
-
-    const files: string[] = [];
-    for (const m of text.matchAll(/\b([\w/]+\.ts)\b/g)) {
-      if (!files.includes(m[1])) files.push(m[1]);
-    }
-    const filesStr = files.length > 0 ? `files:${files.slice(0, 10).join(',')}` : 'files:';
-
-    const memIds: string[] = [];
-    for (const m of text.matchAll(/\b([a-f0-9]{8})\b/gi)) {
-      if (!memIds.includes(m[1])) memIds.push(m[1]);
-    }
-    const memStr = memIds.length > 0 ? `mem:${memIds.slice(0, 5).join('.')}` : 'mem:';
-
-    const deps: string[] = [];
-    for (const m of text.matchAll(/\b(express|react|next|vue|angular|pg|prisma|jwt|bcrypt|axios|lodash)\b/gi)) {
-      const d = m[1].toLowerCase();
-      if (!deps.includes(d)) deps.push(d);
-    }
-    const depsStr = deps.length > 0 ? `deps:${deps.slice(0, 5).join('.')}` : 'deps:';
-
-    const patterns: string[] = [];
-    for (const m of text.matchAll(/\b(snake_case|camelCase|vitest|jest|mocha|flat|nested)\b/gi)) {
-      const p = m[1].toLowerCase();
-      if (!patterns.includes(p)) patterns.push(p);
-    }
-    const patternsStr = patterns.length > 0 ? `patterns:${patterns.slice(0, 3).join('.')}` : 'patterns:';
-
-    const styleMatch = text.match(/\b(ts\.strict|ts\.loose|js)\b/i);
-    const style = styleMatch?.[1]?.toLowerCase() || 'ts.strict';
-
-    return ['CTX', taskId, desc, filesStr, memStr, depsStr, patternsStr, `style:${style}`].join('|');
-  },
+  encode: (text: string) => text,
 
   decode: (compressed: string) => {
     const parts = compressed.split('|');
@@ -850,36 +804,7 @@ const CONTEXT_BUNDLE_SCHEMA: CompressionSchema = {
  * Example: DES|comps:AuthCtrl.JWTSvc|models:User.Session|files:auth/,types/|apis:login.logout|notes:stateless_jwt
  */
 const DESIGN_SCHEMA: CompressionSchema = {
-  encode: (text: string) => {
-    const comps: string[] = [];
-    for (const m of text.matchAll(/\b([A-Z][a-zA-Z]*(?:Controller|Service|Handler|Manager|Repository|Factory))\b/g)) {
-      if (!comps.includes(m[1])) comps.push(toInitials(m[1]));
-    }
-    const compsStr = comps.length > 0 ? `comps:${comps.slice(0, 5).join('.')}` : 'comps:';
-
-    const models: string[] = [];
-    for (const m of text.matchAll(/\b(?:model|entity|type)[:\s]*(\w+)/gi)) {
-      if (!models.includes(m[1])) models.push(m[1]);
-    }
-    const modelsStr = models.length > 0 ? `models:${models.slice(0, 5).join('.')}` : 'models:';
-
-    const dirs: string[] = [];
-    for (const m of text.matchAll(/\b([\w]+\/)\b/g)) {
-      if (!dirs.includes(m[1])) dirs.push(m[1]);
-    }
-    const filesStr = dirs.length > 0 ? `files:${dirs.slice(0, 5).join(',')}` : 'files:';
-
-    const apis: string[] = [];
-    for (const m of text.matchAll(/\b(?:api|endpoint|route)[:\s]*(\w+)/gi)) {
-      if (!apis.includes(m[1])) apis.push(m[1].toLowerCase());
-    }
-    const apisStr = apis.length > 0 ? `apis:${apis.slice(0, 5).join('.')}` : 'apis:';
-
-    const notesMatch = text.match(/(?:notes?|design)[:\s]+([^.\n]+)/i);
-    const notes = notesMatch ? sanitize(notesMatch[1], 30) : '';
-
-    return ['DES', compsStr, modelsStr, filesStr, apisStr, notes].join('|');
-  },
+  encode: (text: string) => text,
 
   decode: (compressed: string) => {
     const parts = compressed.split('|');
@@ -914,31 +839,7 @@ const DESIGN_SCHEMA: CompressionSchema = {
  * Example: PLAN|eng|C:src/auth/login.ts,M:src/types/user.ts|cmd:npm.test|conf:0.9|notes:add_bcrypt
  */
 const EXEC_PLAN_SCHEMA: CompressionSchema = {
-  encode: (text: string) => {
-    const deptMatch = text.match(/\b(eng|engineer|val|validator|gua|guardian)\b/i);
-    const dept = deptMatch?.[1]?.toLowerCase().slice(0, 3) || 'eng';
-
-    const ops: string[] = [];
-    for (const m of text.matchAll(/\b(create|modify|delete)[:\s]*([\w/]+\.ts)\b/gi)) {
-      const op = m[1][0].toUpperCase();
-      ops.push(`${op}:${m[2]}`);
-    }
-    const opsStr = ops.length > 0 ? ops.slice(0, 10).join(',') : '';
-
-    const cmds: string[] = [];
-    for (const m of text.matchAll(/\b(npm\s+\w+|yarn\s+\w+|pnpm\s+\w+)\b/gi)) {
-      cmds.push(m[1].replace(/\s+/g, '.'));
-    }
-    const cmdStr = cmds.length > 0 ? `cmd:${cmds.slice(0, 3).join(',')}` : 'cmd:';
-
-    const confMatch = text.match(/confidence[:\s]*([\d.]+)/i);
-    const conf = confMatch?.[1] || '0.8';
-
-    const notesMatch = text.match(/notes?[:\s]+([^.\n]+)/i);
-    const notes = notesMatch ? sanitize(notesMatch[1], 30) : '';
-
-    return ['PLAN', dept, opsStr, cmdStr, `conf:${conf}`, notes].join('|');
-  },
+  encode: (text: string) => text,
 
   decode: (compressed: string) => {
     const parts = compressed.split('|');
@@ -974,43 +875,7 @@ const EXEC_PLAN_SCHEMA: CompressionSchema = {
  * Example: VAL|approve:1|tests:unit.integ|sec:|perf:|mods:|block:
  */
 const VALIDATION_SCHEMA: CompressionSchema = {
-  encode: (text: string) => {
-    const approveMatch = text.match(/\b(?:approve|approved|pass|passed|ok)\b/i);
-    const rejectMatch = text.match(/\b(?:reject|rejected|fail|failed|block)\b/i);
-    const approve = approveMatch && !rejectMatch ? '1' : '0';
-
-    const tests: string[] = [];
-    for (const m of text.matchAll(/\b(unit|integration|integ|e2e|smoke|regression)\b/gi)) {
-      const t = m[1].toLowerCase().slice(0, 5);
-      if (!tests.includes(t)) tests.push(t);
-    }
-    const testsStr = tests.length > 0 ? `tests:${tests.join('.')}` : 'tests:';
-
-    const secIssues: string[] = [];
-    for (const m of text.matchAll(/\b(xss|sqli|csrf|ssrf|injection|auth|secret|hardcoded)\b/gi)) {
-      const s = m[1].toLowerCase();
-      if (!secIssues.includes(s)) secIssues.push(s);
-    }
-    const secStr = secIssues.length > 0 ? `sec:${secIssues.slice(0, 3).join('.')}` : 'sec:';
-
-    const perfIssues: string[] = [];
-    for (const m of text.matchAll(/\b(n\+1|slow|memory|leak|bottleneck|blocking)\b/gi)) {
-      const p = m[1].toLowerCase();
-      if (!perfIssues.includes(p)) perfIssues.push(p);
-    }
-    const perfStr = perfIssues.length > 0 ? `perf:${perfIssues.slice(0, 3).join('.')}` : 'perf:';
-
-    const mods: string[] = [];
-    for (const m of text.matchAll(/\bmodify[:\s]*([\w/]+\.ts)[:\s]*(\w+)/gi)) {
-      mods.push(`M:${m[1]}.${sanitize(m[2], 15)}`);
-    }
-    const modsStr = mods.length > 0 ? `mods:${mods.slice(0, 3).join(',')}` : 'mods:';
-
-    const blockMatch = text.match(/\bblock(?:er|ing)?[:\s]+([^.\n]+)/i);
-    const block = blockMatch ? `block:${sanitize(blockMatch[1], 30)}` : 'block:';
-
-    return ['VAL', `approve:${approve}`, testsStr, secStr, perfStr, modsStr, block].join('|');
-  },
+  encode: (text: string) => text,
 
   decode: (compressed: string) => {
     const parts = compressed.split('|');
