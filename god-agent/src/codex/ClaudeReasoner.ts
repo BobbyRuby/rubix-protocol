@@ -1,16 +1,25 @@
 /**
- * ClaudeReasoner - Phases 2-3: Hybrid reasoning with Claude.
+ * ClaudeReasoner - Phases 2-3: API-based reasoning with Claude.
  *
- * Phase 2 (ARCHITECT): CLI Opus - Complex reasoning, MCP access, stores decisions
+ * Phase 2 (ARCHITECT): API Opus - Complex reasoning, stores decisions
  * Phase 3 (ENGINEER): API Sonnet - Fast implementation planning, ephemeral
  *
- * Replaces OllamaReasoner entirely - Claude only, no third-party providers.
+ * All calls use Anthropic API directly - no CLI dependency.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { spawn } from 'child_process';
 import { COMPRESSION_SCHEMAS } from '../memory/CompressionSchemas.js';
 import type { ContextBundle } from './ContextScout.js';
+import { getCodexLogger } from './Logger.js';
+
+/**
+ * Component dependency for parallel engineering.
+ */
+export interface ComponentDependency {
+  name: string;
+  file: string;
+  dependencies: string[];  // Names of components this depends on
+}
 
 /**
  * Design output from Phase 2 (ARCHITECT).
@@ -22,6 +31,9 @@ export interface DesignOutput {
   apis: string[];
   notes: string;
   compressedToken: string;  // DES|...|...
+  // Cost-based routing fields
+  complexity: 'low' | 'medium' | 'high';
+  componentDependencies: ComponentDependency[];
 }
 
 /**
@@ -50,62 +62,78 @@ export interface PlanOutput {
  * Configuration for ClaudeReasoner
  */
 export interface ClaudeReasonerConfig {
-  /** Anthropic API key for Sonnet calls */
+  /** Anthropic API key for all calls */
   apiKey?: string;
-  /** Codebase path for CLI execution */
+  /** Codebase path for context */
   codebasePath: string;
-  /** CLI timeout in ms (default: 5 minutes) */
-  cliTimeout?: number;
   /** API model for implementation (default: claude-sonnet-4-20250514) */
   apiModel?: string;
+  /** API model for architecture (default: claude-opus-4-20250514) */
+  architectModel?: string;
 }
 
 /**
- * ClaudeReasoner handles reasoning phases with Claude hybrid approach.
+ * ClaudeReasoner handles reasoning phases with Claude API.
  *
  * Key design:
- * - CLI (Opus) for thinking: complex reasoning, MCP access, stores decisions
+ * - API (Opus) for thinking: complex reasoning, architecture decisions
  * - API (Sonnet) for doing: fast implementation planning, ephemeral
  */
 export class ClaudeReasoner {
   private apiClient: Anthropic | null = null;
   private apiModel: string;
-  private codebasePath: string;
-  private cliTimeout: number;
+  private architectModel: string;
 
   constructor(config: ClaudeReasonerConfig) {
-    this.codebasePath = config.codebasePath;
-    this.cliTimeout = config.cliTimeout || 5 * 60 * 1000; // 5 minutes
+    // codebasePath available via config if needed in future
+    void config.codebasePath;
     this.apiModel = config.apiModel || 'claude-sonnet-4-20250514';
+    this.architectModel = config.architectModel || 'claude-opus-4-20250514';
 
-    // Initialize API client for Sonnet calls (Phase 3)
+    // Initialize API client
     const apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
       this.apiClient = new Anthropic({ apiKey });
-      console.log('[ClaudeReasoner] API client initialized for Sonnet calls');
+      console.log('[ClaudeReasoner] API client initialized');
+      console.log(`[ClaudeReasoner] Architect model: ${this.architectModel}`);
+      console.log(`[ClaudeReasoner] Engineer model: ${this.apiModel}`);
     } else {
-      console.warn('[ClaudeReasoner] No ANTHROPIC_API_KEY - Phase 3 will use CLI fallback');
+      console.warn('[ClaudeReasoner] No ANTHROPIC_API_KEY - reasoning phases will fail');
     }
   }
 
   /**
-   * Phase 2: ARCHITECT - Design the solution using CLI Opus.
+   * Phase 2: ARCHITECT - Design the solution using API Opus.
    *
-   * Uses CLI (Opus) because:
+   * Uses API (Opus) because:
    * - Complex reasoning required
-   * - Has MCP access for memory queries
-   * - Decisions should be stored for learning
+   * - Architecture decisions need careful thought
+   * - Opus has better reasoning capabilities
    */
   async architect(context: ContextBundle): Promise<DesignOutput> {
-    console.log(`[ClaudeReasoner] Phase 2: ARCHITECT (CLI Opus) for task ${context.taskId}`);
+    console.log(`[ClaudeReasoner] Phase 2: ARCHITECT (API Opus) for task ${context.taskId}`);
 
     const prompt = this.buildArchitectPrompt(context);
+    const logger = getCodexLogger();
 
     try {
-      const response = await this.executeCliOpus(prompt);
-      return this.parseArchitectOutput(response);
+      const response = await this.executeApiOpus(prompt);
+      const result = this.parseArchitectOutput(response);
+
+      // Log response for debugging
+      logger.logResponse(
+        'ARCHITECT',
+        prompt,
+        response,
+        0, // No files in architect phase
+        undefined,
+        'architect'
+      );
+
+      return result;
     } catch (error) {
-      console.error('[ClaudeReasoner] CLI Opus failed:', error);
+      logger.logResponse('ARCHITECT', prompt, '', 0, undefined, 'architect', String(error));
+      console.error('[ClaudeReasoner] API Opus failed:', error);
       throw error;
     }
   }
@@ -115,99 +143,78 @@ export class ClaudeReasoner {
    *
    * Uses API (Sonnet) because:
    * - Implementation planning is straightforward
-   * - Speed matters - Sonnet is faster than CLI
-   * - No MCP access needed - context already gathered
-   * - Ephemeral - doesn't need to store
+   * - Speed matters - Sonnet is faster than Opus
+   * - Context already gathered - just need code generation
    */
   async engineer(context: ContextBundle, design: DesignOutput): Promise<PlanOutput> {
     console.log(`[ClaudeReasoner] Phase 3: ENGINEER (API Sonnet) for task ${context.taskId}`);
 
     const prompt = this.buildEngineerPrompt(context, design);
+    const logger = getCodexLogger();
 
-    // Prefer API Sonnet for speed
-    if (this.apiClient) {
-      try {
-        const response = await this.executeApiSonnet(prompt);
-        return this.parseEngineerOutput(response);
-      } catch (error) {
-        console.error('[ClaudeReasoner] API Sonnet failed, falling back to CLI:', error);
-        // Fall through to CLI fallback
+    try {
+      const response = await this.executeApiSonnet(prompt);
+      const result = this.parseEngineerOutput(response);
+
+      // Log response for debugging
+      logger.logResponse(
+        'ENGINEER',
+        prompt,
+        response,
+        result.files.length,
+        result.files.map(f => ({ path: f.path, action: f.action })),
+        'engineer'
+      );
+
+      // Log parsing failure if files expected but not found
+      if (result.files.length === 0 && response.includes('<file')) {
+        logger.logParsingFailure(response, 'ENGINEER phase - expected files but none parsed');
       }
+
+      return result;
+    } catch (error) {
+      logger.logResponse('ENGINEER', prompt, '', 0, undefined, 'engineer', String(error));
+      console.error('[ClaudeReasoner] API Sonnet failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Execute prompt via Anthropic API (Opus) for architecture.
+   */
+  private async executeApiOpus(prompt: string): Promise<string> {
+    if (!this.apiClient) {
+      throw new Error('API client not initialized - missing ANTHROPIC_API_KEY');
     }
 
-    // Fallback to CLI if API unavailable
-    console.log('[ClaudeReasoner] Using CLI fallback for ENGINEER phase');
-    const response = await this.executeCliOpus(prompt);
-    return this.parseEngineerOutput(response);
-  }
+    console.log(`[ClaudeReasoner] Executing API Opus (${this.architectModel})...`);
 
-  /**
-   * Execute prompt via Claude Code CLI (Opus).
-   */
-  private async executeCliOpus(prompt: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-p', prompt,
-        '--model', 'opus',
-        '--dangerously-skip-permissions',
-        '--allowedTools', 'Read,Glob,Grep,mcp__rubix__god_query,mcp__rubix__god_store'
-      ];
-
-      console.log('[ClaudeReasoner] Executing Claude Code CLI (Opus)...');
-
-      const child = spawn('claude', args, {
-        cwd: this.codebasePath,
-        shell: false,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: process.env
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let resolved = false;
-
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (resolved) return;
-        resolved = true;
-        if (code === 0) {
-          console.log(`[ClaudeReasoner] CLI Opus completed: ${stdout.length} chars`);
-          resolve(stdout);
-        } else {
-          console.error('[ClaudeReasoner] CLI stderr:', stderr);
-          reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
-        }
-      });
-
-      child.on('error', (error) => {
-        if (resolved) return;
-        resolved = true;
-        reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
-      });
-
-      setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        child.kill('SIGTERM');
-        reject(new Error(`Claude CLI timed out after ${this.cliTimeout}ms`));
-      }, this.cliTimeout);
+    const response = await this.apiClient.messages.create({
+      model: this.architectModel,
+      max_tokens: 8192,
+      messages: [
+        { role: 'user', content: prompt }
+      ]
     });
+
+    // Extract text from response
+    const textBlock = response.content.find(block => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      throw new Error('No text response from Claude API');
+    }
+
+    console.log(`[ClaudeReasoner] API Opus completed: ${textBlock.text.length} chars`);
+    console.log(`[ClaudeReasoner] Usage: ${response.usage?.input_tokens || 0} in, ${response.usage?.output_tokens || 0} out`);
+
+    return textBlock.text;
   }
 
   /**
-   * Execute prompt via Anthropic API (Sonnet).
+   * Execute prompt via Anthropic API (Sonnet) for implementation.
    */
   private async executeApiSonnet(prompt: string): Promise<string> {
     if (!this.apiClient) {
-      throw new Error('API client not initialized');
+      throw new Error('API client not initialized - missing ANTHROPIC_API_KEY');
     }
 
     console.log(`[ClaudeReasoner] Executing API Sonnet (${this.apiModel})...`);
@@ -242,19 +249,29 @@ export class ClaudeReasoner {
 You are the ARCHITECT. Design the solution structure based on the research context.
 DO NOT write code. Only design components, models, and structure.
 
-## MEMORY RECALL (Do this FIRST)
-Before designing, query memory for relevant context:
-- mcp__rubix__god_query "architecture patterns ${context.description.substring(0, 50)}"
-- mcp__rubix__god_query "similar implementations"
-- mcp__rubix__god_query "past design decisions"
-
-Use memory to inform your architecture. Learn from past successes and failures.
+## Project Root
+${context.codebaseRoot}
+ALL paths in your output MUST be RELATIVE to this root (e.g., "src/models/User.ts", NOT "/project/src/models/User.ts").
 
 ## Context (Compressed)
 ${context.compressedToken}
 
 ## Task
 ${context.description}
+
+${context.specification ? `## Detailed Specification\n${context.specification}\n` : ''}
+## Research Findings
+${context.research.relevantFiles.length > 0
+  ? `Files: ${context.research.relevantFiles.map(f => f.path).join(', ')}`
+  : 'No relevant files identified'}
+
+${context.research.patterns.existingPatterns.length > 0
+  ? `Patterns: ${context.research.patterns.existingPatterns.join(', ')}`
+  : 'No patterns identified'}
+
+${Object.keys(context.research.dependencies).length > 0
+  ? `Dependencies: ${Object.keys(context.research.dependencies).join(', ')}`
+  : 'No dependencies identified'}
 
 ## Required Output
 Design the solution with:
@@ -278,6 +295,22 @@ List API endpoints/functions:
 ### NOTES
 Brief design notes (max 50 words).
 
+### COMPLEXITY
+Rate the task complexity (REQUIRED - pick exactly one):
+- low: Simple task, single file, no dependencies, straightforward logic
+- medium: Multiple files, some dependencies, moderate logic
+- high: Architecture changes, many interdependencies, security/auth/database, complex business logic
+
+### COMPONENT_DEPENDENCIES
+List components with their file paths and dependencies for parallel engineering.
+Format each component as: ComponentName: path/to/file.ts, deps: [DependencyA, DependencyB]
+Components with no dependencies: deps: []
+
+Example:
+- User: src/models/User.ts, deps: []
+- AuthService: src/services/AuthService.ts, deps: [User]
+- AuthController: src/controllers/AuthController.ts, deps: [AuthService]
+
 Output ONLY the structured sections above. No explanations.`;
   }
 
@@ -300,6 +333,7 @@ ${design.compressedToken}
 ## Task
 ${context.description}
 
+${context.specification ? `## Detailed Specification\n${context.specification}\n` : ''}
 ## Required Output
 
 ### OPERATIONS
@@ -343,7 +377,9 @@ Provide COMPLETE file contents. No placeholders or TODOs.`;
       directories: [],
       apis: [],
       notes: '',
-      compressedToken: ''
+      compressedToken: '',
+      complexity: 'medium',  // Default to medium if not specified
+      componentDependencies: []
     };
 
     // Parse COMPONENTS
@@ -382,6 +418,38 @@ Provide COMPLETE file contents. No placeholders or TODOs.`;
     const notesMatch = output.match(/### NOTES\n([\s\S]*?)(?=###|$)/);
     if (notesMatch) {
       result.notes = notesMatch[1].trim().substring(0, 100);
+    }
+
+    // Parse COMPLEXITY
+    const complexityMatch = output.match(/### COMPLEXITY\n[^-]*-?\s*(low|medium|high)/i);
+    if (complexityMatch) {
+      result.complexity = complexityMatch[1].toLowerCase() as 'low' | 'medium' | 'high';
+    }
+    console.log(`[ClaudeReasoner] Detected complexity: ${result.complexity}`);
+
+    // Parse COMPONENT_DEPENDENCIES
+    const depsMatch = output.match(/### COMPONENT_DEPENDENCIES\n([\s\S]*?)(?=###|$)/);
+    if (depsMatch) {
+      // Match format: - ComponentName: path/to/file.ts, deps: [Dep1, Dep2]
+      // File path can contain: word chars, slashes, dots, hyphens, underscores
+      const depRegex = /^-\s*(\w+):\s*([\w/.@-]+),\s*deps:\s*\[(.*?)\]/gm;
+      for (const match of depsMatch[1].matchAll(depRegex)) {
+        const dependencies = match[3].trim()
+          ? match[3].split(',').map(d => d.trim()).filter(d => d.length > 0)
+          : [];
+        result.componentDependencies.push({
+          name: match[1],
+          file: match[2],
+          dependencies
+        });
+      }
+    }
+
+    if (result.componentDependencies.length > 0) {
+      console.log(`[ClaudeReasoner] Parsed ${result.componentDependencies.length} component dependencies:`);
+      for (const dep of result.componentDependencies) {
+        console.log(`  - ${dep.name}: ${dep.file} (deps: ${dep.dependencies.join(', ') || 'none'})`);
+      }
     }
 
     // Compress to DES token
@@ -443,14 +511,25 @@ Provide COMPLETE file contents. No placeholders or TODOs.`;
       result.notes = notesMatch[1].trim().substring(0, 100);
     }
 
-    // Parse FILES
-    const fileMatches = output.matchAll(/<file\s+path="([^"]+)"\s+action="([^"]+)">\n([\s\S]*?)<\/file>/g);
+    // Parse FILES - flexible pattern that handles any attribute order, whitespace, or line endings
+    const fileMatches = output.matchAll(/<file\s+([^>]+)>([\s\S]*?)<\/file>/g);
     for (const match of fileMatches) {
-      result.files.push({
-        path: match[1],
-        action: match[2] as 'create' | 'modify' | 'delete',
-        content: match[3].trim()
-      });
+      const attrs = match[1];
+      const pathMatch = attrs.match(/path="([^"]+)"/);
+      const actionMatch = attrs.match(/action="([^"]+)"/);
+      if (pathMatch) {
+        result.files.push({
+          path: pathMatch[1],
+          action: (actionMatch?.[1] || 'modify') as 'create' | 'modify' | 'delete',
+          content: match[2].trim()
+        });
+      }
+    }
+
+    // Debug logging if no files were found but output contains file-like content
+    if (result.files.length === 0 && output.includes('<file')) {
+      console.log(`[ClaudeReasoner] WARNING: Output contains '<file' but no files parsed.`);
+      console.log(`[ClaudeReasoner] Raw file tags found: ${(output.match(/<file[^>]*>/g) || []).join(', ')}`);
     }
 
     // Compress to PLAN token

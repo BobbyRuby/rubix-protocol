@@ -39,6 +39,7 @@ export interface ContextBundle {
   taskId: string;
   description: string;
   specification?: string;  // Detailed plan/specification from PlanningSession
+  codebaseRoot: string;    // Project root directory for ARCHITECT
   research: ResearchResult;
   compressedToken: string;  // CTX|...|...
 }
@@ -195,6 +196,7 @@ export class ContextScout {
       taskId: task.id,
       description: task.description,
       specification: task.specification,  // Pass through detailed plan
+      codebaseRoot: this.codebasePath,    // Project root for ARCHITECT
       research,
       compressedToken
     };
