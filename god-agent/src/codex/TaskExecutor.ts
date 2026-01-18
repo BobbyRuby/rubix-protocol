@@ -2396,9 +2396,13 @@ Summary: ${result.summary}`;
   enablePhasedExecution(codebasePath?: string): void {
     const codebase = codebasePath || process.cwd();
     if (!this.phasedExecutor) {
-      this.phasedExecutor = new PhasedExecutor(codebase, false, this.engine);
+      this.phasedExecutor = new PhasedExecutor(codebase, false, this.engine, this.communications);
     } else {
       this.phasedExecutor.setMemoryEngine(this.engine);
+      // Ensure comms is always wired up
+      if (this.communications) {
+        this.phasedExecutor.setCommunicationManager(this.communications);
+      }
     }
     this.usePhasedExecution = true;
     console.log('[TaskExecutor] Phased execution enabled (6-phase tokenized flow)');
@@ -2432,12 +2436,15 @@ Summary: ${result.summary}`;
     try {
       this.log('start', `Executing with PhasedExecutor (6-phase tokenized flow)`);
 
-      // Ensure phased executor exists with memory engine for learning
+      // Ensure phased executor exists with memory engine and communications for learning/escalation
       if (!this.phasedExecutor) {
-        this.phasedExecutor = new PhasedExecutor(task.codebase, false, this.engine);
+        this.phasedExecutor = new PhasedExecutor(task.codebase, false, this.engine, this.communications);
       } else {
-        // Ensure engine is always wired up
+        // Ensure engine and comms are always wired up
         this.phasedExecutor.setMemoryEngine(this.engine);
+        if (this.communications) {
+          this.phasedExecutor.setCommunicationManager(this.communications);
+        }
       }
 
       // Wire escalation callback to communication manager
@@ -2466,7 +2473,7 @@ Summary: ${result.summary}`;
       // Log stats
       const stats = this.phasedExecutor.getStats(result);
       this.log('complete', `Phased execution completed in ${result.duration}ms`);
-      this.log('progress', `CLI: ${result.cliCalls}, API: ${result.apiCalls}, Fix attempts: ${result.fixAttempts}`);
+      this.log('progress', `API calls: ${result.apiCalls}, Fix attempts: ${result.fixAttempts}`);
       this.log('progress', `${stats.reduction}`);
 
       // Mark task complete
@@ -2487,7 +2494,7 @@ Summary: ${result.summary}`;
       const taskResult: TaskResult = {
         success: result.success,
         summary: result.success
-          ? `Phased execution completed (${stats.cliCalls} CLI, ${stats.apiCalls} API calls)`
+          ? `Phased execution completed (${stats.apiCalls} API calls, ${stats.reduction})`
           : `Phased execution failed: ${result.error || 'Unknown error'}`,
         subtasksCompleted: result.success ? 6 : result.fixAttempts,
         subtasksFailed: result.success ? 0 : 1,

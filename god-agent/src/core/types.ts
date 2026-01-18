@@ -86,6 +86,8 @@ export interface QueryOptions {
 export interface QueryFilters {
   sources?: MemorySource[];
   tags?: string[];
+  /** If true (default), require ALL tags to match. If false, match ANY tag. */
+  tagMatchAll?: boolean;
   dateRange?: { start: Date; end: Date };
   minImportance?: number;
   sessionId?: string;

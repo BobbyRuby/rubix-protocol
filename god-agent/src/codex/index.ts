@@ -127,6 +127,17 @@ export type { ExecutionResult as PlanExecutionResult, ExecutionError } from './P
 export { PhasedExecutor, getPhasedExecutor, resetPhasedExecutor } from './PhasedExecutor.js';
 export type { PhasedExecutionResult, HumanEscalationCallback } from './PhasedExecutor.js';
 
+// Model Selection (Cost-Based Routing)
+export { ModelSelector, getModelSelector, resetModelSelector } from './ModelSelector.js';
+export type { TaskComplexity, ModelConfig } from './ModelSelector.js';
+
+// Parallel Engineering (High-Complexity Tasks)
+export { ParallelEngineer, createParallelEngineer } from './ParallelEngineer.js';
+export type { ComponentTask } from './ParallelEngineer.js';
+
+// Component Dependency (for DesignOutput)
+export type { ComponentDependency } from './ClaudeReasoner.js';
+
 // Skill Detection (Polyglot Context Loading)
 export {
   detectSkills,
