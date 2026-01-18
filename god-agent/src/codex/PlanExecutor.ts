@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { execSync } from 'child_process';
+import { getCodexLogger } from './Logger.js';
 import type { PlanOutput, FileContent } from './ClaudeReasoner.js';
 import type { ValidationResult } from './PlanValidator.js';
 
@@ -59,6 +60,25 @@ export class PlanExecutor {
   async execute(plan: PlanOutput, validation?: ValidationResult): Promise<ExecutionResult> {
     console.log(`[PlanExecutor] Phase 5: Executing plan (dryRun=${this.dryRun})`);
     console.log(`[PlanExecutor] Operations: ${plan.operations.length}, Commands: ${plan.commands.length}`);
+    const logger = getCodexLogger();
+
+    // Log execution start
+    logger.logResponse(
+      'PLAN_EXECUTOR_START',
+      `Files: ${plan.files.length}, Commands: ${plan.commands.length}`,
+      JSON.stringify({
+        dryRun: this.dryRun,
+        codebasePath: this.codebasePath,
+        filesCount: plan.files.length,
+        commandsCount: plan.commands.length,
+        files: plan.files.map(f => ({ path: f.path, action: f.action, contentLength: f.content.length })),
+        commands: plan.commands,
+        validationMods: validation?.requiredMods || []
+      }, null, 2),
+      plan.files.length,
+      plan.files.map(f => ({ path: f.path, action: f.action })),
+      'executor'
+    );
 
     const result: ExecutionResult = {
       success: true,
@@ -74,6 +94,22 @@ export class PlanExecutor {
     for (const file of plan.files) {
       try {
         await this.executeFileOperation(file);
+
+        // Log successful file operation
+        logger.logResponse(
+          `PLAN_EXECUTOR_FILE_${file.action.toUpperCase()}`,
+          `${file.action}: ${file.path}`,
+          JSON.stringify({
+            path: file.path,
+            action: file.action,
+            fullPath: join(this.codebasePath, file.path),
+            contentLength: file.content.length,
+            success: true
+          }, null, 2),
+          1,
+          [{ path: file.path, action: file.action }],
+          'executor'
+        );
 
         if (file.action === 'create') {
           result.filesWritten++;
@@ -92,6 +128,22 @@ export class PlanExecutor {
         result.errors.push(err);
         result.success = false;
         console.error(`[PlanExecutor] File error: ${err.message}`);
+
+        // Log file error
+        logger.logResponse(
+          `PLAN_EXECUTOR_FILE_ERROR`,
+          `${file.action}: ${file.path}`,
+          JSON.stringify({
+            path: file.path,
+            action: file.action,
+            error: err.message,
+            fullPath: join(this.codebasePath, file.path)
+          }, null, 2),
+          0,
+          [{ path: file.path, action: file.action }],
+          'executor',
+          err.message
+        );
       }
     }
 
@@ -99,6 +151,19 @@ export class PlanExecutor {
     if (validation?.requiredMods) {
       for (const mod of validation.requiredMods) {
         console.log(`[PlanExecutor] Applying validation mod: ${mod.path} - ${mod.change}`);
+
+        // Log validation mod
+        logger.logResponse(
+          'PLAN_EXECUTOR_VALIDATION_MOD',
+          `Mod: ${mod.path}`,
+          JSON.stringify({
+            path: mod.path,
+            change: mod.change
+          }, null, 2),
+          0,
+          [{ path: mod.path, action: 'validation_mod' }],
+          'executor'
+        );
         // Modifications would be applied here
         // For now, we just log them
       }
@@ -109,6 +174,21 @@ export class PlanExecutor {
       try {
         await this.executeCommand(cmd);
         result.commandsRun++;
+
+        // Log successful command
+        logger.logResponse(
+          'PLAN_EXECUTOR_COMMAND',
+          `Command: ${cmd}`,
+          JSON.stringify({
+            command: cmd,
+            normalizedCommand: cmd.replace(/\./g, ' '),
+            cwd: this.codebasePath,
+            success: true
+          }, null, 2),
+          0,
+          undefined,
+          'executor'
+        );
       } catch (error) {
         const err: ExecutionError = {
           type: 'command',
@@ -119,11 +199,44 @@ export class PlanExecutor {
         result.errors.push(err);
         result.success = false;
         console.error(`[PlanExecutor] Command error: ${err.message}`);
+
+        // Log command error
+        logger.logResponse(
+          'PLAN_EXECUTOR_COMMAND_ERROR',
+          `Command: ${cmd}`,
+          JSON.stringify({
+            command: cmd,
+            error: err.message
+          }, null, 2),
+          0,
+          undefined,
+          'executor',
+          err.message
+        );
       }
     }
 
     // Generate compressed token
     result.compressedToken = this.generateExecToken(result);
+
+    // Log execution complete
+    logger.logResponse(
+      'PLAN_EXECUTOR_COMPLETE',
+      `Result: ${result.compressedToken}`,
+      JSON.stringify({
+        success: result.success,
+        filesWritten: result.filesWritten,
+        filesModified: result.filesModified,
+        filesDeleted: result.filesDeleted,
+        commandsRun: result.commandsRun,
+        errorsCount: result.errors.length,
+        errors: result.errors,
+        compressedToken: result.compressedToken
+      }, null, 2),
+      result.filesWritten + result.filesModified,
+      plan.files.map(f => ({ path: f.path, action: f.action })),
+      'executor'
+    );
 
     console.log(`[PlanExecutor] Result: ${result.compressedToken}`);
 

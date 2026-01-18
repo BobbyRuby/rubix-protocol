@@ -1,79 +1,64 @@
 /**
  * PhasedExecutor - Orchestrates the 6-phase tokenized execution.
  *
- * CLAUDE HYBRID APPROACH (No Ollama):
+ * COST-BASED MODEL ROUTING:
  *
- * Phase 1: CONTEXT SCOUT (CLI Opus) - Gather context → CTX tokens
- * Phase 2: ARCHITECT (CLI Opus) - Design solution → DES tokens
- * Phase 3: ENGINEER (API Sonnet) - Plan implementation → PLAN tokens + files
- * Phase 4: VALIDATOR (API Sonnet) - Review plan → VAL tokens
+ * Phase 1: CONTEXT SCOUT - Gather context → CTX tokens
+ *          Model: Based on complexity (Haiku/Sonnet/Opus)
+ *
+ * Phase 2: ARCHITECT (API Opus) - Design solution + classify complexity → DES tokens
+ *          Model: Always Opus (determines complexity for routing)
+ *
+ * Phase 3: ENGINEER - Plan implementation → PLAN tokens + files
+ *          - Low complexity: Single Haiku engineer
+ *          - Medium complexity: Single Sonnet engineer
+ *          - High complexity: Parallel Opus engineers (based on dependency graph)
+ *
+ * Phase 4: VALIDATOR - Review plan → VAL tokens
+ *          Model: Based on complexity (Haiku/Sonnet/Opus)
+ *
  * Phase 5: EXECUTOR (Local) - Write files, run commands → EXEC tokens
- * Phase 6: FIX LOOP (API Sonnet → CLI Opus) - Fix errors, escalating model strategy
+ * Phase 6: FIX LOOP (API) - Fix errors, escalating model strategy
  *
  * Key Design:
- * - CLI Opus for thinking (phases 1-2): complex reasoning, MCP access, stores decisions
- * - API Sonnet for doing (phases 3-4): fast implementation, ephemeral
+ * - All Claude calls use Anthropic API directly - no CLI spawning
+ * - ARCHITECT (Opus) classifies complexity and outputs dependency graph
+ * - ModelSelector routes to appropriate model based on complexity
+ * - ParallelEngineer handles high-complexity tasks with dependency-ordered execution
  * - Fix loop escalates: Sonnet (fast) → Sonnet+think → Opus (fresh eyes) → Opus+think
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { createContextScout, ContextBundle } from './ContextScout.js';
-import { createDefaultClaudeReasoner, DesignOutput, PlanOutput } from './ClaudeReasoner.js';
+import { createClaudeReasoner, DesignOutput, PlanOutput } from './ClaudeReasoner.js';
 import { detectSkills, loadPolyglotContext } from './SkillDetector.js';
 import { createPlanValidator, ValidationResult } from './PlanValidator.js';
 import { createPlanExecutor, ExecutionResult } from './PlanExecutor.js';
+import { getCodexLogger, resetCodexLogger } from './Logger.js';
+import { getModelSelector, type TaskComplexity } from './ModelSelector.js';
+import { ParallelEngineer } from './ParallelEngineer.js';
 import type { CodexTask, Subtask } from './types.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { MemorySource, CausalRelationType } from '../core/types.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 
 /**
- * Fix loop escalation tiers - Claude only, no Ollama.
+ * Fix loop escalation tiers - All use API.
  *
  * Strategy:
  * 1-2: API Sonnet (fast, cheap)
  * 3: API Sonnet + extended thinking
- * 4: CLI Opus (fresh perspective, MCP access)
- * 5: CLI Opus + ultrathink
+ * 4: API Opus (fresh perspective)
+ * 5: API Opus + extended thinking
  */
 const FIX_ESCALATION_TIERS = [
-  { attempt: 1, model: 'sonnet', useCli: false, ultrathink: false, budgetTokens: 0, description: 'API Sonnet - standard fix' },
-  { attempt: 2, model: 'sonnet', useCli: false, ultrathink: false, budgetTokens: 0, description: 'API Sonnet - alternative approach' },
-  { attempt: 3, model: 'sonnet', useCli: false, ultrathink: true, budgetTokens: 8000, description: 'API Sonnet + extended thinking' },
-  { attempt: 4, model: 'opus', useCli: true, ultrathink: false, budgetTokens: 0, description: 'CLI Opus - fresh eyes' },
-  { attempt: 5, model: 'opus', useCli: true, ultrathink: true, budgetTokens: 16000, description: 'CLI Opus + ultrathink' },
+  { attempt: 1, model: 'sonnet', ultrathink: false, budgetTokens: 0, description: 'API Sonnet - standard fix' },
+  { attempt: 2, model: 'sonnet', ultrathink: false, budgetTokens: 0, description: 'API Sonnet - alternative approach' },
+  { attempt: 3, model: 'sonnet', ultrathink: true, budgetTokens: 8000, description: 'API Sonnet + extended thinking' },
+  { attempt: 4, model: 'opus', ultrathink: false, budgetTokens: 0, description: 'API Opus - fresh eyes' },
+  { attempt: 5, model: 'opus', ultrathink: true, budgetTokens: 16000, description: 'API Opus + extended thinking' },
 ] as const;
-
-/**
- * Turn limits by task complexity.
- *
- * - simple: Single file changes, typos, small fixes (3 turns)
- * - medium: Bug fixes, logic updates, function modifications (6 turns)
- * - complex: Refactoring, new features, multi-file, architecture (10 turns)
- */
-const TURN_LIMITS = {
-  simple: 3,
-  medium: 6,
-  complex: 10
-} as const;
-
-type TaskComplexity = keyof typeof TURN_LIMITS;
-
-/**
- * Checkpoint state captured when turn limit is reached.
- * Used for continuation with context injection.
- */
-interface ExecutionCheckpoint {
-  taskId: string;
-  turnsUsed: number;
-  maxTurns: number;
-  output: string;
-  context: string;
-  timestamp: Date;
-  memoryEntryId?: string;  // ID in MemoryEngine for retrieval
-}
 
 /**
  * Full execution result from all phases.
@@ -88,14 +73,18 @@ export interface PhasedExecutionResult {
     validation?: ValidationResult;
     execution?: ExecutionResult;
   };
-  /** Claude CLI calls (Opus via Max subscription) */
-  cliCalls: number;
-  /** Claude API calls (Sonnet via direct API) */
+  /** Claude API calls total */
   apiCalls: number;
   fixAttempts: number;
   escalatedToHuman: boolean;
   error?: string;
   duration: number;
+  /** Validation issues that couldn't be fixed (non-blocking report) */
+  validationReport?: {
+    issues: string[];
+    unfixedBlockers: string[];
+    requiredMods: Array<{ path: string; change: string }>;
+  };
 }
 
 /**
@@ -116,11 +105,10 @@ export class PhasedExecutor {
   private dryRun: boolean;
   private engine?: MemoryEngine;
   private apiClient: Anthropic | null = null;
-  private apiModel = 'claude-sonnet-4-20250514';
-  private cliTimeout = 0; // Disabled - run until completion (user can interrupt via AbortController)
+  private sonnetModel = 'claude-sonnet-4-20250514';
+  private opusModel = 'claude-opus-4-20250514';
   private comms?: CommunicationManager;
   private abortController: AbortController | null = null;
-  private lastCheckpoint: ExecutionCheckpoint | null = null;
 
   constructor(codebasePath: string, dryRun = false, engine?: MemoryEngine, comms?: CommunicationManager) {
     this.codebasePath = codebasePath;
@@ -128,11 +116,15 @@ export class PhasedExecutor {
     this.engine = engine;
     this.comms = comms;
 
-    // Initialize API client for Sonnet calls
+    // Initialize API client for all Claude calls
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
       this.apiClient = new Anthropic({ apiKey });
-      console.log('[PhasedExecutor] API client initialized for Sonnet calls');
+      console.log('[PhasedExecutor] API client initialized');
+      console.log(`[PhasedExecutor] Sonnet model: ${this.sonnetModel}`);
+      console.log(`[PhasedExecutor] Opus model: ${this.opusModel}`);
+    } else {
+      console.warn('[PhasedExecutor] No ANTHROPIC_API_KEY - phases will fail');
     }
   }
 
@@ -177,182 +169,7 @@ export class PhasedExecutor {
   }
 
   /**
-   * Assess task complexity to determine appropriate turn limit.
-   *
-   * Heuristics:
-   * - simple: typo fix, rename, add comment, single file
-   * - medium: bug fix, update logic, modify function (default)
-   * - complex: refactor, new feature, multi-file, architecture
-   */
-  private assessComplexity(task: CodexTask | Subtask): TaskComplexity {
-    const description = 'description' in task ? task.description : (task as Subtask).type;
-    const desc = description.toLowerCase();
-
-    // Simple: single file changes, typos, small fixes
-    const simplePatterns = [
-      /fix typo/i, /rename/i, /add comment/i, /update version/i,
-      /simple/i, /quick/i, /one file/i, /single/i
-    ];
-    if (simplePatterns.some(p => p.test(desc))) return 'simple';
-
-    // Complex: multi-file, refactoring, new features, architecture
-    const complexPatterns = [
-      /refactor/i, /new feature/i, /implement/i, /architect/i,
-      /multiple files/i, /system/i, /integration/i, /complex/i
-    ];
-    if (complexPatterns.some(p => p.test(desc))) return 'complex';
-
-    // Default to medium
-    return 'medium';
-  }
-
-  /**
-   * Save checkpoint to memory for persistence and learning.
-   */
-  private async saveCheckpointToMemory(checkpoint: ExecutionCheckpoint): Promise<string | undefined> {
-    if (!this.engine) return undefined;
-
-    try {
-      const content = [
-        `CHECKPOINT: Turn limit reached`,
-        `task_id: ${checkpoint.taskId}`,
-        `turns: ${checkpoint.turnsUsed}/${checkpoint.maxTurns}`,
-        `timestamp: ${checkpoint.timestamp.toISOString()}`,
-        `---`,
-        `CONTEXT:`,
-        checkpoint.context,
-        `---`,
-        `FULL_OUTPUT:`,
-        checkpoint.output.substring(0, 2000) // Truncate for memory (full in notification)
-      ].join('\n');
-
-      const entry = await this.engine.store(content, {
-        source: MemorySource.AGENT_INFERENCE,
-        tags: ['checkpoint', 'turn_limit', 'phased_execution', checkpoint.taskId],
-        importance: 0.7
-      });
-
-      console.log(`[PhasedExecutor] Checkpoint saved to memory: ${entry.id}`);
-      return entry.id;
-    } catch (error) {
-      console.error('[PhasedExecutor] Failed to save checkpoint to memory:', error);
-      return undefined;
-    }
-  }
-
-  /**
-   * Record iteration/continuation in memory for learning.
-   */
-  private async recordIterationToMemory(
-    taskId: string,
-    iterationNumber: number,
-    decision: 'accept' | 'continue',
-    checkpointId?: string
-  ): Promise<void> {
-    if (!this.engine) return;
-
-    try {
-      const content = [
-        `ITERATION: ${iterationNumber}`,
-        `task_id: ${taskId}`,
-        `decision: ${decision}`,
-        `checkpoint_id: ${checkpointId || 'none'}`,
-        `timestamp: ${new Date().toISOString()}`
-      ].join('\n');
-
-      const entry = await this.engine.store(content, {
-        source: MemorySource.AGENT_INFERENCE,
-        tags: ['iteration', 'user_decision', 'phased_execution', taskId],
-        importance: 0.6,
-        parentIds: checkpointId ? [checkpointId] : undefined
-      });
-
-      // Create causal relation: checkpoint → decision
-      if (checkpointId) {
-        this.engine.addCausalRelation(
-          [checkpointId],
-          [entry.id],
-          CausalRelationType.CAUSES,
-          0.9
-        );
-      }
-
-      console.log(`[PhasedExecutor] Iteration recorded in memory: ${entry.id}`);
-    } catch (error) {
-      console.error('[PhasedExecutor] Failed to record iteration:', error);
-    }
-  }
-
-  /**
-   * Extract key context from CLI output for continuation injection.
-   */
-  private extractContext(output: string): string {
-    // Extract key context from CLI output for injection
-    // Look for: files modified, errors found, decisions made
-    const lines = output.split('\n');
-    const contextLines = lines.filter(line =>
-      line.includes('✓') ||           // Completed items
-      line.includes('→') ||           // Actions taken
-      line.includes('Error') ||       // Errors found
-      line.includes('Modified') ||    // Files changed
-      line.includes('Created')        // Files created
-    );
-    return contextLines.join('\n');
-  }
-
-  /**
-   * Handle turn limit reached - save checkpoint and ask user what to do.
-   */
-  private async handleTurnLimitReached(
-    taskId: string,
-    output: string,
-    turnsUsed: number,
-    maxTurns: number,
-    iterationNumber: number = 1
-  ): Promise<'accept' | 'continue'> {
-    // Save checkpoint to instance
-    this.lastCheckpoint = {
-      taskId,
-      turnsUsed,
-      maxTurns,
-      output,
-      context: this.extractContext(output),
-      timestamp: new Date()
-    };
-
-    // Persist checkpoint to memory
-    this.lastCheckpoint.memoryEntryId = await this.saveCheckpointToMemory(this.lastCheckpoint);
-
-    // Notify user with FULL output
-    const response = await this.escalateToUser(
-      taskId,
-      '⏱️ Turn Limit Reached',
-      `Completed ${turnsUsed}/${maxTurns} turns (iteration ${iterationNumber}).\n\n` +
-      `### Full Output\n\`\`\`\n${output}\n\`\`\`\n\n` +
-      `What would you like to do?`,
-      'decision'
-    );
-
-    const decision = (response?.toLowerCase().includes('keep') ||
-                     response?.toLowerCase().includes('continue') ||
-                     response?.toLowerCase().includes('think'))
-      ? 'continue' : 'accept';
-
-    // Record the user's decision in memory
-    await this.recordIterationToMemory(
-      taskId,
-      iterationNumber,
-      decision,
-      this.lastCheckpoint.memoryEntryId
-    );
-
-    return decision;
-  }
-
-  /**
    * Escalate to user via CommunicationManager or callback.
-   * Options are context-aware: Turn Limit gets Accept/Keep thinking,
-   * other escalations get Continue/Abort/Guide.
    */
   private async escalateToUser(
     taskId: string,
@@ -362,19 +179,11 @@ export class PhasedExecutor {
   ): Promise<string | null> {
     // Try CommunicationManager first (Telegram etc.)
     if (this.comms) {
-      // Determine options based on title/type
-      const isTurnLimit = title.includes('Turn Limit');
-
-      const options = isTurnLimit
-        ? [
-            { label: 'Accept', description: 'Use current progress as-is' },
-            { label: 'Keep thinking', description: 'Continue with fresh turns + context' }
-          ]
-        : [
-            { label: 'Continue', description: 'Keep trying' },
-            { label: 'Abort', description: 'Stop execution' },
-            { label: 'Guide', description: 'Provide guidance' }
-          ];
+      const options = [
+        { label: 'Continue', description: 'Keep trying' },
+        { label: 'Abort', description: 'Stop execution' },
+        { label: 'Guide', description: 'Provide guidance' }
+      ];
 
       const escalation = {
         id: randomUUID(),
@@ -423,7 +232,6 @@ export class PhasedExecutor {
         `PHASED_EXECUTION: ${result.success ? 'SUCCESS' : 'FAILURE'}`,
         `task: ${description}`,
         `duration: ${result.duration}ms`,
-        `cli_calls: ${result.cliCalls}`,
         `api_calls: ${result.apiCalls}`,
         `fix_attempts: ${result.fixAttempts}`,
         result.error ? `error: ${result.error}` : null,
@@ -445,12 +253,11 @@ export class PhasedExecutor {
       console.log(`[PhasedExecutor] Stored execution in memory: ${entry.id}`);
 
       // Provide learning feedback via trajectory
-      // Quality: 1.0 for success, 0.0-0.3 for failures based on how far we got
       const quality = result.success
         ? 1.0
         : result.fixAttempts > 0
-          ? 0.1 + (0.2 * (5 - result.fixAttempts) / 5) // 0.1-0.3 based on fix attempts
-          : 0.2; // Made it to execution phase but failed
+          ? 0.1 + (0.2 * (5 - result.fixAttempts) / 5)
+          : 0.2;
 
       await this.engine.provideFeedback(
         entry.id,
@@ -462,7 +269,6 @@ export class PhasedExecutor {
 
       // For failures, record causal relation (failure → error)
       if (!result.success && result.error) {
-        // Store the error separately for causal linking
         const errorEntry = await this.engine.store(
           `ERROR: ${result.error}\nTASK: ${description}\nPHASE: ${this.determineFailurePhase(result)}`,
           {
@@ -472,8 +278,7 @@ export class PhasedExecutor {
           }
         );
 
-        // Create causal relation: task execution → caused → error
-        this.engine.addCausalRelation(
+        await this.engine.addCausalRelation(
           [entry.id],
           [errorEntry.id],
           CausalRelationType.CAUSES,
@@ -483,7 +288,6 @@ export class PhasedExecutor {
         console.log(`[PhasedExecutor] Recorded causal relation: execution → error`);
       }
     } catch (error) {
-      // Don't fail execution due to learning errors
       console.error('[PhasedExecutor] Learning integration error:', error);
     }
   }
@@ -517,15 +321,32 @@ export class PhasedExecutor {
 
     const startTime = Date.now();
     const taskId = 'id' in task ? task.id : `subtask_${Date.now()}`;
+    const logger = getCodexLogger();
+
+    // Get task description for logging
+    const taskDesc = 'description' in task ? task.description : (task as Subtask).type;
 
     console.log(`[PhasedExecutor] Starting 6-phase execution for task ${taskId}`);
-    console.log(`[PhasedExecutor] Using Claude hybrid approach: CLI Opus (thinking) + API Sonnet (doing)`);
+    console.log(`[PhasedExecutor] Using full API approach: Opus (thinking) + Sonnet (doing)`);
+
+    // Log execution start
+    logger.logResponse(
+      'PHASED_START',
+      `Task: ${taskDesc}\nCodebase: ${this.codebasePath}\nDryRun: ${this.dryRun}`,
+      JSON.stringify({
+        taskId,
+        taskDescription: taskDesc,
+        codebasePath: this.codebasePath,
+        dryRun: this.dryRun,
+        startTime: new Date().toISOString()
+      }, null, 2),
+      0
+    );
 
     const result: PhasedExecutionResult = {
       taskId,
       success: false,
       phases: {},
-      cliCalls: 0,
       apiCalls: 0,
       fixAttempts: 0,
       escalatedToHuman: false,
@@ -534,7 +355,6 @@ export class PhasedExecutor {
 
     try {
       // === SKILL DETECTION & POLYGLOT LOADING ===
-      // Detect skills from task description and load relevant polyglot knowledge
       let polyglotContext = '';
       const taskDesc = 'description' in task ? task.description : '';
       const taskSpec = 'specification' in task ? (task as CodexTask).specification || '' : '';
@@ -554,57 +374,238 @@ export class PhasedExecutor {
         }
       }
 
-      // Phase 1: CONTEXT SCOUT (CLI Opus)
-      console.log('[PhasedExecutor] === Phase 1: CONTEXT SCOUT (CLI Opus) ===');
-      const scout = createContextScout(this.codebasePath, polyglotContext);
+      // Phase 1: CONTEXT SCOUT (API Sonnet)
+      console.log('[PhasedExecutor] === Phase 1: CONTEXT SCOUT (API Sonnet) ===');
+      const scout = createContextScout(
+        this.codebasePath,
+        polyglotContext,
+        process.env.ANTHROPIC_API_KEY,
+        this.engine
+      );
       const context = await scout.scout(task as CodexTask);
       result.phases.context = context;
-      result.cliCalls++;
+      result.apiCalls++;
       console.log(`[PhasedExecutor] CTX: ${context.compressedToken.substring(0, 60)}...`);
+
+      // Log Phase 1 completion
+      logger.logResponse(
+        'PHASE_1_COMPLETE',
+        `Task: ${taskDesc}`,
+        JSON.stringify({
+          phase: 'CONTEXT_SCOUT',
+          compressedToken: context.compressedToken,
+          relevantFiles: context.research.relevantFiles.length,
+          memoryResults: context.research.memoryResults.length,
+          dependencies: Object.keys(context.research.dependencies).length,
+          patterns: context.research.patterns.existingPatterns
+        }, null, 2),
+        context.research.relevantFiles.length,
+        context.research.relevantFiles.map(f => ({ path: f.path, action: 'analyzed' })),
+        'context_scout'
+      );
 
       // Check for abort after Phase 1
       this.checkAborted();
 
-      // Phase 2: ARCHITECT (CLI Opus)
-      console.log('[PhasedExecutor] === Phase 2: ARCHITECT (CLI Opus) ===');
-      const reasoner = createDefaultClaudeReasoner(this.codebasePath);
+      // Phase 2: ARCHITECT (API Opus)
+      console.log('[PhasedExecutor] === Phase 2: ARCHITECT (API Opus) ===');
+      const reasoner = createClaudeReasoner({
+        codebasePath: this.codebasePath,
+        apiKey: process.env.ANTHROPIC_API_KEY
+      });
       const design = await reasoner.architect(context);
       result.phases.design = design;
-      result.cliCalls++;
+      result.apiCalls++;
       console.log(`[PhasedExecutor] DES: ${design.compressedToken.substring(0, 60)}...`);
+
+      // Log Phase 2 completion
+      logger.logResponse(
+        'PHASE_2_COMPLETE',
+        `Context: ${context.compressedToken.substring(0, 200)}`,
+        JSON.stringify({
+          phase: 'ARCHITECT',
+          compressedToken: design.compressedToken,
+          componentsCount: design.components.length,
+          components: design.components,
+          modelsCount: design.models.length,
+          models: design.models,
+          directoriesCount: design.directories.length,
+          directories: design.directories,
+          apisCount: design.apis.length,
+          apis: design.apis,
+          notes: design.notes
+        }, null, 2),
+        design.components.length,
+        design.components.map(c => ({ path: c, action: 'designed' })),
+        'architect'
+      );
 
       // Check for abort after Phase 2
       this.checkAborted();
 
-      // Phase 3: ENGINEER (API Sonnet)
-      console.log('[PhasedExecutor] === Phase 3: ENGINEER (API Sonnet) ===');
-      const plan = await reasoner.engineer(context, design);
+      // Phase 3: ENGINEER (complexity-based model selection)
+      console.log('[PhasedExecutor] === Phase 3: ENGINEER ===');
+
+      const modelSelector = getModelSelector();
+      const complexity: TaskComplexity = design.complexity || 'medium';
+      let plan: PlanOutput;
+
+      // High complexity with multiple components → parallel Opus engineers
+      if (complexity === 'high' && design.componentDependencies && design.componentDependencies.length > 1) {
+        console.log(`[PhasedExecutor] High complexity (${design.componentDependencies.length} components) → Parallel Opus engineers`);
+        const engineerModel = modelSelector.selectForPhase('engineer', 'high');
+
+        const parallelEngineer = new ParallelEngineer(
+          process.env.ANTHROPIC_API_KEY!,
+          engineerModel
+        );
+
+        plan = await parallelEngineer.executeInOrder(context, design);
+
+        // If parallel returned no files (fallback case), use single engineer
+        if (plan.files.length === 0) {
+          console.log('[PhasedExecutor] Parallel engineer returned no files, falling back to single engineer');
+          plan = await reasoner.engineer(context, design);
+        }
+      } else {
+        // Low/medium complexity → single engineer with appropriate model
+        const engineerModel = modelSelector.selectForPhase('engineer', complexity);
+        const modelName = modelSelector.getModelName(engineerModel);
+        console.log(`[PhasedExecutor] ${complexity} complexity → Single ${modelName} engineer`);
+
+        // Create reasoner with selected model
+        const complexityReasoner = createClaudeReasoner({
+          codebasePath: this.codebasePath,
+          apiKey: process.env.ANTHROPIC_API_KEY,
+          apiModel: engineerModel,
+          architectModel: modelSelector.selectForPhase('architect', complexity)
+        });
+
+        plan = await complexityReasoner.engineer(context, design);
+      }
+
       result.phases.plan = plan;
-      result.apiCalls++; // Sonnet via API
+      result.apiCalls++;
       console.log(`[PhasedExecutor] PLAN: ${plan.compressedToken.substring(0, 60)}...`);
       console.log(`[PhasedExecutor] Files: ${plan.files.length}, Commands: ${plan.commands.length}`);
+
+      // Log Phase 3 completion
+      logger.logResponse(
+        'PHASE_3_COMPLETE',
+        `Design: ${design.compressedToken.substring(0, 200)}`,
+        JSON.stringify({
+          phase: 'ENGINEER',
+          compressedToken: plan.compressedToken,
+          filesCount: plan.files.length,
+          commandsCount: plan.commands.length,
+          operationsCount: plan.operations.length,
+          files: plan.files.map(f => ({ path: f.path, action: f.action, contentLength: f.content.length })),
+          commands: plan.commands
+        }, null, 2),
+        plan.files.length,
+        plan.files.map(f => ({ path: f.path, action: f.action })),
+        'engineer'
+      );
 
       // Check for abort after Phase 3
       this.checkAborted();
 
-      // Phase 4: VALIDATOR (API Sonnet)
-      console.log('[PhasedExecutor] === Phase 4: VALIDATOR (API Sonnet) ===');
-      const validator = createPlanValidator(this.codebasePath);
+      // Phase 4: VALIDATOR (complexity-based model)
+      const validatorModel = modelSelector.selectForPhase('validator', complexity);
+      const validatorModelName = modelSelector.getModelName(validatorModel);
+      console.log(`[PhasedExecutor] === Phase 4: VALIDATOR (${validatorModelName}) ===`);
+      const validator = createPlanValidator(
+        this.codebasePath,
+        process.env.ANTHROPIC_API_KEY,
+        this.engine,
+        validatorModel
+      );
       const validation = await validator.validate(context, design, plan);
       result.phases.validation = validation;
-      result.apiCalls++; // Will be updated when we switch validator to API
+      result.apiCalls++;
       console.log(`[PhasedExecutor] VAL: ${validation.compressedToken.substring(0, 60)}...`);
+
+      // Log Phase 4 completion
+      logger.logResponse(
+        'PHASE_4_COMPLETE',
+        `Plan: ${plan.compressedToken.substring(0, 200)}`,
+        JSON.stringify({
+          phase: 'VALIDATOR',
+          compressedToken: validation.compressedToken,
+          approved: validation.approved,
+          testsRequired: validation.tests,
+          securityIssues: validation.securityIssues,
+          performanceIssues: validation.performanceIssues,
+          requiredModifications: validation.requiredMods,
+          blockers: validation.blockers
+        }, null, 2),
+        0,
+        validation.requiredMods.map(m => ({ path: m.path, action: 'requires_modification' })),
+        'validator'
+      );
 
       if (!validation.approved) {
         console.warn('[PhasedExecutor] Validation rejected plan');
-        if (validation.blockers.length > 0) {
-          // Immediate human escalation for blockers
-          result.escalatedToHuman = true;
-          result.error = `Blocked: ${validation.blockers.join(', ')}`;
-          result.duration = Date.now() - startTime;
-          return result;
+
+        // If blockers or required modifications exist, try to fix them via the fix loop
+        if (validation.blockers.length > 0 || validation.requiredMods.length > 0) {
+          console.log(`[PhasedExecutor] Validation issues: ${validation.blockers.join(', ')}`);
+          console.log(`[PhasedExecutor] Required mods: ${validation.requiredMods.length}`);
+
+          // Create a synthetic "failed execution" to trigger fix loop
+          const syntheticExecution: ExecutionResult = {
+            success: false,
+            filesWritten: 0,
+            filesModified: 0,
+            filesDeleted: 0,
+            commandsRun: 0,
+            errors: [
+              ...validation.blockers.map(b => ({
+                type: 'file' as const,
+                operation: 'validation',
+                path: 'plan',
+                message: `Validation blocker: ${b}`
+              })),
+              ...validation.requiredMods.map(m => ({
+                type: 'file' as const,
+                operation: 'validation',
+                path: m.path,
+                message: `Required modification: ${m.change}`
+              }))
+            ],
+            compressedToken: `EXEC|ok:0|val_blockers:${validation.blockers.length}|req_mods:${validation.requiredMods.length}`
+          };
+
+          // Run fix loop to address validation issues
+          console.log('[PhasedExecutor] === Phase 6: FIX LOOP (validation issues) ===');
+          const fixResult = await this.runFixLoop(
+            task,
+            context,
+            design,
+            plan,
+            syntheticExecution,
+            result,
+            validation.blockers  // Pass blockers to fix loop
+          );
+
+          if (fixResult && fixResult.success) {
+            result.phases.execution = fixResult;
+            result.success = true;
+            result.duration = Date.now() - startTime;
+            await this.recordLearning(task, result);
+            return result;
+          }
+
+          // Fix loop failed - capture issues in report but DO NOT block execution
+          result.validationReport = {
+            issues: [...validation.securityIssues, ...validation.performanceIssues],
+            unfixedBlockers: validation.blockers,
+            requiredMods: validation.requiredMods
+          };
+          console.warn('[PhasedExecutor] Validation issues could not be fixed - continuing with execution');
+          console.warn(`[PhasedExecutor] Review required: ${validation.blockers.join(', ')}`);
+          // DO NOT return - fall through to Phase 5
         }
-        // Continue with required modifications
       }
 
       // Check for abort after Phase 4
@@ -616,6 +617,25 @@ export class PhasedExecutor {
       let execution = await executor.execute(plan, validation);
       result.phases.execution = execution;
       console.log(`[PhasedExecutor] EXEC: ${execution.compressedToken}`);
+
+      // Log Phase 5 completion
+      logger.logResponse(
+        'PHASE_5_COMPLETE',
+        `Files: ${plan.files.map(f => f.path).join(', ')}`,
+        JSON.stringify({
+          phase: 'EXECUTOR',
+          compressedToken: execution.compressedToken,
+          success: execution.success,
+          filesWritten: execution.filesWritten,
+          filesModified: execution.filesModified,
+          filesDeleted: execution.filesDeleted,
+          commandsRun: execution.commandsRun,
+          errors: execution.errors
+        }, null, 2),
+        execution.filesWritten + execution.filesModified,
+        plan.files.map(f => ({ path: f.path, action: f.action })),
+        'executor'
+      );
 
       // Check for abort after Phase 5
       this.checkAborted();
@@ -634,10 +654,37 @@ export class PhasedExecutor {
       result.duration = Date.now() - startTime;
 
       console.log(`[PhasedExecutor] Completed in ${result.duration}ms`);
-      console.log(`[PhasedExecutor] CLI: ${result.cliCalls}, API: ${result.apiCalls}, Fixes: ${result.fixAttempts}`);
+      console.log(`[PhasedExecutor] API calls: ${result.apiCalls}, Fixes: ${result.fixAttempts}`);
+
+      // Log execution completion
+      logger.logResponse(
+        'PHASED_COMPLETE',
+        `Task: ${taskDesc}`,
+        JSON.stringify({
+          taskId,
+          success: result.success,
+          duration: result.duration,
+          apiCalls: result.apiCalls,
+          fixAttempts: result.fixAttempts,
+          escalatedToHuman: result.escalatedToHuman,
+          phases: {
+            context: !!result.phases.context,
+            design: !!result.phases.design,
+            plan: !!result.phases.plan,
+            validation: !!result.phases.validation,
+            execution: !!result.phases.execution
+          },
+          filesCreated: result.phases.execution?.filesWritten || 0,
+          filesModified: result.phases.execution?.filesModified || 0,
+          errors: result.phases.execution?.errors || []
+        }, null, 2),
+        (result.phases.execution?.filesWritten || 0) + (result.phases.execution?.filesModified || 0)
+      );
+
+      // Write session summary
+      resetCodexLogger();
 
       // === LEARNING INTEGRATION ===
-      // Track this execution as a trajectory for Sona learning
       await this.recordLearning(task, result);
 
       return result;
@@ -647,37 +694,31 @@ export class PhasedExecutor {
       result.duration = Date.now() - startTime;
       console.error('[PhasedExecutor] Execution failed:', result.error);
 
-      // Track failure for learning
       await this.recordLearning(task, result);
 
       return result;
     } finally {
-      // Cleanup abort controller
       this.abortController = null;
     }
   }
 
   /**
-   * Run the fix loop with escalating model strategy and turn limit handling.
+   * Run the fix loop with escalating model strategy.
    *
-   * Tiers (Claude only):
+   * Tiers (all API):
    * 1-2: API Sonnet (fast, cheap)
    * 3: API Sonnet + extended thinking
-   * 4: CLI Opus (fresh perspective, MCP access) with turn limits
-   * 5: CLI Opus + ultrathink with turn limits
-   *
-   * When CLI reaches turn limit:
-   * - Notifies user with full output
-   * - User can "Accept" (use current) or "Keep thinking" (continue)
-   * - Continuation injects previous context for fresh turn allocation
+   * 4: API Opus (fresh perspective)
+   * 5: API Opus + extended thinking
    */
   private async runFixLoop(
-    task: CodexTask | Subtask,
+    _task: CodexTask | Subtask,
     context: ContextBundle,
     design: DesignOutput,
     plan: PlanOutput,
     execution: ExecutionResult,
-    result: PhasedExecutionResult
+    result: PhasedExecutionResult,
+    validationBlockers?: string[]  // Optional validation blockers for fix context
   ): Promise<ExecutionResult | null> {
     const tokenChain = [
       context.compressedToken,
@@ -688,75 +729,114 @@ export class PhasedExecutor {
 
     const errorSummary = execution.errors.map(e => `${e.type}: ${e.message}`).join('\n');
 
-    // Assess task complexity for turn limits
-    const complexity = this.assessComplexity(task);
-    console.log(`[PhasedExecutor] Task complexity: ${complexity} (max ${TURN_LIMITS[complexity]} turns for CLI)`);
+    // Track files that have been successfully written (for partial success handling)
+    const successfulFiles = new Set<string>();
+    const failedFiles = new Set<string>();
 
-    // Track continuation context across iterations
-    let continuationContext: string | undefined;
-    let iterationNumber = 1;
+    // Categorize initial state from execution errors
+    for (const file of plan.files) {
+      const hasError = execution.errors.some(e => e.type === 'file' && e.path === file.path);
+      if (hasError) {
+        failedFiles.add(file.path);
+      } else if (execution.filesWritten > 0 || execution.filesModified > 0) {
+        // File was likely written successfully
+        successfulFiles.add(file.path);
+      }
+    }
+
+    console.log(`[PhasedExecutor] Partial success: ${successfulFiles.size} succeeded, ${failedFiles.size} failed`);
+
+    const logger = getCodexLogger();
 
     for (const tier of FIX_ESCALATION_TIERS) {
       result.fixAttempts++;
       console.log(`[PhasedExecutor] Fix attempt ${tier.attempt}/5: ${tier.description}`);
 
+      // Log fix loop iteration start
+      logger.logResponse(
+        `FIX_LOOP_ATTEMPT_${tier.attempt}`,
+        `Errors: ${errorSummary}\nBlockers: ${validationBlockers?.join(', ') || 'none'}`,
+        JSON.stringify({
+          attempt: tier.attempt,
+          model: tier.model,
+          ultrathink: tier.ultrathink,
+          budgetTokens: tier.budgetTokens,
+          description: tier.description,
+          successfulFiles: Array.from(successfulFiles),
+          failedFiles: Array.from(failedFiles),
+          errors: errorSummary
+        }, null, 2),
+        failedFiles.size,
+        undefined,
+        'fix_loop'
+      );
+
       try {
-        let fixResponse: string;
-
-        if (tier.useCli) {
-          // CLI Opus with turn limits and optional continuation
-          const { output, reachedLimit } = await this.executeCliOpusFix(
-            tokenChain,
-            errorSummary,
-            tier.ultrathink,
-            complexity,
-            continuationContext
-          );
-          result.cliCalls++;
-
-          if (reachedLimit) {
-            // Turn limit reached - ask user what to do
-            console.log(`[PhasedExecutor] Turn limit reached at tier ${tier.attempt}`);
-            const decision = await this.handleTurnLimitReached(
-              result.taskId,
-              output,
-              TURN_LIMITS[complexity],
-              TURN_LIMITS[complexity],
-              iterationNumber
-            );
-
-            if (decision === 'continue') {
-              // Inject context and retry same tier (don't increment attempt)
-              continuationContext = this.lastCheckpoint?.context;
-              iterationNumber++;
-              console.log(`[PhasedExecutor] User chose to continue thinking (iteration ${iterationNumber})...`);
-              // Decrement fixAttempts since we're retrying same tier
-              result.fixAttempts--;
-              continue; // Retry with context
-            }
-            // 'accept' - use what we have
-            fixResponse = output;
-          } else {
-            fixResponse = output;
-            continuationContext = undefined; // Clear for next tier
-          }
-        } else {
-          // API Sonnet for fast fixes (no turn limits)
-          fixResponse = await this.executeApiSonnetFix(tokenChain, errorSummary, tier.ultrathink, tier.budgetTokens);
-          result.apiCalls++;
-          continuationContext = undefined; // Clear continuation for API calls
-        }
+        const fixResponse = await this.executeApiFix(
+          tokenChain,
+          errorSummary,
+          tier.model as 'sonnet' | 'opus',
+          tier.ultrathink,
+          tier.budgetTokens,
+          validationBlockers,
+          Array.from(successfulFiles),  // Pass successful files to prompt
+          Array.from(failedFiles)        // Pass failed files to prompt
+        );
+        result.apiCalls++;
 
         // Parse the fix response for new file operations
         const fixedPlan = this.parseFixResponse(fixResponse, plan);
 
-        if (fixedPlan.files.length > 0) {
-          // Re-execute with the fixed plan
+        // Log fix response received
+        logger.logResponse(
+          `FIX_LOOP_RESPONSE_${tier.attempt}`,
+          `Model: ${tier.model}`,
+          JSON.stringify({
+            attempt: tier.attempt,
+            responseLength: fixResponse.length,
+            filesParsed: fixedPlan.files.length,
+            parsedFiles: fixedPlan.files.map(f => ({ path: f.path, action: f.action }))
+          }, null, 2) + '\n\n=== RAW FIX RESPONSE ===\n' + fixResponse,
+          fixedPlan.files.length,
+          fixedPlan.files.map(f => ({ path: f.path, action: f.action })),
+          'fix_loop'
+        );
+
+        // Filter to only include files that actually failed or are new fixes
+        // Don't regenerate already successful files unless Claude specifically provides a fix
+        const filteredFiles = fixedPlan.files.filter(f =>
+          failedFiles.has(f.path) || !successfulFiles.has(f.path)
+        );
+
+        if (filteredFiles.length > 0) {
+          const filteredPlan: PlanOutput = {
+            ...fixedPlan,
+            files: filteredFiles
+          };
+
+          console.log(`[PhasedExecutor] Executing ${filteredFiles.length} file fixes (skipping ${fixedPlan.files.length - filteredFiles.length} already successful)`);
+
+          // Re-execute with the filtered plan
           const executor = createPlanExecutor(this.codebasePath, this.dryRun);
-          const newExecution = await executor.execute(fixedPlan, result.phases.validation!);
+          const newExecution = await executor.execute(filteredPlan, result.phases.validation!);
 
           if (newExecution.success) {
             console.log(`[PhasedExecutor] Fix successful at tier ${tier.attempt}!`);
+
+            // Log successful fix
+            logger.logResponse(
+              `FIX_LOOP_SUCCESS_${tier.attempt}`,
+              `Tier ${tier.attempt} succeeded`,
+              JSON.stringify({
+                attempt: tier.attempt,
+                model: tier.model,
+                filesFixed: filteredFiles.length,
+                files: filteredFiles.map(f => f.path)
+              }, null, 2),
+              filteredFiles.length,
+              filteredFiles.map(f => ({ path: f.path, action: 'fixed' })),
+              'fix_loop'
+            );
 
             // Store successful fix in memory for learning
             if (this.engine) {
@@ -773,12 +853,51 @@ export class PhasedExecutor {
             return newExecution;
           }
 
+          // Log failed fix attempt
+          logger.logResponse(
+            `FIX_LOOP_FAILED_${tier.attempt}`,
+            `Tier ${tier.attempt} failed`,
+            JSON.stringify({
+              attempt: tier.attempt,
+              model: tier.model,
+              errors: newExecution.errors
+            }, null, 2),
+            0,
+            undefined,
+            'fix_loop',
+            newExecution.errors.map(e => e.message).join('; ')
+          );
+
+          // Update tracking for next iteration
+          for (const file of filteredFiles) {
+            const fileHasError = newExecution.errors.some(e => e.type === 'file' && e.path === file.path);
+            if (!fileHasError) {
+              successfulFiles.add(file.path);
+              failedFiles.delete(file.path);
+            }
+          }
+
           // Update error for next iteration
           execution = newExecution;
         }
 
       } catch (error) {
         console.error(`[PhasedExecutor] Fix attempt ${tier.attempt} failed:`, error);
+
+        // Log error
+        logger.logResponse(
+          `FIX_LOOP_ERROR_${tier.attempt}`,
+          `Tier ${tier.attempt} threw exception`,
+          JSON.stringify({
+            attempt: tier.attempt,
+            model: tier.model,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2),
+          0,
+          undefined,
+          'fix_loop',
+          error instanceof Error ? error.message : String(error)
+        );
       }
     }
 
@@ -803,144 +922,36 @@ ${FIX_ESCALATION_TIERS.map(t => `${t.attempt}. ${t.description}`).join('\n')}`;
 
     if (response?.toLowerCase().includes('abort')) {
       console.log('[PhasedExecutor] User requested abort');
-      return null; // User wants to stop
+      return null;
     }
 
-    // Otherwise continue or wait for guidance - but we've exhausted attempts
     return null;
   }
 
   /**
-   * Check if CLI output indicates the task is complete (has file blocks).
+   * Execute fix via API (Sonnet or Opus).
    */
-  private isOutputComplete(output: string): boolean {
-    // Output is complete if it contains file blocks (the expected format)
-    return output.includes('<file path=') && output.includes('</file>');
-  }
-
-  /**
-   * Execute fix via CLI Opus with complexity-based turn limits.
-   *
-   * @param tokenChain - Token context chain from previous phases
-   * @param errors - Error summary to fix
-   * @param ultrathink - Enable extended thinking
-   * @param complexity - Task complexity (determines max turns)
-   * @param continuationContext - Context from previous run (for continuation)
-   * @returns Object with output and whether turn limit was reached
-   */
-  private async executeCliOpusFix(
+  private async executeApiFix(
     tokenChain: string,
     errors: string,
+    model: 'sonnet' | 'opus',
     ultrathink: boolean,
-    complexity: TaskComplexity = 'medium',
-    continuationContext?: string
-  ): Promise<{ output: string; reachedLimit: boolean }> {
-    const maxTurns = TURN_LIMITS[complexity];
-
-    return new Promise((resolve, reject) => {
-      // Build prompt with optional continuation context
-      let prompt = this.buildFixPrompt(tokenChain, errors, ultrathink);
-      if (continuationContext) {
-        prompt = `## CONTINUATION - Previous Progress\n${continuationContext}\n\n` +
-                 `## Continue from here\n${prompt}`;
-      }
-
-      const args = [
-        '-p', prompt,
-        '--model', 'opus',
-        '--max-turns', String(maxTurns),  // Enforce turn limit
-        '--dangerously-skip-permissions',
-        '--allowedTools', 'Read,Glob,Grep,mcp__rubix__god_query,mcp__rubix__god_failure_query'
-      ];
-
-      console.log(`[PhasedExecutor] CLI Opus fix with max-turns=${maxTurns} (${complexity})`);
-
-      const child = spawn('claude', args, {
-        cwd: this.codebasePath,
-        shell: false,
-        windowsHide: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: process.env
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let resolved = false;
-
-      // Handle abort signal
-      const abortHandler = () => {
-        if (resolved) return;
-        resolved = true;
-        child.kill('SIGTERM');
-        reject(new Error('Aborted by user'));
-      };
-
-      this.abortController?.signal.addEventListener('abort', abortHandler, { once: true });
-
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        this.abortController?.signal.removeEventListener('abort', abortHandler);
-        if (resolved) return;
-        resolved = true;
-
-        if (code === 0 || code === null) {
-          // Check if we hit the turn limit (code 0 but output indicates limit)
-          const reachedLimit = stdout.includes('max turns') ||
-                              stdout.includes('turn limit') ||
-                              stdout.includes('Max turns reached') ||
-                              (code === 0 && !this.isOutputComplete(stdout));
-
-          resolve({ output: stdout, reachedLimit });
-        } else {
-          reject(new Error(`CLI exited with code ${code}: ${stderr}`));
-        }
-      });
-
-      child.on('error', (error) => {
-        this.abortController?.signal.removeEventListener('abort', abortHandler);
-        if (resolved) return;
-        resolved = true;
-        reject(error);
-      });
-
-      // Only set timeout if configured (non-zero)
-      if (this.cliTimeout > 0) {
-        setTimeout(() => {
-          if (resolved) return;
-          resolved = true;
-          child.kill('SIGTERM');
-          reject(new Error('CLI fix timed out'));
-        }, this.cliTimeout);
-      }
-    });
-  }
-
-  /**
-   * Execute fix via API Sonnet.
-   */
-  private async executeApiSonnetFix(
-    tokenChain: string,
-    errors: string,
-    ultrathink: boolean,
-    budgetTokens: number
+    budgetTokens: number,
+    validationBlockers?: string[],
+    successfulFiles?: string[],
+    failedFiles?: string[]
   ): Promise<string> {
     if (!this.apiClient) {
-      throw new Error('API client not initialized');
+      throw new Error('API client not initialized - missing ANTHROPIC_API_KEY');
     }
 
-    const prompt = this.buildFixPrompt(tokenChain, errors, ultrathink);
+    const modelId = model === 'opus' ? this.opusModel : this.sonnetModel;
+    const prompt = this.buildFixPrompt(tokenChain, errors, ultrathink, validationBlockers, successfulFiles, failedFiles);
 
-    console.log(`[PhasedExecutor] Executing API Sonnet fix${ultrathink ? ' with extended thinking' : ''}...`);
+    console.log(`[PhasedExecutor] Executing API ${model} fix (${modelId})${ultrathink ? ' with extended thinking' : ''}...`);
 
     const baseParams = {
-      model: this.apiModel,
+      model: modelId,
       max_tokens: 8192,
       messages: [
         { role: 'user' as const, content: prompt }
@@ -969,26 +980,55 @@ ${FIX_ESCALATION_TIERS.map(t => `${t.attempt}. ${t.description}`).join('\n')}`;
       throw new Error('No text response from API');
     }
 
+    console.log(`[PhasedExecutor] API ${model} fix completed: ${textBlock.text.length} chars`);
+    console.log(`[PhasedExecutor] Usage: ${response.usage?.input_tokens || 0} in, ${response.usage?.output_tokens || 0} out`);
+
     return textBlock.text;
   }
 
   /**
    * Build fix prompt.
    */
-  private buildFixPrompt(tokenChain: string, errors: string, ultrathink: boolean): string {
+  private buildFixPrompt(
+    tokenChain: string,
+    errors: string,
+    ultrathink: boolean,
+    validationBlockers?: string[],
+    successfulFiles?: string[],
+    failedFiles?: string[]
+  ): string {
+    // Include validation blockers section if present
+    const blockersSection = validationBlockers?.length
+      ? `
+## VALIDATION BLOCKERS
+The following issues were identified by the validator and MUST be addressed in your fix:
+${validationBlockers.map(b => `- ${b}`).join('\n')}
+
+These blockers typically require:
+- Input validation and sanitization
+- Error handling improvements
+- Security hardening
+- Type safety improvements
+`
+      : '';
+
+    // Include partial success information if available
+    const partialSuccessSection = (successfulFiles?.length || failedFiles?.length)
+      ? `
+## PARTIAL SUCCESS STATUS
+${successfulFiles?.length ? `**Successfully written files (DO NOT regenerate):**\n${successfulFiles.map(f => `- ✓ ${f}`).join('\n')}` : ''}
+${failedFiles?.length ? `\n**Failed files (MUST fix):**\n${failedFiles.map(f => `- ✗ ${f}`).join('\n')}` : ''}
+
+IMPORTANT: Only provide fixes for files that FAILED. Do not regenerate files that were already written successfully.
+`
+      : '';
+
     return `# FIX - Error Recovery Phase
 
 ## Your Role
 You are the FIXER. The execution failed and you need to fix the errors.
 ${ultrathink ? 'Take your time to think deeply about the root cause.' : ''}
-
-## MEMORY RECALL (Do this FIRST)
-Query memory for similar past failures:
-- mcp__rubix__god_failure_query "error: ${errors.substring(0, 100)}"
-- mcp__rubix__god_query "fix patterns ${errors.substring(0, 50)}"
-
-Learn from past failures. Don't repeat the same mistakes.
-
+${blockersSection}${partialSuccessSection}
 ## Token Chain (Context)
 ${tokenChain}
 
@@ -997,7 +1037,7 @@ ${errors}
 
 ## Required Output
 
-Analyze the errors and provide fixed file contents:
+Analyze the errors and provide fixed file contents ONLY for files that failed:
 
 <file path="path/to/file.ts" action="modify">
 // Complete fixed code here
@@ -1015,14 +1055,25 @@ Provide COMPLETE file contents. No placeholders.`;
       files: []
     };
 
-    // Parse file blocks from response
-    const fileMatches = response.matchAll(/<file\s+path="([^"]+)"\s+action="([^"]+)">\n([\s\S]*?)<\/file>/g);
+    // Parse file blocks from response - flexible pattern that handles any attribute order
+    const fileMatches = response.matchAll(/<file\s+([^>]+)>([\s\S]*?)<\/file>/g);
     for (const match of fileMatches) {
-      fixedPlan.files.push({
-        path: match[1],
-        action: match[2] as 'create' | 'modify' | 'delete',
-        content: match[3].trim()
-      });
+      const attrs = match[1];
+      const pathMatch = attrs.match(/path="([^"]+)"/);
+      const actionMatch = attrs.match(/action="([^"]+)"/);
+      if (pathMatch) {
+        fixedPlan.files.push({
+          path: pathMatch[1],
+          action: (actionMatch?.[1] || 'modify') as 'create' | 'modify' | 'delete',
+          content: match[2].trim()
+        });
+      }
+    }
+
+    // Debug logging if no files were found but response contains file-like content
+    if (fixedPlan.files.length === 0 && response.includes('<file')) {
+      console.log(`[PhasedExecutor] WARNING: Response contains '<file' but no files parsed.`);
+      console.log(`[PhasedExecutor] Raw file tags found: ${(response.match(/<file[^>]*>/g) || []).join(', ')}`);
     }
 
     return fixedPlan;
@@ -1033,17 +1084,14 @@ Provide COMPLETE file contents. No placeholders.`;
    */
   getStats(result: PhasedExecutionResult): {
     totalCalls: number;
-    cliCalls: number;
     apiCalls: number;
     reduction: string;
   } {
-    const totalCalls = result.cliCalls + result.apiCalls;
     const oldApproach = 25; // 5 depts × 5 attempts
-    const reduction = Math.round((1 - totalCalls / oldApproach) * 100);
+    const reduction = Math.round((1 - result.apiCalls / oldApproach) * 100);
 
     return {
-      totalCalls,
-      cliCalls: result.cliCalls,
+      totalCalls: result.apiCalls,
       apiCalls: result.apiCalls,
       reduction: `${reduction}% fewer API calls`
     };

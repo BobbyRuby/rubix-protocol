@@ -1,5 +1,5 @@
 /**
- * PlanValidator - Phase 4: Claude validates the plan.
+ * PlanValidator - Phase 4: Claude validates the plan via API.
  *
  * VALIDATOR + GUARDIAN combined:
  * - Security scanning (OWASP Top 10)
@@ -7,13 +7,16 @@
  * - Test coverage planning
  * - Performance checks
  *
+ * Uses Anthropic API (Sonnet) - no CLI dependency.
  * Outputs: VAL token string
  */
 
-import { spawn } from 'child_process';
+import Anthropic from '@anthropic-ai/sdk';
 import { COMPRESSION_SCHEMAS } from '../memory/CompressionSchemas.js';
 import type { ContextBundle } from './ContextScout.js';
 import type { DesignOutput, PlanOutput } from './ClaudeReasoner.js';
+import type { MemoryEngine } from '../core/MemoryEngine.js';
+import { getCodexLogger } from './Logger.js';
 
 /**
  * Validation result from Phase 4.
@@ -30,18 +33,36 @@ export interface ValidationResult {
 
 /**
  * PlanValidator validates the execution plan before running.
+ * Uses API calls instead of CLI for reliability.
  */
 export class PlanValidator {
-  private codebasePath: string;
-  private cliTimeout: number;
+  private apiClient: Anthropic | null = null;
+  private apiModel: string;
+  private memoryEngine: MemoryEngine | null = null;
 
-  constructor(codebasePath: string, cliTimeout = 300000) {
-    this.codebasePath = codebasePath;
-    this.cliTimeout = cliTimeout;
+  constructor(
+    codebasePath: string,
+    apiKey?: string,
+    memoryEngine?: MemoryEngine,
+    apiModel?: string
+  ) {
+    // codebasePath available if needed in future
+    void codebasePath;
+    this.memoryEngine = memoryEngine || null;
+    this.apiModel = apiModel || 'claude-sonnet-4-20250514';
+
+    // Initialize API client
+    const key = apiKey || process.env.ANTHROPIC_API_KEY;
+    if (key) {
+      this.apiClient = new Anthropic({ apiKey: key });
+      console.log(`[PlanValidator] API client initialized (model: ${this.apiModel})`);
+    } else {
+      console.warn('[PlanValidator] No ANTHROPIC_API_KEY - validation will fail');
+    }
   }
 
   /**
-   * Validate the plan using Claude Code CLI.
+   * Validate the plan using Claude API.
    */
   async validate(
     context: ContextBundle,
@@ -49,24 +70,149 @@ export class PlanValidator {
     plan: PlanOutput
   ): Promise<ValidationResult> {
     console.log(`[PlanValidator] Phase 4: Validating plan for task ${context.taskId}`);
+    const logger = getCodexLogger();
 
-    const prompt = this.buildValidationPrompt(context, design, plan);
-    const cliOutput = await this.executeClaudeCLI(prompt);
-    return this.parseValidationOutput(cliOutput);
+    // Log validation start
+    logger.logResponse(
+      'VALIDATOR_START',
+      `Validating plan for task: ${context.taskId}`,
+      JSON.stringify({
+        taskId: context.taskId,
+        description: context.description,
+        filesCount: plan.files.length,
+        files: plan.files.map(f => ({ path: f.path, action: f.action })),
+        commands: plan.commands
+      }, null, 2),
+      plan.files.length,
+      plan.files.map(f => ({ path: f.path, action: f.action })),
+      'validator'
+    );
+
+    // Pre-gather security patterns from memory if available
+    let securityPatterns: string[] = [];
+    if (this.memoryEngine) {
+      try {
+        const results = await this.memoryEngine.query('security vulnerabilities patterns OWASP', {
+          topK: 5,
+          minScore: 0.3
+        });
+        securityPatterns = results.map(r => r.entry.content.substring(0, 300));
+
+        // Log security patterns found
+        logger.logResponse(
+          'VALIDATOR_SECURITY_PATTERNS',
+          `Found ${securityPatterns.length} security patterns from memory`,
+          JSON.stringify({
+            patternsFound: securityPatterns.length,
+            patterns: securityPatterns.map((p, i) => ({ index: i, preview: p.substring(0, 100) }))
+          }, null, 2),
+          securityPatterns.length,
+          undefined,
+          'validator'
+        );
+      } catch (error) {
+        console.log('[PlanValidator] Memory query failed, continuing without patterns');
+
+        logger.logResponse(
+          'VALIDATOR_SECURITY_PATTERNS_ERROR',
+          `Memory query failed`,
+          JSON.stringify({
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2),
+          0,
+          undefined,
+          'validator',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+
+    const prompt = this.buildValidationPrompt(context, design, plan, securityPatterns);
+
+    // Log the full validation prompt
+    logger.logResponse(
+      'VALIDATOR_PROMPT',
+      `Validation prompt for ${context.taskId}`,
+      prompt,
+      plan.files.length,
+      plan.files.map(f => ({ path: f.path, action: f.action })),
+      'validator'
+    );
+
+    try {
+      const apiOutput = await this.executeApi(prompt);
+      const result = this.parseValidationOutput(apiOutput);
+
+      // Log API response
+      logger.logResponse(
+        'VALIDATOR_API_RESPONSE',
+        `API response for ${context.taskId}`,
+        apiOutput,
+        0,
+        undefined,
+        'validator'
+      );
+
+      // Log parsed validation result details
+      logger.logResponse(
+        'VALIDATOR_PARSED_RESULT',
+        `Validation result: ${result.approved ? 'APPROVED' : 'REJECTED'}`,
+        JSON.stringify({
+          approved: result.approved,
+          compressedToken: result.compressedToken,
+          tests: result.tests,
+          securityIssuesCount: result.securityIssues.length,
+          securityIssues: result.securityIssues,
+          performanceIssuesCount: result.performanceIssues.length,
+          performanceIssues: result.performanceIssues,
+          requiredModificationsCount: result.requiredMods.length,
+          requiredModifications: result.requiredMods,
+          blockersCount: result.blockers.length,
+          blockers: result.blockers
+        }, null, 2),
+        0,
+        result.requiredMods.map(m => ({ path: m.path, action: 'requires_modification' })),
+        'validator'
+      );
+
+      return result;
+    } catch (error) {
+      // Log error before throwing
+      logger.logResponse(
+        'VALIDATOR_ERROR',
+        `Validation failed`,
+        JSON.stringify({
+          taskId: context.taskId,
+          error: error instanceof Error ? error.message : String(error)
+        }, null, 2),
+        0,
+        undefined,
+        'validator',
+        error instanceof Error ? error.message : String(error)
+      );
+      console.error('[PlanValidator] Validation failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Build the validation prompt.
+   * Build the validation prompt with pre-gathered context.
    */
   private buildValidationPrompt(
     context: ContextBundle,
     design: DesignOutput,
-    plan: PlanOutput
+    plan: PlanOutput,
+    securityPatterns: string[]
   ): string {
     // Build file contents summary
     const filesSummary = plan.files.map(f =>
-      `### ${f.path} (${f.action})\n\`\`\`typescript\n${f.content.substring(0, 500)}${f.content.length > 500 ? '\n// ... truncated ...' : ''}\n\`\`\``
+      `### ${f.path} (${f.action})\n\`\`\`typescript\n${f.content.substring(0, 1000)}${f.content.length > 1000 ? '\n// ... truncated ...' : ''}\n\`\`\``
     ).join('\n\n');
+
+    // Format security patterns
+    const securitySection = securityPatterns.length > 0
+      ? `## SECURITY PATTERNS (from memory)\n${securityPatterns.map((p, i) => `${i + 1}. ${p}`).join('\n\n')}\n`
+      : '';
 
     return `# VALIDATOR + GUARDIAN - Review Phase
 
@@ -74,14 +220,7 @@ export class PlanValidator {
 You are VALIDATOR (quality) and GUARDIAN (security) combined.
 Review the proposed code changes for issues.
 
-## MEMORY RECALL (Do this FIRST)
-Before reviewing, query memory for relevant context:
-- mcp__rubix__god_query "security vulnerabilities {file_type}" - Past security issues in similar code
-- mcp__rubix__god_query "validation failures" - Previous validation failures to avoid
-- mcp__rubix__god_query "code patterns {domain}" - Established patterns in this codebase
-
-Use memory to inform your review. Don't repeat past mistakes.
-
+${securitySection}
 ## Context Tokens
 ${context.compressedToken}
 
@@ -149,63 +288,33 @@ Provide ONLY the structured sections above.`;
   }
 
   /**
-   * Execute Claude Code CLI for validation.
+   * Execute Claude API with the validation prompt.
    */
-  private async executeClaudeCLI(prompt: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-p', prompt,
-        '--dangerously-skip-permissions',
-        '--allowedTools', 'Read,Grep,mcp__rubix__god_query'  // Includes memory for past security issues
-      ];
+  private async executeApi(prompt: string): Promise<string> {
+    if (!this.apiClient) {
+      throw new Error('[PlanValidator] API client not initialized - missing ANTHROPIC_API_KEY');
+    }
 
-      console.log('[PlanValidator] Executing Claude Code CLI...');
+    console.log(`[PlanValidator] Executing API Sonnet (${this.apiModel})...`);
 
-      const child = spawn('claude', args, {
-        cwd: this.codebasePath,
-        shell: false,                    // Direct execution (not through cmd.exe)
-        windowsHide: true,               // No console window on Windows
-        stdio: ['pipe', 'pipe', 'pipe'], // Explicit pipe configuration
-        env: process.env                 // Full environment inheritance
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let resolved = false;
-
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (resolved) return;
-        resolved = true;
-        if (code === 0) {
-          resolve(stdout);
-        } else {
-          console.error('[PlanValidator] CLI stderr:', stderr);
-          reject(new Error(`Claude CLI exited with code ${code}: ${stderr}`));
-        }
-      });
-
-      child.on('error', (error) => {
-        if (resolved) return;
-        resolved = true;
-        reject(new Error(`Failed to spawn Claude CLI: ${error.message}`));
-      });
-
-      // Manual timeout (more reliable than spawn timeout option)
-      setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        child.kill('SIGTERM');
-        reject(new Error(`Claude CLI timed out after ${this.cliTimeout}ms`));
-      }, this.cliTimeout);
+    const response = await this.apiClient.messages.create({
+      model: this.apiModel,
+      max_tokens: 4096,
+      messages: [
+        { role: 'user', content: prompt }
+      ]
     });
+
+    // Extract text from response
+    const textBlock = response.content.find(block => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      throw new Error('[PlanValidator] No text response from Claude API');
+    }
+
+    console.log(`[PlanValidator] API Sonnet completed: ${textBlock.text.length} chars`);
+    console.log(`[PlanValidator] Usage: ${response.usage?.input_tokens || 0} in, ${response.usage?.output_tokens || 0} out`);
+
+    return textBlock.text;
   }
 
   /**
@@ -286,6 +395,11 @@ Provide ONLY the structured sections above.`;
 }
 
 // Factory function
-export function createPlanValidator(codebasePath: string): PlanValidator {
-  return new PlanValidator(codebasePath);
+export function createPlanValidator(
+  codebasePath: string,
+  apiKey?: string,
+  memoryEngine?: MemoryEngine,
+  apiModel?: string
+): PlanValidator {
+  return new PlanValidator(codebasePath, apiKey, memoryEngine, apiModel);
 }

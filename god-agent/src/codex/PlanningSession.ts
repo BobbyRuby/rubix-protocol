@@ -94,6 +94,15 @@ export interface SessionSummary {
   lastActivity: Date;
   exchangeCount: number;
   status: string;
+  codebase: string;
+}
+
+/**
+ * Result returned from resume()
+ */
+export interface ResumeResult {
+  summary: string;
+  codebase: string;
 }
 
 /**
@@ -218,6 +227,31 @@ export class PlanningSession {
   // ===========================================================================
   // PUBLIC LIFECYCLE METHODS
   // ===========================================================================
+
+  /**
+   * Update the codebase path for this session.
+   * Call this when user changes project via /setproject during an active session.
+   */
+  async setCodebase(newCodebase: string): Promise<void> {
+    const oldCodebase = this.config.codebase;
+    this.config.codebase = newCodebase;
+    this.meta.codebase = newCodebase;
+
+    // Update the agent's codebase root (don't recreate, just update)
+    this.agent.setCodebaseRoot(newCodebase);
+
+    // Persist the change so resume gets the updated codebase
+    await this.storeSessionMeta();
+
+    console.log(`[PlanningSession] Codebase updated: ${oldCodebase} → ${newCodebase}`);
+  }
+
+  /**
+   * Get current codebase path
+   */
+  getCodebase(): string {
+    return this.config.codebase;
+  }
 
   /**
    * Check if session is active
@@ -346,13 +380,20 @@ export class PlanningSession {
 
   /**
    * Resume an existing session
-   * @returns Welcome back message with context summary
+   * @returns ResumeResult containing summary and codebase path
    */
-  async resume(): Promise<string> {
+  async resume(): Promise<ResumeResult> {
     console.log(`[PlanningSession] Resuming session ${this.id} (metadata: ${this.meta.exchangeCount} exchanges)`);
 
     // Load session metadata
     await this.loadSessionMeta();
+
+    // Sync config.codebase from saved metadata (session owns its codebase)
+    if (this.meta.codebase && this.meta.codebase !== this.config.codebase) {
+      console.log(`[PlanningSession] Restoring session codebase: ${this.meta.codebase}`);
+      this.config.codebase = this.meta.codebase;
+      this.agent.setCodebaseRoot(this.meta.codebase);
+    }
 
     // If resuming a non-cancelled session, reset to active so chat() works
     if (this.meta.status !== 'active' && this.meta.status !== 'cancelled') {
@@ -389,7 +430,10 @@ export class PlanningSession {
     // Generate resume summary
     const summary = this.generateResumeSummary();
 
-    return summary;
+    return {
+      summary,
+      codebase: this.config.codebase
+    };
   }
 
   /**
@@ -548,7 +592,8 @@ export class PlanningSession {
           createdAt: new Date(meta.createdAt),
           lastActivity: new Date(meta.lastActivityAt),
           exchangeCount: meta.exchangeCount,
-          status: meta.status
+          status: meta.status,
+          codebase: meta.codebase
         });
       } catch (e) {
         // Skip entries that aren't valid session metadata JSON
@@ -600,7 +645,8 @@ export class PlanningSession {
           createdAt: new Date(meta.createdAt),
           lastActivity: new Date(meta.lastActivityAt),
           exchangeCount: meta.exchangeCount,
-          status: meta.status
+          status: meta.status,
+          codebase: meta.codebase
         });
       } catch (e) {
         // Skip entries that aren't valid session metadata JSON
