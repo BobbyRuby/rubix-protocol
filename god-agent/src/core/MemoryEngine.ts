@@ -48,6 +48,70 @@ import type {
   ReasoningRoute
 } from '../routing/types.js';
 
+/**
+ * OPTIMIZED: Simple LRU cache with TTL for query results.
+ * Prevents repeated database queries for the same query during task execution.
+ */
+class QueryCache {
+  private cache: Map<string, { result: QueryResult[]; timestamp: number }>;
+  private maxSize: number;
+  private ttlMs: number;
+
+  constructor(maxSize: number = 100, ttlMs: number = 60000) {
+    this.cache = new Map();
+    this.maxSize = maxSize;
+    this.ttlMs = ttlMs;
+  }
+
+  private generateKey(query: string, options: QueryOptions): string {
+    return `${query}:${JSON.stringify(options)}`;
+  }
+
+  get(query: string, options: QueryOptions): QueryResult[] | null {
+    const key = this.generateKey(query, options);
+    const cached = this.cache.get(key);
+
+    if (!cached) return null;
+
+    // Check TTL
+    if (Date.now() - cached.timestamp > this.ttlMs) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    // Move to end (most recently used)
+    this.cache.delete(key);
+    this.cache.set(key, cached);
+
+    return cached.result;
+  }
+
+  set(query: string, options: QueryOptions, result: QueryResult[]): void {
+    const key = this.generateKey(query, options);
+
+    // If key exists, delete first to update position
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict oldest (first) entry
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
+    }
+
+    this.cache.set(key, { result, timestamp: Date.now() });
+  }
+
+  invalidate(): void {
+    this.cache.clear();
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+}
+
 export class MemoryEngine {
   private config: MemoryEngineConfig;
   private storage: SQLiteStorage;
@@ -63,6 +127,9 @@ export class MemoryEngine {
   private embeddingQueue!: EmbeddingQueue;
   private flushThreshold: number = 10;
   private initialized: boolean = false;
+
+  // OPTIMIZED: LRU query cache to prevent repeated queries during task execution
+  private queryCache: QueryCache;
 
   constructor(configOverrides?: Partial<MemoryEngineConfig>) {
     const defaultConfig = getDefaultConfig();
@@ -154,6 +221,9 @@ export class MemoryEngine {
       useRuleBased: true,
       trackStats: true
     });
+
+    // OPTIMIZED: Initialize query cache (100 entries, 60s TTL)
+    this.queryCache = new QueryCache(100, 60000);
   }
 
   /**
@@ -254,6 +324,9 @@ export class MemoryEngine {
     // Store in SQLite
     this.storage.storeEntry(entry);
 
+    // OPTIMIZED: Invalidate query cache when data changes
+    this.queryCache.invalidate();
+
     // Get vector label and queue for deferred batch embedding
     const label = this.storage.storeVectorMapping(id);
     this.embeddingQueue.queue(id, content, label);
@@ -293,7 +366,12 @@ export class MemoryEngine {
    * Delete an entry
    */
   deleteEntry(id: string): boolean {
-    return this.storage.deleteEntry(id);
+    const result = this.storage.deleteEntry(id);
+    if (result) {
+      // OPTIMIZED: Invalidate query cache when data changes
+      this.queryCache.invalidate();
+    }
+    return result;
   }
 
   /**
@@ -326,6 +404,9 @@ export class MemoryEngine {
     const success = this.storage.updateEntry(id, updates);
     if (!success) return null;
 
+    // OPTIMIZED: Invalidate query cache when data changes
+    this.queryCache.invalidate();
+
     // Save vector index if we modified it
     if (updates.content !== undefined && updates.content !== entry.content) {
       await this.vectorDb.save();
@@ -349,13 +430,21 @@ export class MemoryEngine {
       await this.embeddingQueue.flush();
     }
 
+    // OPTIMIZED: Check cache first
+    const cached = this.queryCache.get(text, options);
+    if (cached) {
+      return cached;
+    }
+
     const topK = options.topK ?? 10;
     const minScore = options.minScore ?? 0.0;
 
     // Pre-filter by tags if specified (get candidate entry IDs)
     let tagCandidates: Set<string> | null = null;
     if (options.filters?.tags && options.filters.tags.length > 0) {
-      const taggedIds = this.storage.getEntryIdsByTags(options.filters.tags);
+      // Use tagMatchAll option (default: true for AND logic, false for OR logic)
+      const matchAll = options.filters.tagMatchAll ?? true;
+      const taggedIds = this.storage.getEntryIdsByTags(options.filters.tags, matchAll);
       if (taggedIds.length === 0) {
         return []; // No entries have the requested tags
       }
@@ -405,6 +494,9 @@ export class MemoryEngine {
 
       if (results.length >= topK) break;
     }
+
+    // OPTIMIZED: Cache the results for future queries
+    this.queryCache.set(text, options, results);
 
     return results;
   }

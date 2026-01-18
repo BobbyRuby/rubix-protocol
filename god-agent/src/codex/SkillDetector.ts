@@ -8,7 +8,27 @@
  * Flow: Task → Detect Skills → Query polyglot:* tags → Inject knowledge → Execute
  */
 
+import { getCodexLogger } from './Logger.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
+
+/**
+ * OPTIMIZED: Module-level regex cache to avoid recompilation on every call.
+ * Key format: "pattern:flags"
+ */
+const REGEX_CACHE = new Map<string, RegExp>();
+
+/**
+ * Get a cached regex or create and cache a new one.
+ */
+function getCachedRegex(pattern: string, flags: string): RegExp {
+  const key = `${pattern}:${flags}`;
+  let regex = REGEX_CACHE.get(key);
+  if (!regex) {
+    regex = new RegExp(pattern, flags);
+    REGEX_CACHE.set(key, regex);
+  }
+  return regex;
+}
 
 /**
  * Keyword → polyglot tags mapping.
@@ -17,70 +37,70 @@ import type { MemoryEngine } from '../core/MemoryEngine.js';
  * to query memory for relevant knowledge.
  */
 const SKILL_TAG_MAP: Record<string, string[]> = {
-  // Platforms
-  'laravel': ['polyglot:laravel', 'polyglot:platform'],
-  'django': ['polyglot:django', 'polyglot:platform'],
-  'rails': ['polyglot:rails', 'polyglot:platform'],
-  'ruby on rails': ['polyglot:rails', 'polyglot:platform'],
-  'springboot': ['polyglot:springboot', 'polyglot:platform'],
-  'spring boot': ['polyglot:springboot', 'polyglot:platform'],
-  'spring-boot': ['polyglot:springboot', 'polyglot:platform'],
-  'nodejs': ['polyglot:nodejs', 'polyglot:platform'],
-  'node.js': ['polyglot:nodejs', 'polyglot:platform'],
-  'node js': ['polyglot:nodejs', 'polyglot:platform'],
-  'nextjs': ['polyglot:nextjs', 'polyglot:platform'],
-  'next.js': ['polyglot:nextjs', 'polyglot:platform'],
-  'next js': ['polyglot:nextjs', 'polyglot:platform'],
-  'dotnet': ['polyglot:dotnet', 'polyglot:platform'],
-  '.net': ['polyglot:dotnet', 'polyglot:platform'],
-  'asp.net': ['polyglot:dotnet', 'polyglot:platform'],
-  'wordpress': ['polyglot:wordpress', 'polyglot:platform'],
+  // Platforms (removed useless polyglot:platform category tag)
+  'laravel': ['polyglot:laravel'],
+  'django': ['polyglot:django'],
+  'rails': ['polyglot:rails'],
+  'ruby on rails': ['polyglot:rails'],
+  'springboot': ['polyglot:springboot'],
+  'spring boot': ['polyglot:springboot'],
+  'spring-boot': ['polyglot:springboot'],
+  'nodejs': ['polyglot:nodejs'],
+  'node.js': ['polyglot:nodejs'],
+  'node js': ['polyglot:nodejs'],
+  'nextjs': ['polyglot:nextjs'],
+  'next.js': ['polyglot:nextjs'],
+  'next js': ['polyglot:nextjs'],
+  'dotnet': ['polyglot:dotnet'],
+  '.net': ['polyglot:dotnet'],
+  'asp.net': ['polyglot:dotnet'],
+  'wordpress': ['polyglot:wordpress'],
 
-  // Patterns
-  'api': ['polyglot:api', 'polyglot:pattern'],
-  'rest': ['polyglot:api', 'polyglot:pattern'],
-  'restful': ['polyglot:api', 'polyglot:pattern'],
-  'graphql': ['polyglot:api', 'polyglot:pattern'],
-  'database': ['polyglot:database', 'polyglot:pattern'],
-  'sql': ['polyglot:database', 'polyglot:pattern'],
-  'postgres': ['polyglot:database', 'polyglot:pattern'],
-  'mysql': ['polyglot:database', 'polyglot:pattern'],
-  'mongodb': ['polyglot:database', 'polyglot:pattern'],
-  'auth': ['polyglot:auth', 'polyglot:pattern'],
-  'authentication': ['polyglot:auth', 'polyglot:pattern'],
-  'authorization': ['polyglot:auth', 'polyglot:pattern'],
-  'login': ['polyglot:auth', 'polyglot:pattern'],
-  'oauth': ['polyglot:auth', 'polyglot:pattern'],
-  'jwt': ['polyglot:auth', 'polyglot:pattern'],
-  'deploy': ['polyglot:deployment', 'polyglot:pattern'],
-  'deployment': ['polyglot:deployment', 'polyglot:pattern'],
-  'docker': ['polyglot:deployment', 'polyglot:pattern'],
-  'kubernetes': ['polyglot:deployment', 'polyglot:pattern'],
-  'ci/cd': ['polyglot:deployment', 'polyglot:pattern'],
+  // Patterns (removed useless polyglot:pattern category tag)
+  'api': ['polyglot:api'],
+  'rest': ['polyglot:api'],
+  'restful': ['polyglot:api'],
+  'graphql': ['polyglot:api'],
+  'database': ['polyglot:database'],
+  'sql': ['polyglot:database'],
+  'postgres': ['polyglot:database'],
+  'mysql': ['polyglot:database'],
+  'mongodb': ['polyglot:database'],
+  'auth': ['polyglot:auth'],
+  'authentication': ['polyglot:auth'],
+  'authorization': ['polyglot:auth'],
+  'login': ['polyglot:auth'],
+  'oauth': ['polyglot:auth'],
+  'jwt': ['polyglot:auth'],
+  'deploy': ['polyglot:deployment'],
+  'deployment': ['polyglot:deployment'],
+  'docker': ['polyglot:deployment'],
+  'kubernetes': ['polyglot:deployment'],
+  'ci/cd': ['polyglot:deployment'],
 
-  // Tools
-  'git': ['polyglot:git', 'polyglot:tool'],
-  'github': ['polyglot:git', 'polyglot:tool'],
-  'gitlab': ['polyglot:git', 'polyglot:tool'],
-  'playwright': ['polyglot:playwright', 'polyglot:tool'],
-  'puppeteer': ['polyglot:playwright', 'polyglot:tool'],
-  'selenium': ['polyglot:playwright', 'polyglot:tool'],
-  'test': ['polyglot:testing', 'polyglot:tool'],
-  'testing': ['polyglot:testing', 'polyglot:tool'],
-  'jest': ['polyglot:testing', 'polyglot:tool'],
-  'vitest': ['polyglot:testing', 'polyglot:tool'],
-  'pytest': ['polyglot:testing', 'polyglot:tool'],
-  'lint': ['polyglot:linting', 'polyglot:tool'],
-  'linting': ['polyglot:linting', 'polyglot:tool'],
-  'eslint': ['polyglot:linting', 'polyglot:tool'],
-  'prettier': ['polyglot:linting', 'polyglot:tool'],
-  'vite': ['polyglot:vite', 'polyglot:tool'],
-  'webpack': ['polyglot:vite', 'polyglot:tool'],
-  'npm': ['polyglot:packagemgr', 'polyglot:tool'],
-  'yarn': ['polyglot:packagemgr', 'polyglot:tool'],
-  'pnpm': ['polyglot:packagemgr', 'polyglot:tool'],
-  'pip': ['polyglot:packagemgr', 'polyglot:tool'],
-  'composer': ['polyglot:packagemgr', 'polyglot:tool'],
+  // Tools (removed useless polyglot:tool category tag)
+  'git': ['polyglot:git'],
+  'github': ['polyglot:git'],
+  'gitlab': ['polyglot:git'],
+  'playwright': ['polyglot:playwright'],
+  'puppeteer': ['polyglot:playwright'],
+  'selenium': ['polyglot:playwright'],
+  'test': ['polyglot:testing'],
+  'testing': ['polyglot:testing'],
+  'jest': ['polyglot:testing'],
+  'vitest': ['polyglot:testing'],
+  'pytest': ['polyglot:testing'],
+  'lint': ['polyglot:linting'],
+  'linting': ['polyglot:linting'],
+  'eslint': ['polyglot:linting'],
+  'prettier': ['polyglot:linting'],
+  'vite': ['polyglot:vite'],
+  'webpack': ['polyglot:vite'],
+  'npm': ['polyglot:packagemgr'],
+  'yarn': ['polyglot:packagemgr'],
+  'pnpm': ['polyglot:packagemgr'],
+  'pip': ['polyglot:packagemgr'],
+  'composer': ['polyglot:packagemgr'],
 };
 
 /**
@@ -94,30 +114,53 @@ const SKILL_TAG_MAP: Record<string, string[]> = {
  * @example
  * ```typescript
  * const skills = detectSkills("Build a Laravel REST API with authentication");
- * // Returns: ['polyglot:laravel', 'polyglot:platform', 'polyglot:api', 'polyglot:pattern', 'polyglot:auth']
+ * // Returns: ['polyglot:laravel', 'polyglot:api', 'polyglot:auth']
  * ```
  */
 export function detectSkills(text: string): string[] {
   const lower = text.toLowerCase();
   const detected = new Set<string>();
+  const matchedKeywords: string[] = [];
 
   for (const [keyword, tags] of Object.entries(SKILL_TAG_MAP)) {
     // Use word boundary-aware matching for short keywords to avoid false positives
     if (keyword.length <= 3) {
-      // For short keywords (api, git, npm, etc.), require word boundaries
-      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      // OPTIMIZED: Use cached regex instead of compiling new RegExp on every call
+      const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = getCachedRegex(`\\b${escapedKeyword}\\b`, 'i');
       if (regex.test(lower)) {
+        matchedKeywords.push(keyword);
         tags.forEach(t => detected.add(t));
       }
     } else {
       // For longer keywords, simple includes is fine
       if (lower.includes(keyword)) {
+        matchedKeywords.push(keyword);
         tags.forEach(t => detected.add(t));
       }
     }
   }
 
-  return Array.from(detected);
+  const detectedSkills = Array.from(detected);
+
+  // Log skill detection
+  if (detectedSkills.length > 0) {
+    const logger = getCodexLogger();
+    logger.logResponse(
+      'SKILL_DETECTOR',
+      `Input: ${text.substring(0, 200)}`,
+      JSON.stringify({
+        inputLength: text.length,
+        matchedKeywords,
+        detectedTags: detectedSkills
+      }, null, 2),
+      detectedSkills.length,
+      undefined,
+      'skill_detector'
+    );
+  }
+
+  return detectedSkills;
 }
 
 /**
@@ -153,26 +196,57 @@ export async function loadPolyglotContext(
   engine: MemoryEngine,
   skills: string[]
 ): Promise<PolyglotContextResult> {
+  const logger = getCodexLogger();
+
   if (skills.length === 0) {
     return { context: '', entriesFound: 0, matchedTags: [] };
   }
 
+  // Log polyglot loading start
+  logger.logResponse(
+    'POLYGLOT_LOAD_START',
+    `Skills: ${skills.join(', ')}`,
+    JSON.stringify({
+      skillsCount: skills.length,
+      skills
+    }, null, 2),
+    0,
+    undefined,
+    'skill_detector'
+  );
+
   try {
     // Query memory for polyglot knowledge matching the detected skills
+    // Use tagMatchAll: false (OR logic) to find entries with ANY of the detected tags
+    // e.g., "Laravel API" should return both laravel entries AND api entries
     const results = await engine.query('polyglot knowledge patterns best practices', {
       topK: 10,
-      filters: { tags: skills },
+      filters: { tags: skills, tagMatchAll: false },
       minScore: 0.2
     });
 
     if (results.length === 0) {
       console.log(`[SkillDetector] No polyglot entries found for tags: ${skills.join(', ')}`);
+
+      logger.logResponse(
+        'POLYGLOT_LOAD_EMPTY',
+        `No entries found for: ${skills.join(', ')}`,
+        JSON.stringify({
+          skills,
+          entriesFound: 0
+        }, null, 2),
+        0,
+        undefined,
+        'skill_detector'
+      );
+
       return { context: '', entriesFound: 0, matchedTags: skills };
     }
 
     // Format results for prompt injection
     const contextParts: string[] = [];
     const seenContent = new Set<string>(); // Dedupe by content hash
+    const entrySummaries: Array<{ id: string; tags: string[]; contentLength: number }> = [];
 
     for (const r of results) {
       const tags = r.entry.metadata.tags || [];
@@ -191,6 +265,12 @@ export async function loadPolyglotContext(
       contextParts.push(
         `### ${polyglotTags.join(', ')}\n${content}`
       );
+
+      entrySummaries.push({
+        id: r.entry.id,
+        tags: polyglotTags,
+        contentLength: r.entry.content.length
+      });
     }
 
     const formattedContext = contextParts.length > 0
@@ -199,6 +279,21 @@ export async function loadPolyglotContext(
 
     console.log(`[SkillDetector] Loaded ${results.length} polyglot entries (${formattedContext.length} chars)`);
 
+    // Log polyglot loading complete
+    logger.logResponse(
+      'POLYGLOT_LOAD_COMPLETE',
+      `Loaded ${results.length} entries`,
+      JSON.stringify({
+        skills,
+        entriesFound: results.length,
+        entries: entrySummaries,
+        contextLength: formattedContext.length
+      }, null, 2),
+      results.length,
+      undefined,
+      'skill_detector'
+    );
+
     return {
       context: formattedContext,
       entriesFound: results.length,
@@ -206,6 +301,21 @@ export async function loadPolyglotContext(
     };
   } catch (error) {
     console.error('[SkillDetector] Error loading polyglot context:', error);
+
+    // Log error
+    logger.logResponse(
+      'POLYGLOT_LOAD_ERROR',
+      `Error loading polyglot context`,
+      JSON.stringify({
+        skills,
+        error: error instanceof Error ? error.message : String(error)
+      }, null, 2),
+      0,
+      undefined,
+      'skill_detector',
+      error instanceof Error ? error.message : String(error)
+    );
+
     return { context: '', entriesFound: 0, matchedTags: skills };
   }
 }

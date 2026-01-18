@@ -110,6 +110,7 @@ export class Hypergraph {
 
   /**
    * Traverse the hypergraph following causal relationships
+   * OPTIMIZED: Uses Set for O(1) cycle detection instead of Array.includes() O(N)
    */
   traverse(query: CausalQuery): CausalTraversalResult {
     const paths: CausalPath[] = [];
@@ -120,6 +121,7 @@ export class Hypergraph {
     const dfs = (
       nodeId: string,
       currentPath: string[],
+      currentPathSet: Set<string>,  // OPTIMIZED: Set for O(1) cycle detection
       currentEdges: string[],
       currentStrength: number,
       relationTypes: CausalRelationType[],
@@ -169,9 +171,12 @@ export class Hypergraph {
         }
 
         for (const nextId of nextNodeIds) {
-          if (currentPath.includes(nextId)) continue; // Avoid cycles
+          // OPTIMIZED: O(1) Set lookup instead of O(N) Array.includes()
+          if (currentPathSet.has(nextId)) continue; // Avoid cycles
 
           const newPath = [...currentPath, nextId];
+          const newPathSet = new Set(currentPathSet);
+          newPathSet.add(nextId);
           const newEdges = [...currentEdges, edgeId];
           const newStrength = currentStrength * edge.strength;
           const newTypes = [...relationTypes, edge.type];
@@ -185,14 +190,15 @@ export class Hypergraph {
           });
 
           // Continue traversal
-          dfs(nextId, newPath, newEdges, newStrength, newTypes, depth + 1);
+          dfs(nextId, newPath, newPathSet, newEdges, newStrength, newTypes, depth + 1);
         }
       }
     };
 
     // Start traversal from each start node
     for (const startId of query.startNodeIds) {
-      dfs(startId, [startId], [], 1.0, [], 0);
+      const initialSet = new Set([startId]);
+      dfs(startId, [startId], initialSet, [], 1.0, [], 0);
     }
 
     return { paths, visitedNodes, visitedEdges };

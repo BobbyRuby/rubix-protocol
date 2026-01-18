@@ -65,28 +65,43 @@ export class ProvenanceStore {
 
   /**
    * Trace lineage chain from an entry to its roots
+   * OPTIMIZED: Uses recursive CTE + batch fetching instead of N+1 queries
    */
   traceLineage(entryId: string, maxDepth: number = 10): ProvenanceChain {
+    // STEP 1: Use recursive CTE to get all entry IDs in lineage (single query)
+    const lineageIds = this.storage.getLineageEntryIds(entryId, maxDepth);
+    if (lineageIds.length === 0) {
+      return {
+        rootId: entryId,
+        nodes: new Map(),
+        maxDepth: 0,
+        aggregateLScore: 1.0
+      };
+    }
+
+    // STEP 2: Batch fetch all provenance and entries (2-3 queries total vs N+1)
+    const provenanceMap = this.storage.getBatchProvenance(lineageIds);
+    const entryMap = this.storage.getBatchEntries(lineageIds);
+
+    // STEP 3: Build lineage tree from cached data
     const nodes = new Map<string, LineageNode>();
     let maxFoundDepth = 0;
 
-    const traverse = (id: string, depth: number): LineageNode | null => {
+    // Build nodes map using memoization to avoid redundant traversal
+    const buildNode = (id: string, depth: number): LineageNode | null => {
       if (depth > maxDepth) return null;
       if (nodes.has(id)) return nodes.get(id)!;
 
-      const provenance = this.storage.getProvenance(id);
-      if (!provenance) return null;
+      const provenance = provenanceMap.get(id);
+      const entry = entryMap.get(id);
+      if (!provenance || !entry) return null;
 
-      const entry = this.storage.getEntry(id);
-      if (!entry) return null;
-
+      // Build children first (parents in lineage tree)
       const children: LineageNode[] = [];
-
-      // Traverse to parents (children in the lineage tree)
       for (const parentId of provenance.parentIds) {
-        const parentNode = traverse(parentId, depth + 1);
-        if (parentNode) {
-          children.push(parentNode);
+        const childNode = buildNode(parentId, depth + 1);
+        if (childNode) {
+          children.push(childNode);
         }
       }
 
@@ -107,7 +122,7 @@ export class ProvenanceStore {
       return node;
     };
 
-    traverse(entryId, 0);
+    buildNode(entryId, 0);
 
     // Calculate aggregate L-Score for the chain
     const allLScores = Array.from(nodes.values()).map(n => n.lScore);

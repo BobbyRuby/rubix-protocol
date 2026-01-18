@@ -23,6 +23,56 @@ import { DEFAULT_ENHANCEMENT_CONFIG } from './types.js';
 import { EgoGraphExtractor } from './EgoGraphExtractor.js';
 import { MessagePassing } from './MessagePassing.js';
 
+/**
+ * OPTIMIZED: Simple LRU cache with size limit to prevent memory leaks.
+ * Uses Map's insertion order for LRU eviction.
+ */
+class LRUCache<K, V> {
+  private cache: Map<K, V>;
+  private maxSize: number;
+
+  constructor(maxSize: number) {
+    this.cache = new Map();
+    this.maxSize = maxSize;
+  }
+
+  get(key: K): V | undefined {
+    const value = this.cache.get(key);
+    if (value !== undefined) {
+      // Move to end (most recently used) by re-inserting
+      this.cache.delete(key);
+      this.cache.set(key, value);
+    }
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    // If key exists, delete first to update position
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict oldest (first) entry
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
+    }
+    this.cache.set(key, value);
+  }
+
+  has(key: K): boolean {
+    return this.cache.has(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+}
+
 export class EnhancementLayer {
   private config: EnhancementConfig;
   private extractor: EgoGraphExtractor;
@@ -42,8 +92,9 @@ export class EnhancementLayer {
     cacheHitRate: 0
   };
 
-  // Cache for enhanced embeddings
-  private cache: Map<string, Float32Array> = new Map();
+  // OPTIMIZED: LRU cache for enhanced embeddings with bounded size (prevents memory leaks)
+  private static readonly MAX_CACHE_SIZE = 1000;
+  private cache: LRUCache<string, Float32Array> = new LRUCache(EnhancementLayer.MAX_CACHE_SIZE);
   private cacheHits = 0;
   private cacheQueries = 0;
 

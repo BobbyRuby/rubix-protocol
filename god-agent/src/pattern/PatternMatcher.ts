@@ -98,10 +98,16 @@ export class PatternMatcher {
 
   /**
    * Match text against all registered patterns
+   * OPTIMIZED: Pre-fetch template priorities to avoid O(N²) sort queries
    */
   match(text: string): PatternMatch[] {
     const templates = this.storage.getAllPatternTemplates();
     const matches: PatternMatch[] = [];
+
+    // OPTIMIZED: Build priority lookup map upfront (O(N) instead of O(N²))
+    const priorityMap = new Map<string, number>(
+      templates.map(t => [t.id, t.priority])
+    );
 
     for (const template of templates) {
       // Ensure pattern is compiled
@@ -114,11 +120,11 @@ export class PatternMatcher {
       matches.push(...templateMatches);
     }
 
-    // Sort by priority and confidence
+    // OPTIMIZED: Sort using pre-fetched priority map (no DB queries in comparator)
     matches.sort((a, b) => {
-      const templateA = this.storage.getPatternTemplate(a.templateId);
-      const templateB = this.storage.getPatternTemplate(b.templateId);
-      const priorityDiff = (templateB?.priority ?? 0) - (templateA?.priority ?? 0);
+      const priorityA = priorityMap.get(a.templateId) ?? 0;
+      const priorityB = priorityMap.get(b.templateId) ?? 0;
+      const priorityDiff = priorityB - priorityA;
       if (priorityDiff !== 0) return priorityDiff;
       return b.confidence - a.confidence;
     });

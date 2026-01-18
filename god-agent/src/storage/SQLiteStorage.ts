@@ -183,12 +183,37 @@ export class SQLiteStorage {
   }
 
   getAllEntries(): MemoryEntry[] {
+    // OPTIMIZED: Batch queries with JOINs instead of N+1 pattern
+    // Fetch all entries
     const entries = this.db.prepare(`SELECT * FROM memory_entries ORDER BY created_at DESC`).all() as EntryRow[];
+    if (entries.length === 0) return [];
+
+    // Batch fetch all tags grouped by entry_id
+    const allTags = this.db.prepare(`
+      SELECT entry_id, GROUP_CONCAT(tag) as tags
+      FROM memory_tags
+      GROUP BY entry_id
+    `).all() as { entry_id: string; tags: string | null }[];
+    const tagMap = new Map(allTags.map(t => [t.entry_id, t.tags ? t.tags.split(',') : []]));
+
+    // Batch fetch all provenance
+    const allProvenance = this.db.prepare(`SELECT * FROM provenance`).all() as ProvenanceRow[];
+    const provMap = new Map(allProvenance.map(p => [p.entry_id, p]));
+
+    // Batch fetch all parent links
+    const allParentLinks = this.db.prepare(`
+      SELECT child_id, GROUP_CONCAT(parent_id) as parent_ids
+      FROM provenance_links
+      GROUP BY child_id
+    `).all() as { child_id: string; parent_ids: string | null }[];
+    const parentMap = new Map(allParentLinks.map(p => [p.child_id, p.parent_ids ? p.parent_ids.split(',') : []]));
+
+    // Build entries from cached data (O(N) instead of O(N²))
     return entries.map(entry => {
-      const tags = this.db.prepare(`SELECT tag FROM memory_tags WHERE entry_id = ?`).all(entry.id) as { tag: string }[];
-      const provRow = this.db.prepare(`SELECT * FROM provenance WHERE entry_id = ?`).get(entry.id) as ProvenanceRow | undefined;
-      const parentIds = this.db.prepare(`SELECT parent_id FROM provenance_links WHERE child_id = ?`).all(entry.id) as { parent_id: string }[];
-      return this.rowToEntry(entry, tags.map(t => t.tag), provRow, parentIds.map(p => p.parent_id));
+      const tags = tagMap.get(entry.id) || [];
+      const provRow = provMap.get(entry.id);
+      const parentIds = parentMap.get(entry.id) || [];
+      return this.rowToEntry(entry, tags, provRow, parentIds);
     });
   }
 
@@ -451,6 +476,118 @@ export class SQLiteStorage {
     };
   }
 
+  /**
+   * OPTIMIZED: Batch fetch provenance data for multiple entries
+   * Used by ProvenanceStore.traceLineage() to avoid N+1 queries
+   */
+  getBatchProvenance(entryIds: string[]): Map<string, ProvenanceInfo> {
+    if (entryIds.length === 0) return new Map();
+
+    const placeholders = entryIds.map(() => '?').join(',');
+
+    // Batch fetch provenance rows
+    const provRows = this.db.prepare(`
+      SELECT * FROM provenance WHERE entry_id IN (${placeholders})
+    `).all(...entryIds) as ProvenanceRow[];
+
+    // Batch fetch parent links
+    const parentLinks = this.db.prepare(`
+      SELECT child_id, parent_id FROM provenance_links WHERE child_id IN (${placeholders})
+    `).all(...entryIds) as { child_id: string; parent_id: string }[];
+
+    // Build parent map
+    const parentMap = new Map<string, string[]>();
+    for (const link of parentLinks) {
+      if (!parentMap.has(link.child_id)) parentMap.set(link.child_id, []);
+      parentMap.get(link.child_id)!.push(link.parent_id);
+    }
+
+    // Build result map
+    const result = new Map<string, ProvenanceInfo>();
+    for (const row of provRows) {
+      result.set(row.entry_id, {
+        parentIds: parentMap.get(row.entry_id) || [],
+        lineageDepth: row.lineage_depth,
+        confidence: row.confidence,
+        relevance: row.relevance,
+        lScore: row.l_score ?? undefined
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * OPTIMIZED: Use recursive CTE to fetch entire lineage in single query
+   * Returns all entry IDs in the lineage tree up to maxDepth
+   */
+  getLineageEntryIds(rootId: string, maxDepth: number = 10): string[] {
+    // SQLite recursive CTE to traverse provenance_links
+    const result = this.db.prepare(`
+      WITH RECURSIVE lineage(entry_id, depth) AS (
+        -- Base case: start with root
+        SELECT ?, 0
+        UNION ALL
+        -- Recursive case: follow parent links
+        SELECT pl.parent_id, lineage.depth + 1
+        FROM provenance_links pl
+        JOIN lineage ON pl.child_id = lineage.entry_id
+        WHERE lineage.depth < ?
+      )
+      SELECT DISTINCT entry_id FROM lineage
+    `).all(rootId, maxDepth) as { entry_id: string }[];
+
+    return result.map(r => r.entry_id);
+  }
+
+  /**
+   * OPTIMIZED: Batch fetch entries by IDs
+   */
+  getBatchEntries(entryIds: string[]): Map<string, MemoryEntry> {
+    if (entryIds.length === 0) return new Map();
+
+    const placeholders = entryIds.map(() => '?').join(',');
+
+    // Fetch all entries
+    const entries = this.db.prepare(`
+      SELECT * FROM memory_entries WHERE id IN (${placeholders})
+    `).all(...entryIds) as EntryRow[];
+
+    // Batch fetch tags
+    const allTags = this.db.prepare(`
+      SELECT entry_id, GROUP_CONCAT(tag) as tags
+      FROM memory_tags WHERE entry_id IN (${placeholders})
+      GROUP BY entry_id
+    `).all(...entryIds) as { entry_id: string; tags: string | null }[];
+    const tagMap = new Map(allTags.map(t => [t.entry_id, t.tags ? t.tags.split(',') : []]));
+
+    // Batch fetch provenance
+    const provMap = this.getBatchProvenance(entryIds);
+
+    // Build result map
+    const result = new Map<string, MemoryEntry>();
+    for (const entry of entries) {
+      const tags = tagMap.get(entry.id) || [];
+      const prov = provMap.get(entry.id);
+      const parentIds = prov?.parentIds || [];
+
+      result.set(entry.id, this.rowToEntry(
+        entry,
+        tags,
+        prov ? {
+          entry_id: entry.id,
+          lineage_depth: prov.lineageDepth,
+          confidence: prov.confidence,
+          relevance: prov.relevance,
+          l_score: prov.lScore ?? null
+        } : undefined,
+        parentIds
+      ));
+    }
+
+    return result;
+  }
+
   // ==========================================
   // CAUSAL RELATIONS
   // ==========================================
@@ -513,37 +650,81 @@ export class SQLiteStorage {
   }
 
   getCausalRelationsForEntry(entryId: string, direction: 'forward' | 'backward' | 'both'): CausalRelation[] {
-    const relations: CausalRelation[] = [];
+    // OPTIMIZED: Single UNION query with DISTINCT to avoid double N+1 and O(N²) dedup
+    let query: string;
 
-    if (direction === 'forward' || direction === 'both') {
-      const sourceRelations = this.db.prepare(`
-        SELECT DISTINCT r.* FROM causal_relations r
+    if (direction === 'forward') {
+      query = `
+        SELECT DISTINCT r.id, r.type, r.strength, r.metadata, r.created_at, r.ttl, r.expires_at
+        FROM causal_relations r
         JOIN causal_sources s ON r.id = s.relation_id
         WHERE s.entry_id = ?
-      `).all(entryId) as CausalRelationRow[];
-
-      for (const row of sourceRelations) {
-        const rel = this.getCausalRelation(row.id);
-        if (rel) relations.push(rel);
-      }
-    }
-
-    if (direction === 'backward' || direction === 'both') {
-      const targetRelations = this.db.prepare(`
-        SELECT DISTINCT r.* FROM causal_relations r
+      `;
+    } else if (direction === 'backward') {
+      query = `
+        SELECT DISTINCT r.id, r.type, r.strength, r.metadata, r.created_at, r.ttl, r.expires_at
+        FROM causal_relations r
         JOIN causal_targets t ON r.id = t.relation_id
         WHERE t.entry_id = ?
-      `).all(entryId) as CausalRelationRow[];
-
-      for (const row of targetRelations) {
-        const rel = this.getCausalRelation(row.id);
-        if (rel && !relations.find(r => r.id === rel.id)) {
-          relations.push(rel);
-        }
-      }
+      `;
+    } else {
+      // 'both' - use UNION to deduplicate at SQL level (O(1) vs O(N²))
+      query = `
+        SELECT DISTINCT r.id, r.type, r.strength, r.metadata, r.created_at, r.ttl, r.expires_at
+        FROM causal_relations r
+        JOIN causal_sources s ON r.id = s.relation_id
+        WHERE s.entry_id = ?
+        UNION
+        SELECT DISTINCT r.id, r.type, r.strength, r.metadata, r.created_at, r.ttl, r.expires_at
+        FROM causal_relations r
+        JOIN causal_targets t ON r.id = t.relation_id
+        WHERE t.entry_id = ?
+      `;
     }
 
-    return relations;
+    const params = direction === 'both' ? [entryId, entryId] : [entryId];
+    const relationRows = this.db.prepare(query).all(...params) as CausalRelationRow[];
+
+    if (relationRows.length === 0) return [];
+
+    // Batch fetch all sources and targets for these relations
+    const relationIds = relationRows.map(r => r.id);
+    const placeholders = relationIds.map(() => '?').join(',');
+
+    const allSources = this.db.prepare(`
+      SELECT relation_id, entry_id FROM causal_sources WHERE relation_id IN (${placeholders})
+    `).all(...relationIds) as { relation_id: string; entry_id: string }[];
+
+    const allTargets = this.db.prepare(`
+      SELECT relation_id, entry_id FROM causal_targets WHERE relation_id IN (${placeholders})
+    `).all(...relationIds) as { relation_id: string; entry_id: string }[];
+
+    // Build lookup maps
+    const sourceMap = new Map<string, string[]>();
+    const targetMap = new Map<string, string[]>();
+
+    for (const s of allSources) {
+      if (!sourceMap.has(s.relation_id)) sourceMap.set(s.relation_id, []);
+      sourceMap.get(s.relation_id)!.push(s.entry_id);
+    }
+
+    for (const t of allTargets) {
+      if (!targetMap.has(t.relation_id)) targetMap.set(t.relation_id, []);
+      targetMap.get(t.relation_id)!.push(t.entry_id);
+    }
+
+    // Build relations from cached data
+    return relationRows.map(row => ({
+      id: row.id,
+      type: row.type as CausalRelationType,
+      sourceIds: sourceMap.get(row.id) || [],
+      targetIds: targetMap.get(row.id) || [],
+      strength: row.strength,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+      createdAt: new Date(row.created_at),
+      ttl: row.ttl ?? undefined,
+      expiresAt: row.expires_at ? new Date(row.expires_at) : undefined
+    }));
   }
 
   getAllCausalRelations(): CausalRelation[] {
