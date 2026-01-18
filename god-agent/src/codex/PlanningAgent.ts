@@ -196,7 +196,7 @@ RULE:reference_CONTEXT_naturally,acknowledge_previous_work,no_redundant_searches
  * PlanningAgent - Claude-powered planning conversations with tool access
  */
 /** Default maximum tool use iterations before stopping */
-const DEFAULT_MAX_ITERATIONS = 10;
+const DEFAULT_MAX_ITERATIONS = 20;
 
 /** Minimum delay between API calls (ms) */
 const MIN_API_DELAY_MS = 300;
@@ -829,9 +829,12 @@ Required JSON structure:
     }
   ],
   "considerations": ["Important considerations"],
-  "openQuestions": ["Questions still to be resolved"],
+  "openQuestions": [],
   "estimatedComplexity": "small|medium|large|massive"
 }
+
+Note: openQuestions should be empty [] if the conversation has resolved all questions.
+Only include genuine uncertainties that would block implementation.
 
 CRITICAL: Output valid JSON only. No prose.`,
       messages: [{ role: 'user', content: prompt }]
