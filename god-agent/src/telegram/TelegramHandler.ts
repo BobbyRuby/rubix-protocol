@@ -53,6 +53,19 @@ export class TelegramHandler {
   /** Per-chat session mode - MUST be set for non-command messages to be processed */
   private chatModes: Map<number, SessionMode> = new Map();
 
+  /** Tracks which chats have explicitly set their project via /setproject */
+  private explicitlySetProjects: Set<number> = new Set();
+
+  /** Per-chat dual confirmation state for dangerous project paths */
+  private dangerConfirmation: Map<number, {
+    step: 1 | 2;
+    path: string;
+    timestamp: number;
+  }> = new Map();
+
+  /** Confirmation timeout (5 minutes) */
+  private static readonly CONFIRM_TIMEOUT_MS = 5 * 60 * 1000;
+
   constructor(taskExecutor?: TaskExecutor, defaultCodebase?: string, engine?: MemoryEngine) {
     this.taskExecutor = taskExecutor;
     this.engine = engine;
@@ -179,6 +192,32 @@ export class TelegramHandler {
    */
   getProjectPath(chatId: number): string {
     return this.projectPaths.get(chatId) || this.defaultCodebase;
+  }
+
+  /**
+   * Check if the resolved project path is the default/system directory
+   */
+  private isDefaultProject(projectPath: string): boolean {
+    const normalizedProject = normalize(projectPath).toLowerCase();
+    const normalizedDefault = normalize(this.defaultCodebase).toLowerCase();
+    return normalizedProject === normalizedDefault ||
+           normalizedProject.includes('god-agent') ||
+           normalizedProject.includes('rubix-protocol');
+  }
+
+  /**
+   * Validate that a project is safe to use.
+   * Returns error message if blocked, null if OK.
+   */
+  private validateProjectForWork(chatId: number): string | null {
+    if (!this.explicitlySetProjects.has(chatId)) {
+      return `❌ *No Project Set*\n\n` +
+        `Before using /task, /plan, or /conversation, you must set a project:\n` +
+        `\`/setproject D:\\path\\to\\your\\project\`\n\n` +
+        `This prevents accidentally modifying the wrong codebase.\n\n` +
+        `Default (blocked): \`${this.defaultCodebase}\``;
+    }
+    return null;
   }
 
   async handleMessage(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
@@ -395,6 +434,75 @@ export class TelegramHandler {
       return;
     }
 
+    // Handle danger confirmation step 1
+    if (data.startsWith('danger_1:')) {
+      const pending = this.dangerConfirmation.get(chatId);
+      if (!pending || pending.step !== 1 || Date.now() - pending.timestamp > TelegramHandler.CONFIRM_TIMEOUT_MS) {
+        await bot.answerCallbackQuery(query.id, { text: 'Expired. Try again.' });
+        this.dangerConfirmation.delete(chatId);
+        return;
+      }
+
+      this.dangerConfirmation.set(chatId, { ...pending, step: 2, timestamp: Date.now() });
+      await bot.answerCallbackQuery(query.id);
+
+      const keyboard = {
+        inline_keyboard: [[
+          { text: '🔥 CONFIRM', callback_data: `danger_2:${chatId}` },
+          { text: '❌ Cancel', callback_data: 'danger_cancel' }
+        ]]
+      };
+
+      await bot.sendMessage(chatId,
+        `⚠️ *Final Confirmation*\n\nClick CONFIRM to set project to system directory.`,
+        { parse_mode: 'Markdown', reply_markup: keyboard }
+      );
+      return;
+    }
+
+    // Handle danger confirmation step 2
+    if (data.startsWith('danger_2:')) {
+      const pending = this.dangerConfirmation.get(chatId);
+      if (!pending || pending.step !== 2 || Date.now() - pending.timestamp > TelegramHandler.CONFIRM_TIMEOUT_MS) {
+        await bot.answerCallbackQuery(query.id, { text: 'Expired. Try again.' });
+        this.dangerConfirmation.delete(chatId);
+        return;
+      }
+
+      const path = pending.path;
+      this.dangerConfirmation.delete(chatId);
+
+      // Set project
+      this.projectPaths.set(chatId, path);
+      this.explicitlySetProjects.add(chatId);
+      if (this.containment) this.containment.setProjectRoot(path);
+
+      // Update active planning session's codebase if one exists
+      if (this.planningSession?.isActive()) {
+        await this.planningSession.setCodebase(path);
+        console.log(`[TelegramHandler] Updated active planning session codebase to: ${path}`);
+      }
+
+      await this.persistProjectPath(chatId, path);
+
+      console.warn(`[DANGER] Chat ${chatId} set project to system dir: ${path}`);
+
+      await bot.answerCallbackQuery(query.id, { text: 'Project set (DANGER MODE)' });
+      await bot.sendMessage(chatId,
+        `✅ *Project Set (DANGER MODE)*\n\`${path}\`\n\n⚠️ Working in RUBIX system directory!`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Handle danger confirmation cancel
+    if (data === 'danger_cancel') {
+      this.dangerConfirmation.delete(chatId);
+      await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
+      await bot.sendMessage(chatId, '❌ Cancelled. Project unchanged.');
+      return;
+    }
+
     await bot.answerCallbackQuery(query.id);
   }
 
@@ -507,6 +615,13 @@ All messages require an active mode. Use:
 
     if (!description) {
       await bot.sendMessage(chatId, 'Please provide a description after /plan\n\nExample: /plan Build a REST API for user management');
+      return;
+    }
+
+    // Validate project is explicitly set
+    const validationError = this.validateProjectForWork(chatId);
+    if (validationError) {
+      await this.safeSendMarkdown(bot, chatId, validationError);
       return;
     }
 
@@ -634,7 +749,12 @@ All messages require an active mode. Use:
         }
       } else {
         // Default: get most recent session for this chat
-        const sessions = await PlanningSession.listSessions(this.engine, chatId, 1);
+        let sessions = await PlanningSession.listSessions(this.engine, chatId, 1);
+        // Fallback: if no sessions found by chatId, try listing all sessions
+        if (sessions.length === 0) {
+          console.log('[TelegramHandler] No sessions for chatId in /resume, trying all sessions');
+          sessions = await PlanningSession.listAllSessions(this.engine, 1);
+        }
         if (sessions.length === 0) {
           await bot.sendMessage(chatId, 'No planning sessions found. Start one with /plan\n\nOr use /plans all to see all sessions.');
           return;
@@ -656,8 +776,29 @@ All messages require an active mode. Use:
       // SET MODE to 'plan' (strict mode enforcement)
       this.chatModes.set(chatId, 'plan');
 
-      const summary = await this.planningSession.resume();
-      await this.sendConversationalMessages(chatId, summary, bot);
+      const result = await this.planningSession.resume();
+
+      // Sync project path from resumed session
+      const sessionCodebase = result.codebase;
+      const currentProjectPath = this.projectPaths.get(chatId);
+
+      if (sessionCodebase && sessionCodebase !== currentProjectPath) {
+        this.projectPaths.set(chatId, sessionCodebase);
+        this.explicitlySetProjects.add(chatId);
+
+        if (this.containment) {
+          this.containment.setProjectRoot(sessionCodebase);
+        }
+
+        await this.persistProjectPath(chatId, sessionCodebase);
+
+        await bot.sendMessage(chatId,
+          `📂 *Project Context Switched*\n\`${sessionCodebase}\``,
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      await this.sendConversationalMessages(chatId, result.summary, bot);
     } catch (error) {
       console.error('[TelegramHandler] Failed to resume session:', error);
       await bot.sendMessage(chatId, `Failed to resume: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1016,6 +1157,13 @@ All messages require an active mode. Use:
   private async handleConversationCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;
 
+    // Validate project is explicitly set
+    const validationError = this.validateProjectForWork(chatId);
+    if (validationError) {
+      await this.safeSendMarkdown(bot, chatId, validationError);
+      return;
+    }
+
     // Set mode
     this.chatModes.set(chatId, 'conversation');
 
@@ -1077,48 +1225,11 @@ All messages require an active mode. Use:
   }
 
   /**
-   * Send long responses as multiple messages for better readability
+   * Send long responses as multiple messages for better readability.
+   * Now delegates to safeSendMarkdown which handles chunking automatically.
    */
   private async sendConversationalMessages(chatId: number, response: string, bot: TelegramBotAPI): Promise<void> {
-    const MAX_LENGTH = 3500;
-
-    if (response.length <= MAX_LENGTH) {
-      await this.safeSendMarkdown(bot, chatId, response);
-      return;
-    }
-
-    // Split by double newlines (paragraphs)
-    const paragraphs = response.split('\n\n');
-    let current = '';
-
-    for (const para of paragraphs) {
-      if ((current + '\n\n' + para).length > MAX_LENGTH) {
-        if (current) {
-          try {
-            await bot.sendMessage(chatId, current.trim(), { parse_mode: 'Markdown' });
-          } catch {
-            // Retry without markdown if it fails
-            await bot.sendMessage(chatId, current.trim());
-          }
-          await this.delay(500);  // Small delay between messages
-        }
-        current = para;
-      } else {
-        current += (current ? '\n\n' : '') + para;
-      }
-    }
-
-    if (current) {
-      try {
-        await bot.sendMessage(chatId, current.trim(), { parse_mode: 'Markdown' });
-      } catch {
-        await bot.sendMessage(chatId, current.trim());
-      }
-    }
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    await this.safeSendMarkdown(bot, chatId, response);
   }
 
   /**
@@ -1174,15 +1285,8 @@ All messages require an active mode. Use:
       // Get response from Claude (with optional image)
       const response = await this.conversationSession.chat(text || 'What do you see in this image?', image || undefined);
 
-      // Send response (may need chunking for long responses)
-      if (response.length > 4000) {
-        const chunks = response.match(/.{1,4000}/gs) || [];
-        for (const chunk of chunks) {
-          await this.safeSendMarkdown(bot, chatId, chunk);
-        }
-      } else {
-        await this.safeSendMarkdown(bot, chatId, response);
-      }
+      // Send response (safeSendMarkdown handles chunking automatically)
+      await this.safeSendMarkdown(bot, chatId, response);
     } catch (error) {
       console.error('[TelegramHandler] Conversation error:', error);
       await bot.sendMessage(chatId, '❌ Error in conversation. Try again or use /task for direct execution.');
@@ -1518,20 +1622,47 @@ All messages require an active mode. Use:
       return;
     }
 
-    // Warn if path is inside god-agent (they might want this, so allow it)
-    const isInsideGodAgent = resolvedPath.toLowerCase().includes('god-agent') ||
-                             resolvedPath.toLowerCase().includes('rubix-protocol');
-    const warningMsg = isInsideGodAgent
-      ? '\n\n⚠️ *Warning:* This path is inside the RUBIX system directory.'
-      : '';
+    // Check if this is a dangerous (default/system) project path
+    if (this.isDefaultProject(resolvedPath)) {
+      const pending = this.dangerConfirmation.get(chatId);
+
+      if (!pending || pending.path !== resolvedPath) {
+        // Start step 1 of dual confirmation
+        this.dangerConfirmation.set(chatId, { step: 1, path: resolvedPath, timestamp: Date.now() });
+
+        const keyboard = {
+          inline_keyboard: [[
+            { text: '⚠️ Yes, I understand', callback_data: `danger_1:${chatId}` },
+            { text: '❌ Cancel', callback_data: 'danger_cancel' }
+          ]]
+        };
+
+        await bot.sendMessage(chatId,
+          `⚠️ *DANGER ZONE*\n\n` +
+          `You're setting project to the RUBIX system directory:\n\`${resolvedPath}\`\n\n` +
+          `Modifying files here could break the system.\n\nAre you *ABSOLUTELY* sure?`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+        return;
+      }
+    }
 
     // Store the project path
     this.projectPaths.set(chatId, resolvedPath);
+
+    // Mark as explicitly set (enables /task, /plan, /conversation)
+    this.explicitlySetProjects.add(chatId);
 
     // Update ContainmentManager if available
     if (this.containment) {
       this.containment.setProjectRoot(resolvedPath);
       console.log(`[TelegramHandler] Updated ContainmentManager projectRoot to: ${resolvedPath}`);
+    }
+
+    // Update active planning session's codebase if one exists
+    if (this.planningSession?.isActive()) {
+      await this.planningSession.setCodebase(resolvedPath);
+      console.log(`[TelegramHandler] Updated active planning session codebase to: ${resolvedPath}`);
     }
 
     // Persist to memory for recovery after restart
@@ -1540,7 +1671,7 @@ All messages require an active mode. Use:
     await bot.sendMessage(chatId,
       `✅ *Project Set*\n\n` +
       `\`${resolvedPath}\`\n\n` +
-      `All tasks will now execute in this directory.${warningMsg}`,
+      `All tasks will now execute in this directory.`,
       { parse_mode: 'Markdown' }
     );
 
@@ -1563,10 +1694,19 @@ All messages require an active mode. Use:
       // Store the project path
       this.projectPaths.set(chatId, projectPath);
 
+      // Mark as explicitly set (enables /task, /plan, /conversation)
+      this.explicitlySetProjects.add(chatId);
+
       // Update ContainmentManager if available
       if (this.containment) {
         this.containment.setProjectRoot(projectPath);
         console.log(`[TelegramHandler] Updated ContainmentManager projectRoot to: ${projectPath}`);
+      }
+
+      // Update active planning session's codebase if one exists
+      if (this.planningSession?.isActive()) {
+        await this.planningSession.setCodebase(projectPath);
+        console.log(`[TelegramHandler] Updated active planning session codebase to: ${projectPath}`);
       }
 
       // Persist to memory for recovery after restart
@@ -1597,10 +1737,12 @@ All messages require an active mode. Use:
   private async handleWhereAmICommand(chatId: number, bot: TelegramBotAPI): Promise<void> {
     const projectPath = this.projectPaths.get(chatId);
     const effectivePath = projectPath || this.defaultCodebase;
+    const isExplicit = this.explicitlySetProjects.has(chatId);
 
     let message = `📍 *Current Working Context*\n\n`;
     message += `**Project Path:** \`${effectivePath}\`\n`;
     message += `**Source:** ${projectPath ? 'Configured via /setproject' : 'Default (not set)'}\n`;
+    message += `**Project Status:** ${isExplicit ? '✅ Set' : '❌ Not set (commands blocked)'}\n`;
     message += `**Default Codebase:** \`${this.defaultCodebase}\`\n`;
 
     if (this.containment) {
@@ -1693,6 +1835,13 @@ All messages require an active mode. Use:
     const chatId = msg.chat.id;
     const text = msg.text || '';
     const taskDescription = text.replace('/task', '').trim();
+
+    // Validate project is explicitly set
+    const validationError = this.validateProjectForWork(chatId);
+    if (validationError) {
+      await this.safeSendMarkdown(bot, chatId, validationError);
+      return;
+    }
 
     if (!taskDescription) {
       await bot.sendMessage(chatId, 'Please provide a task description after /task');
@@ -1896,24 +2045,106 @@ All messages require an active mode. Use:
   }
 
   /**
+   * Telegram max message length (using 4000 for safety margin from 4096 limit)
+   */
+  private static readonly MAX_MESSAGE_LENGTH = 4000;
+
+  /**
+   * Split text into chunks that fit within Telegram's message limit.
+   * Prefers splitting at paragraph boundaries, then sentences, then words.
+   */
+  private chunkText(text: string, maxLength: number = TelegramHandler.MAX_MESSAGE_LENGTH): string[] {
+    if (text.length <= maxLength) {
+      return [text];
+    }
+
+    const chunks: string[] = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLength) {
+        chunks.push(remaining);
+        break;
+      }
+
+      // Find the best split point within maxLength
+      let splitIndex = maxLength;
+
+      // Try to split at paragraph boundary (double newline)
+      const paragraphBreak = remaining.lastIndexOf('\n\n', maxLength);
+      if (paragraphBreak > maxLength * 0.3) {
+        splitIndex = paragraphBreak + 2; // Include the newlines
+      } else {
+        // Try to split at single newline
+        const lineBreak = remaining.lastIndexOf('\n', maxLength);
+        if (lineBreak > maxLength * 0.3) {
+          splitIndex = lineBreak + 1;
+        } else {
+          // Try to split at sentence boundary
+          const sentenceEnd = Math.max(
+            remaining.lastIndexOf('. ', maxLength),
+            remaining.lastIndexOf('! ', maxLength),
+            remaining.lastIndexOf('? ', maxLength)
+          );
+          if (sentenceEnd > maxLength * 0.3) {
+            splitIndex = sentenceEnd + 2;
+          } else {
+            // Try to split at word boundary
+            const wordBreak = remaining.lastIndexOf(' ', maxLength);
+            if (wordBreak > maxLength * 0.3) {
+              splitIndex = wordBreak + 1;
+            }
+            // Otherwise hard split at maxLength
+          }
+        }
+      }
+
+      chunks.push(remaining.slice(0, splitIndex).trim());
+      remaining = remaining.slice(splitIndex).trim();
+    }
+
+    return chunks;
+  }
+
+  /**
    * Safely send a message with Markdown, falling back to plain text on parse errors.
-   * Telegram's Markdown parser chokes on unescaped special chars in paths.
+   * Automatically chunks messages that exceed Telegram's 4096 char limit.
    */
   private async safeSendMarkdown(
     bot: TelegramBotAPI,
     chatId: number,
     text: string
   ): Promise<void> {
-    try {
-      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
-    } catch (error: unknown) {
-      // Check if it's a Telegram markdown parse error
-      const telegramError = error as { response?: { body?: { description?: string } } };
-      if (telegramError.response?.body?.description?.includes("can't parse entities")) {
-        // Fall back to plain text
-        await bot.sendMessage(chatId, text);
-      } else {
-        throw error;
+    const chunks = this.chunkText(text);
+
+    for (let i = 0; i < chunks.length; i++) {
+      let chunk = chunks[i];
+
+      // Add continuation indicator for multi-part messages
+      if (chunks.length > 1) {
+        if (i < chunks.length - 1) {
+          chunk += `\n\n_(...${i + 1}/${chunks.length})_`;
+        } else {
+          chunk = `_(...${i + 1}/${chunks.length})_\n\n` + chunk;
+        }
+      }
+
+      try {
+        await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+      } catch (error: unknown) {
+        // Check if it's a Telegram markdown parse error
+        const telegramError = error as { response?: { body?: { description?: string } } };
+        if (telegramError.response?.body?.description?.includes("can't parse entities")) {
+          // Fall back to plain text
+          await bot.sendMessage(chatId, chunk);
+        } else {
+          throw error;
+        }
+      }
+
+      // Small delay between chunks to avoid rate limiting
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
   }
