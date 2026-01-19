@@ -14,11 +14,13 @@
  *          - Medium complexity: Single Sonnet engineer
  *          - High complexity: Parallel Opus engineers (based on dependency graph)
  *
- * Phase 4: VALIDATOR - Review plan → VAL tokens
+ * Phase 5: EXECUTOR (Local) - Write files to disk FIRST → EXEC tokens
+ *          NOTE: Runs before validator so files exist for validation/fix
+ *
+ * Phase 4: VALIDATOR - Validate CREATED files → VAL tokens
  *          Model: Based on complexity (Haiku/Sonnet/Opus)
  *
- * Phase 5: EXECUTOR (Local) - Write files, run commands → EXEC tokens
- * Phase 6: FIX LOOP (API) - Fix errors, escalating model strategy
+ * Phase 6: FIX LOOP (API) - Fix execution/validation errors on existing files
  *
  * Key Design:
  * - All Claude calls use Anthropic API directly - no CLI spawning
@@ -42,6 +44,11 @@ import type { CodexTask, Subtask } from './types.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { MemorySource, CausalRelationType } from '../core/types.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
+// Guardrail imports
+import { CollaborativePartner } from './CollaborativePartner.js';
+import { ContainmentManager } from './ContainmentManager.js';
+import { CodeReviewer } from '../review/CodeReviewer.js';
+import type { ReviewRequest } from '../review/types.js';
 
 /**
  * Fix loop escalation tiers - All use API.
@@ -110,6 +117,13 @@ export class PhasedExecutor {
   private comms?: CommunicationManager;
   private abortController: AbortController | null = null;
 
+  // === GUARDRAIL COMPONENTS ===
+  private collaborativePartner?: CollaborativePartner;
+  private containmentManager?: ContainmentManager;
+  private codeReviewer?: CodeReviewer;
+  /** Enable/disable guardrails (default: true) */
+  private guardrailsEnabled: boolean = true;
+
   constructor(codebasePath: string, dryRun = false, engine?: MemoryEngine, comms?: CommunicationManager) {
     this.codebasePath = codebasePath;
     this.dryRun = dryRun;
@@ -140,6 +154,52 @@ export class PhasedExecutor {
    */
   setCommunicationManager(comms: CommunicationManager): void {
     this.comms = comms;
+  }
+
+  // === GUARDRAIL SETTERS ===
+
+  /**
+   * Set CollaborativePartner for shadow search, knowledge gap detection, and challenge gates.
+   */
+  setCollaborativePartner(partner: CollaborativePartner): void {
+    this.collaborativePartner = partner;
+    console.log('[PhasedExecutor] CollaborativePartner wired - shadow search & challenge gates ACTIVE');
+  }
+
+  /**
+   * Set ContainmentManager for file permission checks before writes.
+   */
+  setContainmentManager(containment: ContainmentManager): void {
+    this.containmentManager = containment;
+    console.log('[PhasedExecutor] ContainmentManager wired - file permission checks ACTIVE');
+  }
+
+  /**
+   * Set CodeReviewer for OWASP security scanning after code generation.
+   */
+  setCodeReviewer(reviewer: CodeReviewer): void {
+    this.codeReviewer = reviewer;
+    console.log('[PhasedExecutor] CodeReviewer wired - OWASP security scanning ACTIVE');
+  }
+
+  /**
+   * Enable or disable guardrails (for testing/debugging).
+   */
+  setGuardrailsEnabled(enabled: boolean): void {
+    this.guardrailsEnabled = enabled;
+    console.log(`[PhasedExecutor] Guardrails ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  }
+
+  /**
+   * Check if guardrails are fully configured.
+   */
+  getGuardrailStatus(): { enabled: boolean; collaborativePartner: boolean; containment: boolean; codeReviewer: boolean } {
+    return {
+      enabled: this.guardrailsEnabled,
+      collaborativePartner: !!this.collaborativePartner,
+      containment: !!this.containmentManager,
+      codeReviewer: !!this.codeReviewer
+    };
   }
 
   /**
@@ -374,6 +434,78 @@ export class PhasedExecutor {
         }
       }
 
+      // === GUARDRAIL: KNOWLEDGE GAP DETECTION ===
+      // Before starting execution, identify and handle knowledge gaps
+      if (this.guardrailsEnabled && this.collaborativePartner && 'description' in task) {
+        console.log('[PhasedExecutor] === GUARDRAIL: Knowledge Gap Detection ===');
+        try {
+          const gaps = await this.collaborativePartner.identifyKnowledgeGaps(task as CodexTask);
+
+          if (gaps.length > 0) {
+            const criticalGaps = gaps.filter(g => g.critical);
+            const nonCriticalGaps = gaps.filter(g => !g.critical);
+
+            console.log(`[PhasedExecutor] Found ${gaps.length} knowledge gaps (${criticalGaps.length} critical)`);
+
+            // Log gaps to logger
+            logger.logResponse(
+              'GUARDRAIL_KNOWLEDGE_GAPS',
+              `Task: ${taskDesc}`,
+              JSON.stringify({
+                totalGaps: gaps.length,
+                criticalGaps: criticalGaps.map(g => ({ question: g.question, domain: g.domain })),
+                nonCriticalGaps: nonCriticalGaps.map(g => ({ question: g.question, domain: g.domain }))
+              }, null, 2),
+              gaps.length
+            );
+
+            // Critical gaps require escalation
+            if (criticalGaps.length > 0) {
+              console.log('[PhasedExecutor] CRITICAL knowledge gaps - escalating to user');
+
+              const escalationMessage = `## Critical Knowledge Gaps Detected
+
+Before proceeding, the following questions need clarification:
+
+${criticalGaps.map((g, i) => `${i + 1}. **${g.domain}**: ${g.question}`).join('\n\n')}
+
+Please provide clarification or type "proceed with assumptions" to continue.`;
+
+              const response = await this.escalateToUser(
+                taskId,
+                'Knowledge Gaps Require Clarification',
+                escalationMessage,
+                'clarification'
+              );
+
+              if (response) {
+                if (response.toLowerCase().includes('abort') || response.toLowerCase().includes('cancel')) {
+                  console.log('[PhasedExecutor] User aborted due to knowledge gaps');
+                  result.error = 'Aborted by user: critical knowledge gaps not clarified';
+                  result.duration = Date.now() - startTime;
+                  return result;
+                }
+                // Add user's clarification to polyglot context
+                polyglotContext += `\n\n=== USER CLARIFICATION (Knowledge Gaps) ===\n${response}\n=== END CLARIFICATION ===`;
+                console.log('[PhasedExecutor] User provided clarification, proceeding');
+              } else {
+                // No response - proceed with assumptions (logged)
+                console.log('[PhasedExecutor] No response to knowledge gaps - proceeding with assumptions');
+              }
+            }
+
+            // Non-critical gaps are logged as assumptions
+            if (nonCriticalGaps.length > 0) {
+              console.log(`[PhasedExecutor] ${nonCriticalGaps.length} non-critical gaps - proceeding with reasonable assumptions`);
+            }
+          } else {
+            console.log('[PhasedExecutor] No knowledge gaps detected - proceeding');
+          }
+        } catch (error) {
+          console.warn('[PhasedExecutor] Knowledge gap detection failed, continuing:', error);
+        }
+      }
+
       // Phase 1: CONTEXT SCOUT (API Sonnet)
       console.log('[PhasedExecutor] === Phase 1: CONTEXT SCOUT (API Sonnet) ===');
       const scout = createContextScout(
@@ -443,6 +575,101 @@ export class PhasedExecutor {
       // Check for abort after Phase 2
       this.checkAborted();
 
+      // === GUARDRAIL: SHADOW SEARCH CHALLENGE ===
+      // Before engineering, assess the design approach for potential issues
+      if (this.guardrailsEnabled && this.collaborativePartner && 'description' in task) {
+        console.log('[PhasedExecutor] === GUARDRAIL: Shadow Search Challenge ===');
+        try {
+          // Create approach summary from design output
+          const approachSummary = `Design approach for: ${(task as CodexTask).description}
+Components: ${design.components.join(', ')}
+Architecture: ${design.notes || 'Standard approach'}
+Files to create/modify: ${design.components.length} components`;
+
+          const assessment = await this.collaborativePartner.assessApproach(approachSummary, {
+            task: task as CodexTask
+          });
+
+          // Log the assessment
+          logger.logResponse(
+            'GUARDRAIL_SHADOW_SEARCH',
+            `Approach: ${approachSummary.substring(0, 200)}`,
+            JSON.stringify({
+              shouldChallenge: assessment.shouldChallenge,
+              isHardGate: assessment.isHardGate,
+              credibility: assessment.credibility,
+              lScore: assessment.lScore,
+              contradictionsFound: assessment.contradictions.length,
+              reasoning: assessment.reasoning,
+              recommendation: assessment.recommendation
+            }, null, 2),
+            assessment.contradictions.length
+          );
+
+          if (assessment.isHardGate) {
+            // HARD GATE: Block execution until user explicitly overrides
+            console.log('[PhasedExecutor] HARD GATE: Shadow search found significant concerns');
+            console.log(`[PhasedExecutor] Credibility: ${assessment.credibility.toFixed(2)}, L-Score: ${assessment.lScore.toFixed(2)}`);
+            console.log(`[PhasedExecutor] Contradictions: ${assessment.contradictions.length}`);
+
+            const escalationMessage = `## ⚠️ Hard Gate: Approach Concerns Detected
+
+**Credibility Score:** ${(assessment.credibility * 100).toFixed(0)}%
+**L-Score (Reliability):** ${(assessment.lScore * 100).toFixed(0)}%
+
+### Reasoning
+${assessment.reasoning}
+
+### Contradicting Evidence Found (${assessment.contradictions.length})
+${assessment.contradictions.slice(0, 3).map((c, i) => `${i + 1}. ${c.content.substring(0, 200)}... (strength: ${(c.refutationStrength * 100).toFixed(0)}%)`).join('\n\n')}
+
+### Recommendation
+${assessment.recommendation}
+
+---
+**To proceed anyway**, reply with "override" or "proceed".
+**To abort**, reply with "abort" or "cancel".`;
+
+            const response = await this.escalateToUser(
+              taskId,
+              'Hard Gate: Design Approach Concerns',
+              escalationMessage,
+              'approval'
+            );
+
+            if (response) {
+              const lowerResponse = response.toLowerCase();
+              if (lowerResponse.includes('abort') || lowerResponse.includes('cancel')) {
+                console.log('[PhasedExecutor] User aborted due to hard gate concerns');
+                result.error = 'Aborted by user: approach concerns not overridden';
+                result.duration = Date.now() - startTime;
+                return result;
+              } else if (lowerResponse.includes('override') || lowerResponse.includes('proceed') || lowerResponse.includes('continue') || lowerResponse.includes('yes')) {
+                console.log('[PhasedExecutor] User overrode hard gate - proceeding with caution');
+              } else {
+                // Unclear response - treat as guidance
+                console.log('[PhasedExecutor] User provided guidance - proceeding with modifications');
+              }
+            } else {
+              // No response to hard gate - abort by default for safety
+              console.log('[PhasedExecutor] No response to hard gate - aborting for safety');
+              result.error = 'Aborted: hard gate challenge not acknowledged';
+              result.duration = Date.now() - startTime;
+              return result;
+            }
+          } else if (assessment.shouldChallenge) {
+            // SOFT GATE: Log warning but continue
+            console.log('[PhasedExecutor] SOFT GATE: Shadow search found potential concerns (logged, continuing)');
+            console.log(`[PhasedExecutor] Credibility: ${assessment.credibility.toFixed(2)}, L-Score: ${assessment.lScore.toFixed(2)}`);
+            console.log(`[PhasedExecutor] Reasoning: ${assessment.reasoning}`);
+          } else {
+            console.log('[PhasedExecutor] Shadow search passed - approach looks credible');
+          }
+        } catch (error) {
+          console.warn('[PhasedExecutor] Shadow search challenge failed, continuing:', error);
+        }
+      }
+
       // Phase 3: ENGINEER (complexity-based model selection)
       console.log('[PhasedExecutor] === Phase 3: ENGINEER ===');
 
@@ -510,7 +737,213 @@ export class PhasedExecutor {
       // Check for abort after Phase 3
       this.checkAborted();
 
-      // Phase 4: VALIDATOR (complexity-based model)
+      // === GUARDRAIL: CONTAINMENT CHECK ===
+      // Before writing any files, verify all paths are allowed
+      if (this.guardrailsEnabled && this.containmentManager && plan.files.length > 0) {
+        console.log('[PhasedExecutor] === GUARDRAIL: Containment Check ===');
+
+        const deniedPaths: Array<{ path: string; reason: string }> = [];
+        const allowedPaths: string[] = [];
+
+        for (const file of plan.files) {
+          const operation = file.action === 'delete' ? 'write' : 'write';  // delete also requires write permission
+          const result = this.containmentManager.checkPermission(file.path, operation);
+
+          if (!result.allowed) {
+            deniedPaths.push({ path: file.path, reason: result.reason });
+            console.log(`[PhasedExecutor] DENIED: ${file.path} - ${result.reason}`);
+          } else {
+            allowedPaths.push(file.path);
+          }
+        }
+
+        // Log the containment check
+        logger.logResponse(
+          'GUARDRAIL_CONTAINMENT',
+          `Checking ${plan.files.length} file paths`,
+          JSON.stringify({
+            totalFiles: plan.files.length,
+            allowed: allowedPaths.length,
+            denied: deniedPaths.length,
+            deniedPaths: deniedPaths
+          }, null, 2),
+          deniedPaths.length
+        );
+
+        // If any paths are denied, abort or filter
+        if (deniedPaths.length > 0) {
+          console.log(`[PhasedExecutor] CONTAINMENT VIOLATION: ${deniedPaths.length} paths denied`);
+
+          // For critical paths (secrets, credentials), abort execution
+          const criticalDenials = deniedPaths.filter(d =>
+            d.reason.includes('IMMUTABLE') ||
+            d.reason.includes('credentials') ||
+            d.reason.includes('secrets') ||
+            d.reason.includes('.env')
+          );
+
+          if (criticalDenials.length > 0) {
+            console.log('[PhasedExecutor] CRITICAL: Attempted to write to protected paths - aborting');
+
+            const escalationMessage = `## 🛑 Containment Violation: Protected Paths
+
+The execution plan attempts to write to protected paths that are blocked by security rules.
+
+**Blocked Paths:**
+${criticalDenials.map(d => `- \`${d.path}\`: ${d.reason}`).join('\n')}
+
+These paths are protected because they may contain sensitive data (credentials, secrets, env files).
+
+**Options:**
+- Reply "abort" to cancel the task
+- Reply "skip" to skip these files and continue with allowed paths`;
+
+            const response = await this.escalateToUser(
+              taskId,
+              'Containment Violation: Protected Paths',
+              escalationMessage,
+              'approval'
+            );
+
+            if (!response || response.toLowerCase().includes('abort')) {
+              result.error = 'Aborted: containment violation - attempted write to protected paths';
+              result.duration = Date.now() - startTime;
+              return result;
+            }
+
+            // Filter out denied paths and continue with allowed ones
+            console.log('[PhasedExecutor] User chose to skip protected paths - continuing with allowed paths');
+            plan = {
+              ...plan,
+              files: plan.files.filter(f => !deniedPaths.some(d => d.path === f.path))
+            };
+          } else {
+            // Non-critical denials (e.g., outside project root) - filter and continue
+            console.log('[PhasedExecutor] Filtering out denied paths and continuing');
+            plan = {
+              ...plan,
+              files: plan.files.filter(f => !deniedPaths.some(d => d.path === f.path))
+            };
+          }
+        } else {
+          console.log('[PhasedExecutor] All paths allowed - proceeding with execution');
+        }
+      }
+
+      // Phase 5: EXECUTOR (Local) - CREATE FILES FIRST
+      // Files must exist on disk before validation and fix loop can operate on them
+      console.log('[PhasedExecutor] === Phase 5: EXECUTOR (Local) ===');
+      const executor = createPlanExecutor(this.codebasePath, this.dryRun);
+      // Create a minimal validation for initial execution (no blockers yet)
+      const initialValidation: ValidationResult = {
+        approved: true,
+        tests: [],
+        securityIssues: [],
+        performanceIssues: [],
+        requiredMods: [],
+        blockers: [],
+        compressedToken: 'VAL|initial|pre-validation'
+      };
+      let execution = await executor.execute(plan, initialValidation);
+      result.phases.execution = execution;
+      console.log(`[PhasedExecutor] EXEC: ${execution.compressedToken}`);
+
+      // Log Phase 5 completion
+      logger.logResponse(
+        'PHASE_5_COMPLETE',
+        `Files: ${plan.files.map(f => f.path).join(', ')}`,
+        JSON.stringify({
+          phase: 'EXECUTOR',
+          compressedToken: execution.compressedToken,
+          success: execution.success,
+          filesWritten: execution.filesWritten,
+          filesModified: execution.filesModified,
+          filesDeleted: execution.filesDeleted,
+          commandsRun: execution.commandsRun,
+          errors: execution.errors
+        }, null, 2),
+        execution.filesWritten + execution.filesModified,
+        plan.files.map(f => ({ path: f.path, action: f.action })),
+        'executor'
+      );
+
+      // Check for abort after Phase 5
+      this.checkAborted();
+
+      // === GUARDRAIL: CODE REVIEW (OWASP Security Scanning) ===
+      // After files are written, scan for security vulnerabilities
+      let securityBlockers: string[] = [];
+      if (this.guardrailsEnabled && this.codeReviewer && plan.files.length > 0) {
+        console.log('[PhasedExecutor] === GUARDRAIL: OWASP Security Scan ===');
+        try {
+          // Get file paths that were written
+          const filePaths = plan.files
+            .filter(f => f.action === 'create' || f.action === 'modify')
+            .map(f => f.path);
+
+          if (filePaths.length > 0) {
+            const reviewRequest: ReviewRequest = {
+              id: randomUUID(),  // Required unique ID
+              files: filePaths,
+              type: 'security',  // Focus on security scanning
+              description: `Security scan for: ${(task as CodexTask).description || 'phased execution'}`
+            };
+
+            const reviewResult = await this.codeReviewer.review(reviewRequest);
+
+            // Log the review result
+            logger.logResponse(
+              'GUARDRAIL_CODE_REVIEW',
+              `Security scan of ${filePaths.length} files`,
+              JSON.stringify({
+                status: reviewResult.status,
+                totalIssues: reviewResult.issues.length,
+                securityFindings: reviewResult.security.length,
+                criticalIssues: reviewResult.issues.filter(i => i.severity === 'critical').length,
+                highIssues: reviewResult.issues.filter(i => i.severity === 'high').length,
+                score: reviewResult.summary.score
+              }, null, 2),
+              reviewResult.security.length
+            );
+
+            // Check for critical security issues
+            const criticalIssues = reviewResult.security.filter(s => s.severity === 'critical');
+            const highIssues = reviewResult.security.filter(s => s.severity === 'high');
+
+            if (criticalIssues.length > 0) {
+              console.log(`[PhasedExecutor] CRITICAL: ${criticalIssues.length} critical security issues found!`);
+
+              // Add to blockers for fix loop
+              securityBlockers = criticalIssues.map(issue =>
+                `SECURITY [${issue.type}]: ${issue.description} in ${issue.file}:${issue.line}`
+              );
+
+              // Log critical findings
+              for (const issue of criticalIssues) {
+                console.log(`[PhasedExecutor]   - ${issue.type}: ${issue.description} (${issue.file}:${issue.line})`);
+              }
+            }
+
+            if (highIssues.length > 0) {
+              console.log(`[PhasedExecutor] WARNING: ${highIssues.length} high-severity security issues found`);
+              // High issues are logged but not blocking
+              for (const issue of highIssues) {
+                console.log(`[PhasedExecutor]   - ${issue.type}: ${issue.description} (${issue.file}:${issue.line})`);
+              }
+            }
+
+            if (criticalIssues.length === 0 && highIssues.length === 0) {
+              console.log('[PhasedExecutor] Security scan passed - no critical/high issues found');
+            }
+          } else {
+            console.log('[PhasedExecutor] No files to scan for security');
+          }
+        } catch (error) {
+          console.warn('[PhasedExecutor] Security scan failed, continuing:', error);
+        }
+      }
+
+      // Phase 4: VALIDATOR (complexity-based model) - VALIDATE CREATED FILES
       const validatorModel = modelSelector.selectForPhase('validator', complexity);
       const validatorModelName = modelSelector.getModelName(validatorModel);
       console.log(`[PhasedExecutor] === Phase 4: VALIDATOR (${validatorModelName}) ===`);
@@ -544,109 +977,78 @@ export class PhasedExecutor {
         'validator'
       );
 
-      if (!validation.approved) {
-        console.warn('[PhasedExecutor] Validation rejected plan');
+      // Check for abort after Phase 4
+      this.checkAborted();
 
-        // If blockers or required modifications exist, try to fix them via the fix loop
-        if (validation.blockers.length > 0 || validation.requiredMods.length > 0) {
-          console.log(`[PhasedExecutor] Validation issues: ${validation.blockers.join(', ')}`);
-          console.log(`[PhasedExecutor] Required mods: ${validation.requiredMods.length}`);
+      // Phase 6: FIX LOOP (if execution failed OR validation has issues OR security blockers)
+      // Now files exist on disk, so fix loop can modify them
+      const needsFixLoop = !execution.success ||
+        !validation.approved ||
+        validation.blockers.length > 0 ||
+        validation.requiredMods.length > 0 ||
+        securityBlockers.length > 0;  // GUARDRAIL: Include security issues
 
-          // Create a synthetic "failed execution" to trigger fix loop
-          const syntheticExecution: ExecutionResult = {
-            success: false,
-            filesWritten: 0,
-            filesModified: 0,
-            filesDeleted: 0,
-            commandsRun: 0,
-            errors: [
-              ...validation.blockers.map(b => ({
-                type: 'file' as const,
-                operation: 'validation',
-                path: 'plan',
-                message: `Validation blocker: ${b}`
-              })),
-              ...validation.requiredMods.map(m => ({
-                type: 'file' as const,
-                operation: 'validation',
-                path: m.path,
-                message: `Required modification: ${m.change}`
-              }))
-            ],
-            compressedToken: `EXEC|ok:0|val_blockers:${validation.blockers.length}|req_mods:${validation.requiredMods.length}`
-          };
+      if (needsFixLoop) {
+        console.log('[PhasedExecutor] === Phase 6: FIX LOOP ===');
 
-          // Run fix loop to address validation issues
-          console.log('[PhasedExecutor] === Phase 6: FIX LOOP (validation issues) ===');
-          const fixResult = await this.runFixLoop(
-            task,
-            context,
-            design,
-            plan,
-            syntheticExecution,
-            result,
-            validation.blockers  // Pass blockers to fix loop
-          );
+        // Combine execution errors with validation issues AND security blockers
+        const combinedExecution: ExecutionResult = {
+          ...execution,
+          success: false,
+          errors: [
+            ...execution.errors,
+            ...validation.blockers.map(b => ({
+              type: 'file' as const,
+              operation: 'validation',
+              path: 'plan',
+              message: `Validation blocker: ${b}`
+            })),
+            ...validation.requiredMods.map(m => ({
+              type: 'file' as const,
+              operation: 'validation',
+              path: m.path,
+              message: `Required modification: ${m.change}`
+            })),
+            // GUARDRAIL: Add security blockers to errors for fix loop
+            ...securityBlockers.map(s => ({
+              type: 'file' as const,
+              operation: 'security',
+              path: 'security_scan',
+              message: s
+            }))
+          ],
+          compressedToken: execution.success
+            ? `EXEC|ok:${execution.filesWritten}|val_blockers:${validation.blockers.length}|req_mods:${validation.requiredMods.length}|sec_blockers:${securityBlockers.length}`
+            : execution.compressedToken
+        };
 
-          if (fixResult && fixResult.success) {
-            result.phases.execution = fixResult;
-            result.success = true;
-            result.duration = Date.now() - startTime;
-            await this.recordLearning(task, result);
-            return result;
-          }
+        // Combine all blockers for fix loop context
+        const allBlockers = [...validation.blockers, ...securityBlockers];
 
-          // Fix loop failed - capture issues in report but DO NOT block execution
+        const fixResult = await this.runFixLoop(
+          task,
+          context,
+          design,
+          plan,
+          combinedExecution,
+          result,
+          allBlockers  // Pass ALL blockers including security to fix loop
+        );
+
+        if (fixResult) {
+          result.phases.execution = fixResult;
+          execution = fixResult;
+        }
+
+        // If fix loop couldn't resolve validation issues, capture in report
+        if (!execution.success || (!validation.approved && validation.blockers.length > 0)) {
           result.validationReport = {
             issues: [...validation.securityIssues, ...validation.performanceIssues],
             unfixedBlockers: validation.blockers,
             requiredMods: validation.requiredMods
           };
-          console.warn('[PhasedExecutor] Validation issues could not be fixed - continuing with execution');
+          console.warn('[PhasedExecutor] Some validation issues could not be fixed');
           console.warn(`[PhasedExecutor] Review required: ${validation.blockers.join(', ')}`);
-          // DO NOT return - fall through to Phase 5
-        }
-      }
-
-      // Check for abort after Phase 4
-      this.checkAborted();
-
-      // Phase 5: EXECUTOR (Local)
-      console.log('[PhasedExecutor] === Phase 5: EXECUTOR (Local) ===');
-      const executor = createPlanExecutor(this.codebasePath, this.dryRun);
-      let execution = await executor.execute(plan, validation);
-      result.phases.execution = execution;
-      console.log(`[PhasedExecutor] EXEC: ${execution.compressedToken}`);
-
-      // Log Phase 5 completion
-      logger.logResponse(
-        'PHASE_5_COMPLETE',
-        `Files: ${plan.files.map(f => f.path).join(', ')}`,
-        JSON.stringify({
-          phase: 'EXECUTOR',
-          compressedToken: execution.compressedToken,
-          success: execution.success,
-          filesWritten: execution.filesWritten,
-          filesModified: execution.filesModified,
-          filesDeleted: execution.filesDeleted,
-          commandsRun: execution.commandsRun,
-          errors: execution.errors
-        }, null, 2),
-        execution.filesWritten + execution.filesModified,
-        plan.files.map(f => ({ path: f.path, action: f.action })),
-        'executor'
-      );
-
-      // Check for abort after Phase 5
-      this.checkAborted();
-
-      // Phase 6: FIX LOOP (if needed)
-      if (!execution.success) {
-        console.log('[PhasedExecutor] === Phase 6: FIX LOOP ===');
-        const fixResult = await this.runFixLoop(task, context, design, plan, execution, result);
-        if (fixResult) {
-          result.phases.execution = fixResult;
-          execution = fixResult;
         }
       }
 

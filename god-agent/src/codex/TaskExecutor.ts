@@ -2404,8 +2404,26 @@ Summary: ${result.summary}`;
         this.phasedExecutor.setCommunicationManager(this.communications);
       }
     }
+
+    // === WIRE GUARDRAILS INTO PHASED EXECUTOR ===
+    // Pass the same guardrail components that TaskExecutor has to PhasedExecutor
+    if (this.collaborativePartner) {
+      this.phasedExecutor.setCollaborativePartner(this.collaborativePartner);
+    }
+    if (this.codeReviewer) {
+      this.phasedExecutor.setCodeReviewer(this.codeReviewer);
+    }
+    // Create and wire ContainmentManager for PhasedExecutor
+    // Note: CollaborativePartner already has a ContainmentManager, but we also create one
+    // directly for PhasedExecutor to ensure file permission checks are active
+    if (this.collaborativePartner) {
+      const containment = this.collaborativePartner.getContainment();
+      this.phasedExecutor.setContainmentManager(containment);
+    }
+
     this.usePhasedExecution = true;
     console.log('[TaskExecutor] Phased execution enabled (6-phase tokenized flow)');
+    console.log('[TaskExecutor] Guardrails wired: CollaborativePartner, CodeReviewer, ContainmentManager');
   }
 
   /**
@@ -2445,6 +2463,17 @@ Summary: ${result.summary}`;
         if (this.communications) {
           this.phasedExecutor.setCommunicationManager(this.communications);
         }
+      }
+
+      // === ENSURE GUARDRAILS ARE WIRED ===
+      // Wire guardrails every time to ensure they're active
+      if (this.collaborativePartner) {
+        this.phasedExecutor.setCollaborativePartner(this.collaborativePartner);
+        const containment = this.collaborativePartner.getContainment();
+        this.phasedExecutor.setContainmentManager(containment);
+      }
+      if (this.codeReviewer) {
+        this.phasedExecutor.setCodeReviewer(this.codeReviewer);
       }
 
       // Wire escalation callback to communication manager
