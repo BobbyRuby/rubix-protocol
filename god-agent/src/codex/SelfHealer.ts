@@ -13,6 +13,7 @@ import type { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js
 import type { ParsedStackTrace, StackContext, GitHistoryEntry } from '../capabilities/types.js';
 import { FailureMemoryService } from '../failure/FailureMemoryService.js';
 import type { FailureQueryResult } from '../failure/types.js';
+import type { ReflexionService, ReflectionContext } from '../reflexion/index.js';
 import {
   type Subtask,
   type SubtaskAttempt,
@@ -59,10 +60,16 @@ export class SelfHealer {
   private engine: MemoryEngine;
   private capabilities: CapabilitiesManager | undefined;
   private failureService: FailureMemoryService;
+  private reflexionService: ReflexionService | undefined;
 
-  constructor(engine: MemoryEngine, capabilities?: CapabilitiesManager) {
+  constructor(
+    engine: MemoryEngine,
+    capabilities?: CapabilitiesManager,
+    reflexionService?: ReflexionService
+  ) {
     this.engine = engine;
     this.capabilities = capabilities;
+    this.reflexionService = reflexionService;
     this.failureService = new FailureMemoryService(engine);
   }
 
@@ -81,10 +88,24 @@ export class SelfHealer {
   }
 
   /**
+   * Set the reflexion service (for dependency injection)
+   */
+  setReflexionService(service: ReflexionService): void {
+    this.reflexionService = service;
+  }
+
+  /**
+   * Get the reflexion service
+   */
+  getReflexionService(): ReflexionService | undefined {
+    return this.reflexionService;
+  }
+
+  /**
    * Analyze a failure and suggest a healing approach
    */
   async analyze(context: ExecutionContext): Promise<HealingAnalysis> {
-    const { subtask, attempt, previousAttempts } = context;
+    const { task, subtask, attempt, previousAttempts } = context;
 
     // Classify the error
     const errorPattern = this.classifyError(attempt.error || '', attempt.consoleErrors || []);
@@ -100,6 +121,61 @@ export class SelfHealer {
       attempt.error || '',
       attempt.consoleErrors || []
     );
+
+    // Apply lessons from past reflections (Verbal Reflexion)
+    let reflexionLessons: string[] = [];
+    if (this.reflexionService) {
+      try {
+        reflexionLessons = await this.reflexionService.applyLessons(
+          task.description,
+          subtask.description
+        );
+        if (reflexionLessons.length > 0) {
+          enhancedAnalysis.suggestions.push(
+            `Lessons from past reflections: ${reflexionLessons.slice(0, 3).join('; ')}`
+          );
+        }
+      } catch {
+        // Ignore reflexion errors
+      }
+    }
+
+    // Generate verbal reflection for attempts > 1 (learn from failure)
+    if (this.reflexionService && attempt.attemptNumber > 1) {
+      try {
+        const reflectionContext: ReflectionContext = {
+          failure: {
+            id: `${task.id}-${subtask.id}-${attempt.attemptNumber}`,
+            taskId: task.id,
+            subtaskId: subtask.id,
+            attemptNumber: attempt.attemptNumber,
+            approach: attempt.approach,
+            error: attempt.error || 'Unknown error',
+            errorType: errorPattern.type,
+            consoleErrors: attempt.consoleErrors,
+            context: subtask.description
+          },
+          taskDescription: task.description,
+          subtaskDescription: subtask.description,
+          previousAttempts: previousAttempts.map(a => ({
+            attemptNumber: a.attemptNumber,
+            approach: a.approach,
+            error: a.error || 'Unknown error',
+            outcome: 'failed' as const
+          })),
+          consoleOutput: attempt.consoleErrors
+        };
+
+        // Generate reflection asynchronously (don't block healing)
+        this.reflexionService.generateReflection(reflectionContext).then(reflection => {
+          if (reflection) {
+            this.reflexionService!.storeReflection(reflection).catch(() => {});
+          }
+        }).catch(() => {});
+      } catch {
+        // Ignore reflexion errors
+      }
+    }
 
     // Check if this is a fundamental blocker
     if (this.isFundamentalBlocker(errorPattern, previousAttempts)) {

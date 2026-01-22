@@ -52,6 +52,12 @@ import { SelfKnowledgeBootstrap } from './bootstrap/SelfKnowledgeBootstrap.js';
 import { SelfKnowledgeCompressor } from './prompts/SelfKnowledgeCompressor.js';
 import { createRuntimeContext } from './context/RuntimeContext.js';
 import { getSanitizer } from './core/OutputSanitizer.js';
+import { ReflexionService } from './reflexion/index.js';
+import type { ReflexionStats, ReflectionContext } from './reflexion/index.js';
+import { AgentCardGenerator } from './discovery/index.js';
+import type { AgentCard } from './discovery/index.js';
+import { PostExecGuardian } from './guardian/index.js';
+import type { AuditResult, AuditContext } from './guardian/index.js';
 
 // ==========================================
 // Tool Input Schemas (Zod)
@@ -708,6 +714,49 @@ const FailureQueryInputSchema = z.object({
 const FailureResolveInputSchema = z.object({
   failureId: z.string().describe('Failure ID to resolve'),
   approach: z.string().describe('Approach that resolved the failure')
+});
+
+// ==========================================
+// Reflexion Tool Input Schemas
+// ==========================================
+
+const ReflexionQueryInputSchema = z.object({
+  query: z.string().describe('Search query for past reflections'),
+  topK: z.number().min(1).max(50).optional().describe('Number of results (default: 10)'),
+  minSimilarity: z.number().min(0).max(1).optional().describe('Minimum similarity score (default: 0.5)')
+});
+
+const ReflexionGenerateInputSchema = z.object({
+  failureId: z.string().describe('Failure memory ID to generate reflection for'),
+  taskDescription: z.string().optional().describe('Description of the task that failed'),
+  subtaskDescription: z.string().optional().describe('Description of the subtask that failed'),
+  previousAttempts: z.array(z.object({
+    approach: z.string(),
+    error: z.string()
+  })).optional().describe('Previous failed attempts')
+});
+
+// ==========================================
+// Agent Card Tool Input Schemas
+// ==========================================
+
+const AgentCardInputSchema = z.object({
+  format: z.enum(['full', 'summary', 'capabilities']).optional()
+    .describe('Output format (default: full)'),
+  includeSchemas: z.boolean().optional()
+    .describe('Include JSON schemas for inputs/outputs (default: false)')
+});
+
+// ==========================================
+// Guardian Tool Input Schemas
+// ==========================================
+
+const GuardianAuditInputSchema = z.object({
+  files: z.array(z.string()).describe('Files to audit'),
+  auditTypes: z.array(z.enum(['security', 'regression', 'quality', 'types', 'lint']))
+    .optional()
+    .describe('Types of audits to run (default: all)'),
+  codebaseRoot: z.string().optional().describe('Codebase root directory')
 });
 
 // ==========================================
@@ -3614,6 +3663,134 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {}
     }
+  },
+  // Reflexion Tools (Verbal Reflexion System)
+  {
+    name: 'god_reflexion_query',
+    description: `Search past reflections for lessons learned.
+
+    Reflexions contain Claude-generated "why did this fail" analysis:
+    - Root cause identification
+    - Generalizable lessons
+    - Recommended approaches for similar situations
+
+    Use before attempting a fix to learn from past failures.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query for past reflections' },
+        topK: { type: 'number', minimum: 1, maximum: 50, description: 'Number of results (default: 10)' },
+        minSimilarity: { type: 'number', minimum: 0, maximum: 1, description: 'Minimum similarity score (default: 0.5)' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'god_reflexion_generate',
+    description: `Manually trigger reflection generation for a failure.
+
+    Generates Claude-powered verbal analysis of WHY a failure occurred:
+    - Root cause analysis
+    - What should have been done differently
+    - Lessons for future similar situations
+
+    Normally called automatically by SelfHealer, but can be triggered manually.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        failureId: { type: 'string', description: 'Failure memory ID to generate reflection for' },
+        taskDescription: { type: 'string', description: 'Description of the task that failed' },
+        subtaskDescription: { type: 'string', description: 'Description of the subtask that failed' },
+        previousAttempts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              approach: { type: 'string' },
+              error: { type: 'string' }
+            }
+          },
+          description: 'Previous failed attempts'
+        }
+      },
+      required: ['failureId']
+    }
+  },
+  {
+    name: 'god_reflexion_stats',
+    description: `Get statistics about the reflexion system.
+
+    Shows:
+    - Total reflections generated
+    - Root cause category breakdown
+    - Average tokens used per reflection
+    - Lessons applied count`,
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  // Agent Card Tool (A2A Discovery)
+  {
+    name: 'god_agent_card',
+    description: `Get the RUBIX Agent Card for A2A capability discovery.
+
+    Returns a structured description of all RUBIX capabilities including:
+    - Tool definitions with input/output schemas
+    - Estimated token costs per operation
+    - Capability categories and tags
+
+    Useful for agent-to-agent communication and capability negotiation.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: {
+          type: 'string',
+          enum: ['full', 'summary', 'capabilities'],
+          description: 'Output format (default: full)'
+        },
+        includeSchemas: {
+          type: 'boolean',
+          description: 'Include JSON schemas for inputs/outputs (default: false)'
+        }
+      }
+    }
+  },
+  // Guardian Tool (Post-Execution Audit)
+  {
+    name: 'god_guardian_audit',
+    description: `Manually trigger post-execution audit on files.
+
+    Runs comprehensive audits on specified files:
+    - Security scan (OWASP Top 10)
+    - Type checking (TypeScript)
+    - Lint checking (ESLint)
+    - Quality analysis
+
+    Returns issues with severity and rollback recommendations.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Files to audit'
+        },
+        auditTypes: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['security', 'regression', 'quality', 'types', 'lint']
+          },
+          description: 'Types of audits to run (default: all)'
+        },
+        codebaseRoot: {
+          type: 'string',
+          description: 'Codebase root directory'
+        }
+      },
+      required: ['files']
+    }
   }
 ];
 
@@ -3672,6 +3849,12 @@ class GodAgentMCPServer {
   // Automated memory recall (centralized brain)
   private autoRecall: AutoRecall;
   private _currentRecallResult: RecallResult | null = null;
+  // Reflexion system (verbal failure analysis)
+  private reflexionService: ReflexionService | null = null;
+  // Agent card (cached)
+  private agentCard: AgentCard | null = null;
+  // Post-execution guardian
+  private postExecGuardian: PostExecGuardian | null = null;
 
   constructor() {
     this.dataDir = process.env.GOD_AGENT_DATA_DIR || './data';
@@ -3860,6 +4043,36 @@ class GodAgentMCPServer {
       });
     }
     return this.discoveryEngine;
+  }
+
+  private async getReflexionService(): Promise<ReflexionService> {
+    if (!this.reflexionService) {
+      const engine = await this.getEngine();
+      const llmConfig = getCodexLLMConfig();
+      this.reflexionService = new ReflexionService(
+        engine,
+        llmConfig.apiKey || '',
+        { model: llmConfig.model }
+      );
+    }
+    return this.reflexionService;
+  }
+
+  private getAgentCard(_includeSchemas: boolean = false): AgentCard {
+    // Regenerate if not cached or schemas option changed
+    if (!this.agentCard) {
+      this.agentCard = AgentCardGenerator.fromMCPTools(TOOLS as any);
+    }
+    return this.agentCard;
+  }
+
+  private async getPostExecGuardian(): Promise<PostExecGuardian> {
+    if (!this.postExecGuardian) {
+      const reviewer = await this.getReviewer();
+      const caps = await this.getCapabilities();
+      this.postExecGuardian = new PostExecGuardian(process.cwd(), {}, reviewer, caps);
+    }
+    return this.postExecGuardian;
   }
 
   private setupHandlers(): void {
@@ -4200,6 +4413,22 @@ class GodAgentMCPServer {
             return await this.handleAutoRecallConfig(args);
           case 'god_autorecall_status':
             return await this.handleAutoRecallStatus();
+
+          // Reflexion Tools (Verbal Reflexion System)
+          case 'god_reflexion_query':
+            return await this.handleReflexionQuery(args);
+          case 'god_reflexion_generate':
+            return await this.handleReflexionGenerate(args);
+          case 'god_reflexion_stats':
+            return await this.handleReflexionStats();
+
+          // Agent Card Tool (A2A Discovery)
+          case 'god_agent_card':
+            return await this.handleAgentCard(args);
+
+          // Guardian Tool (Post-Execution Audit)
+          case 'god_guardian_audit':
+            return await this.handleGuardianAudit(args);
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -10075,6 +10304,333 @@ god_comms_setup mode="set" channel="email" config={
         }, null, 2)
       }]
     };
+  }
+
+  // ===========================================================================
+  // REFLEXION HANDLERS (Verbal Reflexion System)
+  // ===========================================================================
+
+  private async handleReflexionQuery(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = ReflexionQueryInputSchema.parse(args);
+    const reflexion = await this.getReflexionService();
+
+    try {
+      const result = await reflexion.queryReflections({
+        query: input.query,
+        topK: input.topK,
+        minSimilarity: input.minSimilarity
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            reflectionsFound: result.reflections.length,
+            reflections: result.reflections.map(r => ({
+              id: r.reflection.id,
+              failureId: r.reflection.failureId,
+              whyItFailed: r.reflection.whyItFailed.substring(0, 300) + (r.reflection.whyItFailed.length > 300 ? '...' : ''),
+              rootCause: r.reflection.rootCause,
+              lesson: r.reflection.lesson,
+              nextTimeApproach: r.reflection.nextTimeApproach,
+              generatedAt: r.reflection.generatedAt,
+              similarity: r.similarity
+            })),
+            lessons: result.reflections.slice(0, 3).map(r => r.reflection.lesson),
+            applicableLessons: result.applicableLessons,
+            suggestedApproaches: result.suggestedApproaches
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleReflexionGenerate(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = ReflexionGenerateInputSchema.parse(args);
+    const reflexion = await this.getReflexionService();
+    const failureService = await this.getFailureService();
+
+    try {
+      // First, try to find the failure in memory
+      const failures = await failureService.queryFailures({
+        error: input.failureId, // Use as search query
+        topK: 1
+      });
+
+      if (failures.similarFailures.length === 0) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Failure not found. Provide a valid failure ID or error message.'
+            }, null, 2)
+          }]
+        };
+      }
+
+      const failure = failures.similarFailures[0];
+
+      // Build reflection context
+      const context: ReflectionContext = {
+        failure: {
+          id: failure.id,
+          taskId: failure.taskId,
+          subtaskId: failure.subtaskId,
+          attemptNumber: failure.attemptNumber,
+          approach: failure.approach,
+          error: failure.error,
+          errorType: failure.errorType,
+          context: failure.context
+        },
+        taskDescription: input.taskDescription || `Task ${failure.taskId}`,
+        subtaskDescription: input.subtaskDescription || `Subtask ${failure.subtaskId}`,
+        previousAttempts: input.previousAttempts?.map((a, idx) => ({
+          attemptNumber: idx + 1,
+          approach: a.approach,
+          error: a.error,
+          outcome: 'failed' as const
+        }))
+      };
+
+      // Generate reflection
+      const reflection = await reflexion.generateReflection(context);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            reflection: {
+              id: reflection.id,
+              failureId: reflection.failureId,
+              whyItFailed: reflection.whyItFailed,
+              rootCause: reflection.rootCause,
+              lesson: reflection.lesson,
+              nextTimeApproach: reflection.nextTimeApproach,
+              tokensUsed: reflection.tokensUsed
+            },
+            message: 'Reflection generated and stored in memory'
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  private async handleReflexionStats(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const reflexion = await this.getReflexionService();
+
+    try {
+      const stats: ReflexionStats = await reflexion.getStats();
+
+      // Find most common root cause
+      const rootCauseEntries = Object.entries(stats.byRootCause);
+      const mostCommonRootCause = rootCauseEntries.length > 0
+        ? rootCauseEntries.sort((a, b) => b[1] - a[1])[0]?.[0]
+        : 'none';
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            stats: {
+              totalReflections: stats.totalReflections,
+              byRootCause: stats.byRootCause,
+              avgConfidence: stats.avgConfidence,
+              totalTokensUsed: stats.totalTokensUsed,
+              topLessons: stats.topLessons,
+              resolutionRate: `${(stats.resolutionRate * 100).toFixed(1)}%`
+            },
+            insights: [
+              stats.totalReflections > 0 ?
+                `Most common root cause: ${mostCommonRootCause}` :
+                null,
+              stats.topLessons.length > 0 ?
+                `Top lesson: "${stats.topLessons[0]?.lesson}" (${stats.topLessons[0]?.count} occurrences)` :
+                null,
+              stats.resolutionRate > 0 ?
+                `${(stats.resolutionRate * 100).toFixed(0)}% of reflections led to successful resolution` :
+                null
+            ].filter(Boolean)
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  // ===========================================================================
+  // AGENT CARD HANDLER (A2A Discovery)
+  // ===========================================================================
+
+  private async handleAgentCard(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = AgentCardInputSchema.parse(args);
+
+    try {
+      const card = this.getAgentCard(input.includeSchemas);
+
+      // Format based on requested format
+      let output: any;
+
+      switch (input.format) {
+        case 'summary':
+          output = {
+            id: card.id,
+            name: card.name,
+            version: card.version,
+            description: card.description,
+            capabilityCount: card.capabilities.length,
+            categories: [...new Set(card.capabilities.map(c => c.category))],
+            provider: card.provider
+          };
+          break;
+
+        case 'capabilities':
+          output = {
+            capabilities: card.capabilities.map(c => ({
+              name: c.name,
+              description: c.description.substring(0, 100) + (c.description.length > 100 ? '...' : ''),
+              category: c.category,
+              complexity: c.complexity,
+              estimatedTokens: c.estimatedTokens
+            }))
+          };
+          break;
+
+        case 'full':
+        default:
+          output = input.includeSchemas ? card : {
+            ...card,
+            capabilities: card.capabilities.map(c => ({
+              name: c.name,
+              description: c.description,
+              category: c.category,
+              complexity: c.complexity,
+              estimatedTokens: c.estimatedTokens,
+              tags: c.tags
+            }))
+          };
+          break;
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            agentCard: output
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  // ===========================================================================
+  // GUARDIAN HANDLER (Post-Execution Audit)
+  // ===========================================================================
+
+  private async handleGuardianAudit(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = GuardianAuditInputSchema.parse(args);
+    const guardian = await this.getPostExecGuardian();
+
+    try {
+      // Build audit context
+      const auditContext: AuditContext = {
+        taskId: 'manual-audit',
+        subtaskId: 'manual',
+        filesWritten: [],
+        filesModified: input.files,
+        filesDeleted: [],
+        workingDir: input.codebaseRoot || process.cwd()
+      };
+
+      // Run audit
+      const result: AuditResult = await guardian.audit(auditContext);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            audit: {
+              passed: result.passed,
+              rollbackRequired: result.rollbackRequired,
+              rollbackReason: result.rollbackReason,
+              filesAudited: result.filesAudited,
+              filesModified: result.filesModified,
+              auditDurationMs: result.auditDurationMs,
+              phasesCompleted: result.phasesCompleted,
+              issueCount: result.issues.length,
+              issues: result.issues.map(i => ({
+                severity: i.severity,
+                category: i.category,
+                file: i.file,
+                line: i.line,
+                message: i.message.substring(0, 200),
+                suggestion: i.suggestion
+              })),
+              summary: result.summary
+            },
+            recommendation: result.rollbackRequired
+              ? `ROLLBACK RECOMMENDED: ${result.rollbackReason}`
+              : result.passed
+                ? 'All audits passed'
+                : `${result.issues.filter(i => i.severity === 'critical' || i.severity === 'high').length} critical/high issues found`
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }, null, 2)
+        }]
+      };
+    }
   }
 
   async run(): Promise<void> {

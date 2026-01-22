@@ -375,3 +375,73 @@ export type {
   RecordResolutionInput,
   FeedbackQuality
 } from './failure/index.js';
+
+// Reflexion exports (Verbal Reflexion System)
+export {
+  ReflexionService,
+  DEFAULT_REFLEXION_CONFIG
+} from './reflexion/index.js';
+
+export type {
+  Reflection,
+  ReflectionQuery,
+  ReflectionQueryResult,
+  ReflectionContext,
+  FailureInput,
+  ReflexionStats,
+  ReflexionConfig,
+  RootCauseCategory,
+  AttemptSummary
+} from './reflexion/index.js';
+
+// Discovery exports (Agent Cards)
+export {
+  AgentCardGenerator
+} from './discovery/index.js';
+
+export type {
+  AgentCard,
+  Capability,
+  CapabilityCategory,
+  JSONSchema,
+  EstimatedTokens,
+  CapabilityExample,
+  Endpoint,
+  AuthMethod,
+  Constraint,
+  CostModel,
+  Cost,
+  TokenCosts,
+  CostTier,
+  AgentProvider,
+  AgentMetadata,
+  ModelInfo,
+  ValidationResult,
+  ValidationError,
+  ValidationWarning,
+  MCPTool,
+  GeneratorOptions
+} from './discovery/index.js';
+
+// Guardian exports (Post-Execution Guardian)
+export {
+  PostExecGuardian,
+  DEFAULT_GUARDIAN_CONFIG
+} from './guardian/index.js';
+
+export type {
+  AuditResult,
+  AuditIssue,
+  AuditSeverity,
+  AuditCategory,
+  AuditSummary,
+  AuditPhase,
+  AuditContext,
+  RollbackResult,
+  RollbackMethod,
+  PreWriteSnapshot,
+  SnapshotFile,
+  GuardianConfig,
+  GuardianStats,
+  SecurityPattern
+} from './guardian/index.js';

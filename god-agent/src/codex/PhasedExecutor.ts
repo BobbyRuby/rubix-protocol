@@ -49,6 +49,10 @@ import { CollaborativePartner } from './CollaborativePartner.js';
 import { ContainmentManager } from './ContainmentManager.js';
 import { CodeReviewer } from '../review/CodeReviewer.js';
 import type { ReviewRequest, SecurityFinding } from '../review/types.js';
+// Enhancement imports
+import type { ReflexionService } from '../reflexion/index.js';
+import { PostExecGuardian } from '../guardian/index.js';
+import type { AuditContext, AuditResult } from '../guardian/index.js';
 // Security: Output sanitization
 import { getSanitizer } from '../core/OutputSanitizer.js';
 
@@ -126,6 +130,12 @@ export class PhasedExecutor {
   /** Enable/disable guardrails (default: true) */
   private guardrailsEnabled: boolean = true;
 
+  // === ENHANCEMENT COMPONENTS ===
+  private reflexionService?: ReflexionService;
+  private postExecGuardian?: PostExecGuardian;
+  /** Enable/disable post-execution audit (default: true) */
+  private postAuditEnabled: boolean = true;
+
   constructor(codebasePath: string, dryRun = false, engine?: MemoryEngine, comms?: CommunicationManager) {
     this.codebasePath = codebasePath;
     this.dryRun = dryRun;
@@ -201,6 +211,43 @@ export class PhasedExecutor {
       collaborativePartner: !!this.collaborativePartner,
       containment: !!this.containmentManager,
       codeReviewer: !!this.codeReviewer
+    };
+  }
+
+  // === ENHANCEMENT SETTERS ===
+
+  /**
+   * Set ReflexionService for verbal failure analysis.
+   */
+  setReflexionService(service: ReflexionService): void {
+    this.reflexionService = service;
+    console.log('[PhasedExecutor] ReflexionService wired - verbal failure analysis ACTIVE');
+  }
+
+  /**
+   * Set PostExecGuardian for post-execution auditing.
+   */
+  setPostExecGuardian(guardian: PostExecGuardian): void {
+    this.postExecGuardian = guardian;
+    console.log('[PhasedExecutor] PostExecGuardian wired - post-execution auditing ACTIVE');
+  }
+
+  /**
+   * Enable or disable post-execution audit.
+   */
+  setPostAuditEnabled(enabled: boolean): void {
+    this.postAuditEnabled = enabled;
+    console.log(`[PhasedExecutor] Post-execution audit ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  }
+
+  /**
+   * Get enhancement status.
+   */
+  getEnhancementStatus(): { reflexion: boolean; postAudit: boolean; postAuditEnabled: boolean } {
+    return {
+      reflexion: !!this.reflexionService,
+      postAudit: !!this.postExecGuardian,
+      postAuditEnabled: this.postAuditEnabled
     };
   }
 
@@ -835,6 +882,25 @@ These paths are protected because they may contain sensitive data (credentials, 
       // Phase 5: EXECUTOR (Local) - CREATE FILES FIRST
       // Files must exist on disk before validation and fix loop can operate on them
       console.log('[PhasedExecutor] === Phase 5: EXECUTOR (Local) ===');
+
+      // === POST_AUDIT: Create snapshot BEFORE writing files ===
+      // This enables rollback if post-execution audit finds critical issues
+      let preWriteSnapshot: Awaited<ReturnType<PostExecGuardian['createSnapshot']>> | undefined;
+      if (this.postAuditEnabled && this.postExecGuardian && plan.files.length > 0) {
+        console.log('[PhasedExecutor] Creating pre-write snapshot for rollback capability');
+        try {
+          const filePaths = plan.files.map(f => f.path);
+          preWriteSnapshot = await this.postExecGuardian.createSnapshot(
+            taskId,
+            `subtask_${Date.now()}`,
+            filePaths
+          );
+          console.log(`[PhasedExecutor] Snapshot created: ${preWriteSnapshot.id} (${preWriteSnapshot.files.length} files)`);
+        } catch (error) {
+          console.warn('[PhasedExecutor] Failed to create snapshot:', error);
+        }
+      }
+
       const executor = createPlanExecutor(this.codebasePath, this.dryRun);
       // Create a minimal validation for initial execution (no blockers yet)
       const initialValidation: ValidationResult = {
@@ -871,6 +937,114 @@ These paths are protected because they may contain sensitive data (credentials, 
 
       // Check for abort after Phase 5
       this.checkAborted();
+
+      // === PHASE 5a: POST_AUDIT (Post-Execution Guardian) ===
+      // Run post-execution audit on written files to catch issues before validation
+      let postAuditResult: AuditResult | undefined;
+      if (this.postAuditEnabled && this.postExecGuardian && execution.success) {
+        console.log('[PhasedExecutor] === Phase 5a: POST_AUDIT (Guardian) ===');
+
+        try {
+          const auditContext: AuditContext = {
+            taskId,
+            subtaskId: `subtask_${Date.now()}`,
+            filesWritten: plan.files.filter(f => f.action === 'create').map(f => f.path),
+            filesModified: plan.files.filter(f => f.action === 'modify').map(f => f.path),
+            filesDeleted: plan.files.filter(f => f.action === 'delete').map(f => f.path),
+            snapshot: preWriteSnapshot,
+            workingDir: this.codebasePath,
+            taskDescription: 'description' in task ? task.description : undefined
+          };
+
+          postAuditResult = await this.postExecGuardian.audit(auditContext);
+
+          // Log POST_AUDIT completion
+          logger.logResponse(
+            'PHASE_5A_POST_AUDIT',
+            `Audited ${postAuditResult.filesAudited.length} files`,
+            JSON.stringify({
+              phase: 'POST_AUDIT',
+              passed: postAuditResult.passed,
+              totalIssues: postAuditResult.summary.totalIssues,
+              bySeverity: postAuditResult.summary.bySeverity,
+              rollbackRequired: postAuditResult.rollbackRequired,
+              rollbackReason: postAuditResult.rollbackReason,
+              phasesCompleted: postAuditResult.phasesCompleted,
+              auditDurationMs: postAuditResult.auditDurationMs
+            }, null, 2),
+            postAuditResult.summary.totalIssues
+          );
+
+          // Handle rollback if required
+          if (postAuditResult.rollbackRequired && preWriteSnapshot) {
+            console.log(`[PhasedExecutor] POST_AUDIT: Rollback required - ${postAuditResult.rollbackReason}`);
+
+            const rollbackResult = await this.postExecGuardian.rollback(auditContext);
+
+            if (rollbackResult.success) {
+              console.log(`[PhasedExecutor] Rollback successful: ${rollbackResult.filesRestored.length} files restored`);
+
+              // Mark execution as failed due to audit issues
+              execution = {
+                ...execution,
+                success: false,
+                errors: [
+                  ...execution.errors,
+                  {
+                    type: 'file' as const,
+                    operation: 'audit',
+                    path: 'post_audit',
+                    message: `POST_AUDIT rollback: ${postAuditResult.rollbackReason}`
+                  },
+                  ...postAuditResult.issues
+                    .filter(i => i.blocking)
+                    .map(issue => ({
+                      type: 'file' as const,
+                      operation: 'audit',
+                      path: issue.file,
+                      message: `[${issue.severity}] ${issue.category}: ${issue.message}`
+                    }))
+                ],
+                compressedToken: `EXEC|rollback:post_audit|issues:${postAuditResult.summary.totalIssues}`
+              };
+              result.phases.execution = execution;
+            } else {
+              console.warn(`[PhasedExecutor] Rollback failed: ${rollbackResult.error}`);
+              // Escalate to user
+              await this.escalateToUser(
+                taskId,
+                'POST_AUDIT Rollback Failed',
+                `Post-execution audit found critical issues but rollback failed:\n${rollbackResult.error}\n\nIssues:\n${postAuditResult.issues.slice(0, 5).map(i => `- ${i.message}`).join('\n')}`,
+                'blocked'
+              );
+            }
+          } else if (!postAuditResult.passed) {
+            // Issues found but not requiring rollback - add to execution errors for fix loop
+            console.log(`[PhasedExecutor] POST_AUDIT: ${postAuditResult.summary.totalIssues} issues found (no rollback)`);
+
+            const blockingIssues = postAuditResult.issues.filter(i => i.blocking);
+            if (blockingIssues.length > 0) {
+              execution = {
+                ...execution,
+                errors: [
+                  ...execution.errors,
+                  ...blockingIssues.map(issue => ({
+                    type: 'file' as const,
+                    operation: 'audit',
+                    path: issue.file,
+                    message: `POST_AUDIT [${issue.severity}] ${issue.category}: ${issue.message}`
+                  }))
+                ]
+              };
+              result.phases.execution = execution;
+            }
+          } else {
+            console.log('[PhasedExecutor] POST_AUDIT: All checks passed');
+          }
+        } catch (error) {
+          console.warn('[PhasedExecutor] POST_AUDIT failed, continuing:', error);
+        }
+      }
 
       // === PHASE 4a: CODE REVIEW (Deterministic OWASP Security Scanning) ===
       // SECURITY CONSOLIDATION: CodeReviewer runs BEFORE PlanValidator
