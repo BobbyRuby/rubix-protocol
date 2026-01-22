@@ -1,0 +1,789 @@
+# RUBIX PLATFORM: FLUTTER
+# VERSION: 3.x
+# FOUNDATION: Google|Dart|BSD_License
+# PHILOSOPHY: beautiful_natively_compiled|single_codebase|widget_everything
+
+==============================================================================
+HISTORY
+==============================================================================
+2015:Google>internal_project_Sky
+2017:Alpha_release>Flutter_name
+2018:v1.0>stable_release|iOS_Android
+2019:v1.5>web_support_preview
+2020:v1.22>iOS_14_support
+2021:v2.0>null_safety|web_stable|desktop_beta
+2022:v3.0>macOS_Linux_stable|Material_3
+2023:v3.10>Impeller_iOS_default|WASM
+2024:v3.19>Impeller_Android|Windows_Arm64
+
+RENDERING_ENGINE
+Skia:original_2D_graphics
+Impeller:new_engine|faster|no_shader_jank
+
+WHY_FLUTTER
++single_codebase:iOS|Android|Web|Desktop
++hot_reload:instant_updates
++60/120fps:native_performance
++widget_rich:Material|Cupertino
++custom_rendering:pixel_perfect
++Dart:easy_to_learn|productive
+
+CORE_MAINTAINERS
+Google:primary_development
+Community:packages|plugins
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+CREATE_PROJECT
+flutter create my_app
+cd my_app
+flutter run
+
+PROJECT_STRUCTURE
+my_app/
+  lib/
+    main.dart
+    screens/
+    widgets/
+    models/
+    services/
+    utils/
+  test/
+  android/
+  ios/
+  web/
+  pubspec.yaml
+
+PUBSPEC_YAML
+name: my_app
+description: My Flutter app
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.0.0
+  http: ^1.1.0
+  shared_preferences: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+  fonts:
+    - family: CustomFont
+      fonts:
+        - asset: fonts/CustomFont-Regular.ttf
+
+==============================================================================
+WIDGET_FUNDAMENTALS
+==============================================================================
+STATELESS_WIDGET
+class Greeting extends StatelessWidget {
+  final String name;
+  
+  const Greeting({super.key, required this.name});
+  
+  @override
+  Widget build(BuildContext context) {
+    return Text('Hello, $name!');
+  }
+}
+
+STATEFUL_WIDGET
+class Counter extends StatefulWidget {
+  const Counter({super.key});
+  
+  @override
+  State<Counter> createState() => _CounterState();
+}
+
+class _CounterState extends State<Counter> {
+  int _count = 0;
+  
+  void _increment() {
+    setState(() {
+      _count++;
+    });
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text('Count: $_count'),
+        ElevatedButton(
+          onPressed: _increment,
+          child: const Text('Increment'),
+        ),
+      ],
+    );
+  }
+}
+
+LIFECYCLE
+initState():called_once_on_create
+didChangeDependencies():after_initState|InheritedWidget_changes
+build():called_on_every_rebuild
+didUpdateWidget():widget_config_changed
+dispose():cleanup|cancel_subscriptions
+
+==============================================================================
+LAYOUT_WIDGETS
+==============================================================================
+CONTAINERS
+Container:box_model|padding|margin|decoration
+SizedBox:fixed_size|spacing
+Padding:add_padding_only
+Center:center_child
+
+ROW_COLUMN
+Row(
+  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  crossAxisAlignment: CrossAxisAlignment.center,
+  children: [
+    Text('Left'),
+    Text('Right'),
+  ],
+)
+
+Column(
+  mainAxisAlignment: MainAxisAlignment.center,
+  children: [
+    Text('Top'),
+    Text('Bottom'),
+  ],
+)
+
+FLEXIBLE_EXPANDED
+Row(
+  children: [
+    Expanded(flex: 2, child: Container(color: Colors.red)),
+    Expanded(flex: 1, child: Container(color: Colors.blue)),
+  ],
+)
+
+STACK_POSITIONED
+Stack(
+  children: [
+    Container(color: Colors.grey),
+    Positioned(
+      top: 10,
+      left: 10,
+      child: Text('Overlay'),
+    ),
+  ],
+)
+
+LISTVIEW
+ListView.builder(
+  itemCount: items.length,
+  itemBuilder: (context, index) {
+    return ListTile(
+      title: Text(items[index].name),
+      onTap: () => selectItem(items[index]),
+    );
+  },
+)
+
+GRIDVIEW
+GridView.builder(
+  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: 2,
+    crossAxisSpacing: 10,
+    mainAxisSpacing: 10,
+  ),
+  itemCount: items.length,
+  itemBuilder: (context, index) {
+    return Card(child: Text(items[index].name));
+  },
+)
+
+CUSTOM_SCROLL_VIEW
+CustomScrollView(
+  slivers: [
+    SliverAppBar(
+      floating: true,
+      title: Text('Title'),
+    ),
+    SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) => ListTile(title: Text('Item $index')),
+        childCount: 100,
+      ),
+    ),
+  ],
+)
+
+==============================================================================
+STYLING_PATTERNS
+==============================================================================
+MATERIAL_DESIGN
+MaterialApp(
+  theme: ThemeData(
+    useMaterial3: true,
+    colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+    textTheme: const TextTheme(
+      headlineLarge: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+    ),
+  ),
+  home: const MyHomePage(),
+)
+
+// Access theme
+final theme = Theme.of(context);
+Text('Title', style: theme.textTheme.headlineLarge);
+
+CUPERTINO_IOS
+CupertinoApp(
+  theme: const CupertinoThemeData(
+    primaryColor: CupertinoColors.systemBlue,
+  ),
+  home: const MyHomePage(),
+)
+
+DECORATION
+Container(
+  decoration: BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(12),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.1),
+        blurRadius: 10,
+        offset: const Offset(0, 4),
+      ),
+    ],
+    gradient: const LinearGradient(
+      colors: [Colors.blue, Colors.purple],
+    ),
+  ),
+  child: const Text('Styled'),
+)
+
+==============================================================================
+NAVIGATION_PATTERNS
+==============================================================================
+GO_ROUTER_RECOMMENDED
+flutter pub add go_router
+
+// router.dart
+final router = GoRouter(
+  routes: [
+    GoRoute(
+      path: '/',
+      builder: (context, state) => const HomeScreen(),
+      routes: [
+        GoRoute(
+          path: 'profile/:id',
+          builder: (context, state) {
+            final id = state.pathParameters['id']!;
+            return ProfileScreen(userId: id);
+          },
+        ),
+      ],
+    ),
+  ],
+);
+
+// main.dart
+MaterialApp.router(
+  routerConfig: router,
+)
+
+// Navigation
+context.go('/profile/123');
+context.push('/profile/123');
+context.pop();
+
+NAVIGATOR_CLASSIC
+// Push
+Navigator.push(
+  context,
+  MaterialPageRoute(builder: (context) => const DetailScreen()),
+);
+
+// Pop
+Navigator.pop(context);
+
+// Push and remove all
+Navigator.pushAndRemoveUntil(
+  context,
+  MaterialPageRoute(builder: (context) => const HomeScreen()),
+  (route) => false,
+);
+
+// Named routes
+Navigator.pushNamed(context, '/profile', arguments: {'id': 123});
+
+BOTTOM_NAVIGATION
+class MainScreen extends StatefulWidget {
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  int _currentIndex = 0;
+  
+  final _screens = [
+    const HomeScreen(),
+    const SearchScreen(),
+    const ProfileScreen(),
+  ];
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _screens[_currentIndex],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (index) {
+          setState(() => _currentIndex = index);
+        },
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
+          NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
+        ],
+      ),
+    );
+  }
+}
+
+DEEP_LINKING
+// android/app/src/main/AndroidManifest.xml
+<intent-filter>
+  <action android:name="android.intent.action.VIEW"/>
+  <category android:name="android.intent.category.DEFAULT"/>
+  <category android:name="android.intent.category.BROWSABLE"/>
+  <data android:scheme="myapp" android:host="example.com"/>
+</intent-filter>
+
+==============================================================================
+STATE_MANAGEMENT
+==============================================================================
+PROVIDER_SIMPLE
+flutter pub add provider
+
+// Create
+class CounterProvider extends ChangeNotifier {
+  int _count = 0;
+  int get count => _count;
+  
+  void increment() {
+    _count++;
+    notifyListeners();
+  }
+}
+
+// Provide
+ChangeNotifierProvider(
+  create: (_) => CounterProvider(),
+  child: const MyApp(),
+)
+
+// Consume
+final counter = context.watch<CounterProvider>();
+Text('Count: ${counter.count}');
+
+// Or with Consumer
+Consumer<CounterProvider>(
+  builder: (context, counter, child) {
+    return Text('Count: ${counter.count}');
+  },
+)
+
+RIVERPOD_RECOMMENDED
+flutter pub add flutter_riverpod
+
+// providers.dart
+final counterProvider = StateNotifierProvider<CounterNotifier, int>((ref) {
+  return CounterNotifier();
+});
+
+class CounterNotifier extends StateNotifier<int> {
+  CounterNotifier() : super(0);
+  
+  void increment() => state++;
+}
+
+// Async provider
+final userProvider = FutureProvider<User>((ref) async {
+  return await fetchUser();
+});
+
+// main.dart
+void main() {
+  runApp(const ProviderScope(child: MyApp()));
+}
+
+// Usage
+class MyWidget extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(counterProvider);
+    return Text('Count: $count');
+  }
+}
+
+BLOC_ENTERPRISE
+flutter pub add flutter_bloc
+
+// events
+abstract class CounterEvent {}
+class IncrementEvent extends CounterEvent {}
+
+// state
+class CounterState {
+  final int count;
+  const CounterState(this.count);
+}
+
+// bloc
+class CounterBloc extends Bloc<CounterEvent, CounterState> {
+  CounterBloc() : super(const CounterState(0)) {
+    on<IncrementEvent>((event, emit) {
+      emit(CounterState(state.count + 1));
+    });
+  }
+}
+
+// Usage
+BlocBuilder<CounterBloc, CounterState>(
+  builder: (context, state) {
+    return Text('Count: ${state.count}');
+  },
+)
+
+context.read<CounterBloc>().add(IncrementEvent());
+
+==============================================================================
+ASYNC_PATTERNS
+==============================================================================
+FUTURE_BUILDER
+FutureBuilder<User>(
+  future: fetchUser(),
+  builder: (context, snapshot) {
+    if (snapshot.connectionState == ConnectionState.waiting) {
+      return const CircularProgressIndicator();
+    }
+    if (snapshot.hasError) {
+      return Text('Error: ${snapshot.error}');
+    }
+    final user = snapshot.data!;
+    return Text('Hello, ${user.name}');
+  },
+)
+
+STREAM_BUILDER
+StreamBuilder<List<Message>>(
+  stream: messagesStream,
+  builder: (context, snapshot) {
+    if (!snapshot.hasData) {
+      return const CircularProgressIndicator();
+    }
+    return ListView.builder(
+      itemCount: snapshot.data!.length,
+      itemBuilder: (context, index) {
+        return MessageTile(message: snapshot.data![index]);
+      },
+    );
+  },
+)
+
+HTTP_REQUESTS
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
+Future<List<User>> fetchUsers() async {
+  final response = await http.get(
+    Uri.parse('https://api.example.com/users'),
+    headers: {'Authorization': 'Bearer $token'},
+  );
+  
+  if (response.statusCode != 200) {
+    throw Exception('Failed to load');
+  }
+  
+  final List<dynamic> data = json.decode(response.body);
+  return data.map((json) => User.fromJson(json)).toList();
+}
+
+DIO_HTTP_CLIENT
+flutter pub add dio
+
+final dio = Dio(BaseOptions(
+  baseUrl: 'https://api.example.com',
+  connectTimeout: const Duration(seconds: 5),
+));
+
+dio.interceptors.add(InterceptorsWrapper(
+  onRequest: (options, handler) {
+    options.headers['Authorization'] = 'Bearer $token';
+    handler.next(options);
+  },
+));
+
+final response = await dio.get('/users');
+
+==============================================================================
+STORAGE_PATTERNS
+==============================================================================
+SHARED_PREFERENCES
+flutter pub add shared_preferences
+
+final prefs = await SharedPreferences.getInstance();
+
+// Save
+await prefs.setString('token', 'abc123');
+await prefs.setInt('count', 42);
+await prefs.setBool('isLoggedIn', true);
+
+// Read
+final token = prefs.getString('token');
+final count = prefs.getInt('count') ?? 0;
+
+// Remove
+await prefs.remove('token');
+
+SECURE_STORAGE
+flutter pub add flutter_secure_storage
+
+const storage = FlutterSecureStorage();
+
+await storage.write(key: 'token', value: 'secret');
+final token = await storage.read(key: 'token');
+await storage.delete(key: 'token');
+
+HIVE_LOCAL_DB
+flutter pub add hive hive_flutter
+
+await Hive.initFlutter();
+Hive.registerAdapter(UserAdapter());
+
+final box = await Hive.openBox<User>('users');
+box.put('user1', user);
+final user = box.get('user1');
+
+SQFLITE
+flutter pub add sqflite path
+
+final db = await openDatabase(
+  join(await getDatabasesPath(), 'app.db'),
+  onCreate: (db, version) {
+    return db.execute(
+      'CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT)',
+    );
+  },
+  version: 1,
+);
+
+await db.insert('users', {'name': 'John'});
+final users = await db.query('users');
+
+==============================================================================
+ANIMATIONS
+==============================================================================
+IMPLICIT_ANIMATIONS
+AnimatedContainer(
+  duration: const Duration(milliseconds: 300),
+  curve: Curves.easeInOut,
+  width: isExpanded ? 200 : 100,
+  height: isExpanded ? 200 : 100,
+  color: isExpanded ? Colors.blue : Colors.red,
+  child: const Text('Tap me'),
+)
+
+AnimatedOpacity(
+  duration: const Duration(milliseconds: 300),
+  opacity: isVisible ? 1.0 : 0.0,
+  child: const Text('Fading'),
+)
+
+EXPLICIT_ANIMATIONS
+class FadeAnimation extends StatefulWidget {
+  @override
+  State<FadeAnimation> createState() => _FadeAnimationState();
+}
+
+class _FadeAnimationState extends State<FadeAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+  
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 1),
+      vsync: this,
+    );
+    _animation = Tween<double>(begin: 0, end: 1).animate(_controller);
+    _controller.forward();
+  }
+  
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _animation,
+      child: const Text('Animated'),
+    );
+  }
+}
+
+HERO_ANIMATIONS
+// Source
+Hero(
+  tag: 'avatar-$id',
+  child: CircleAvatar(backgroundImage: NetworkImage(url)),
+)
+
+// Destination
+Hero(
+  tag: 'avatar-$id',
+  child: Image.network(url),
+)
+
+==============================================================================
+PLATFORM_CHANNELS
+==============================================================================
+METHOD_CHANNEL
+// Dart
+static const platform = MethodChannel('com.example/battery');
+
+Future<int> getBatteryLevel() async {
+  final level = await platform.invokeMethod<int>('getBatteryLevel');
+  return level ?? -1;
+}
+
+// iOS (Swift)
+let channel = FlutterMethodChannel(name: "com.example/battery",
+                                   binaryMessenger: controller.binaryMessenger)
+channel.setMethodCallHandler { call, result in
+  if call.method == "getBatteryLevel" {
+    result(UIDevice.current.batteryLevel * 100)
+  }
+}
+
+// Android (Kotlin)
+MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example/battery")
+  .setMethodCallHandler { call, result ->
+    if (call.method == "getBatteryLevel") {
+      result.success(getBatteryLevel())
+    }
+  }
+
+==============================================================================
+TESTING
+==============================================================================
+UNIT_TESTS
+void main() {
+  test('Counter increments', () {
+    final counter = Counter();
+    counter.increment();
+    expect(counter.value, 1);
+  });
+  
+  group('User', () {
+    test('fromJson creates user', () {
+      final user = User.fromJson({'name': 'John', 'age': 30});
+      expect(user.name, 'John');
+    });
+  });
+}
+
+WIDGET_TESTS
+void main() {
+  testWidgets('Counter increments', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: CounterScreen()));
+    
+    expect(find.text('0'), findsOneWidget);
+    
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pump();
+    
+    expect(find.text('1'), findsOneWidget);
+  });
+}
+
+INTEGRATION_TESTS
+flutter pub add integration_test --dev
+
+// integration_test/app_test.dart
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  
+  testWidgets('full app test', (tester) async {
+    app.main();
+    await tester.pumpAndSettle();
+    
+    await tester.tap(find.text('Login'));
+    await tester.pumpAndSettle();
+    
+    expect(find.text('Welcome'), findsOneWidget);
+  });
+}
+
+==============================================================================
+BUILD_DEPLOY
+==============================================================================
+BUILD_COMMANDS
+flutter build apk                    # Android APK
+flutter build appbundle              # Android AAB (Play Store)
+flutter build ios                    # iOS
+flutter build web                    # Web
+flutter build macos                  # macOS
+flutter build windows                # Windows
+
+FLAVORS_ENVIRONMENTS
+// android/app/build.gradle
+flavorDimensions "environment"
+productFlavors {
+    dev {
+        dimension "environment"
+        applicationIdSuffix ".dev"
+    }
+    prod {
+        dimension "environment"
+    }
+}
+
+flutter run --flavor dev
+flutter build apk --flavor prod
+
+CODE_PUSH_SHOREBIRD
+# Alternative to full app store updates
+shorebird release android
+shorebird patch android
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+SetState_Everywhere     | setState_in_callbacks            | state_management
+BuildContext_Async      | context_after_await              | mounted_check
+No_Const_Constructors   | missing_const                    | add_const
+Rebuild_Entire_Tree     | setState_at_root                 | localize_state
+Blocking_UI_Thread      | compute_in_build                 | Isolate|compute
+No_Keys_In_Lists        | missing_key_prop                 | add_Key
+Direct_API_In_Widget    | http_calls_in_build              | repository_pattern
+No_Error_Handling       | unhandled_futures                | try_catch|FutureBuilder
+Memory_Leaks            | no_dispose                       | dispose_controllers
+Hardcoded_Strings       | literals_in_widgets              | localization

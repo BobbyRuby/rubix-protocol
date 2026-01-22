@@ -1,10 +1,13 @@
 /**
  * Logger utility for CODEX API response debugging.
  * Saves API responses to data/codex-logs/ for post-mortem analysis.
+ *
+ * SECURITY: All output is sanitized to prevent secret exposure.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getSanitizer } from '../core/OutputSanitizer.js';
 
 export interface LogEntry {
   timestamp: string;
@@ -37,6 +40,7 @@ export class CodexLogger {
 
   /**
    * Log an API response for debugging.
+   * SECURITY: All content is sanitized before writing to prevent secret exposure.
    */
   logResponse(
     phase: string,
@@ -47,16 +51,23 @@ export class CodexLogger {
     department?: string,
     error?: string
   ): void {
+    const sanitizer = getSanitizer();
+
+    // Sanitize all text content before logging
+    const sanitizedPrompt = sanitizer.sanitize(prompt);
+    const sanitizedResponse = sanitizer.sanitize(response);
+    const sanitizedError = error ? sanitizer.sanitize(error) : undefined;
+
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       phase,
       department,
-      promptLength: prompt.length,
-      responseLength: response.length,
+      promptLength: sanitizedPrompt.length,
+      responseLength: sanitizedResponse.length,
       filesFound,
-      rawResponse: response,
+      rawResponse: sanitizedResponse,
       parsedFiles,
-      error
+      error: sanitizedError
     };
 
     this.entries.push(entry);
@@ -74,10 +85,10 @@ export class CodexLogger {
       `Response Length: ${entry.responseLength} chars`,
       `Files Found: ${filesFound}`,
       parsedFiles ? `Parsed Files: ${JSON.stringify(parsedFiles, null, 2)}` : '',
-      error ? `Error: ${error}` : '',
+      sanitizedError ? `Error: ${sanitizedError}` : '',
       ``,
       `=== RAW RESPONSE ===`,
-      response,
+      sanitizedResponse,
       ``,
       `=== END LOG ===`
     ].filter(Boolean).join('\n');
@@ -92,19 +103,24 @@ export class CodexLogger {
 
   /**
    * Log when file parsing fails.
+   * SECURITY: All content is sanitized before writing.
    */
   logParsingFailure(response: string, context: string): void {
+    const sanitizer = getSanitizer();
+    const sanitizedResponse = sanitizer.sanitize(response);
+    const sanitizedContext = sanitizer.sanitize(context);
+
     const filename = `${this.sessionId}_PARSING_FAILURE_${Date.now()}.log`;
     const filepath = path.join(this.logDir, filename);
 
     // Extract any file-like tags for analysis
-    const fileTags = response.match(/<file[^>]*>/g) || [];
-    const closingTags = response.match(/<\/file>/g) || [];
+    const fileTags = sanitizedResponse.match(/<file[^>]*>/g) || [];
+    const closingTags = sanitizedResponse.match(/<\/file>/g) || [];
 
     const content = [
       `=== FILE PARSING FAILURE ===`,
       `Timestamp: ${new Date().toISOString()}`,
-      `Context: ${context}`,
+      `Context: ${sanitizedContext}`,
       ``,
       `=== ANALYSIS ===`,
       `Opening <file> tags found: ${fileTags.length}`,
@@ -112,10 +128,10 @@ export class CodexLogger {
       `Opening tags: ${JSON.stringify(fileTags)}`,
       ``,
       `=== RESPONSE PREVIEW (first 2000 chars) ===`,
-      response.substring(0, 2000),
+      sanitizedResponse.substring(0, 2000),
       ``,
       `=== FULL RESPONSE ===`,
-      response,
+      sanitizedResponse,
       ``,
       `=== END LOG ===`
     ].join('\n');

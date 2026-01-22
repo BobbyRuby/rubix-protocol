@@ -1,0 +1,731 @@
+# RUBIX PLATFORM: KOTLIN_JETPACK_COMPOSE_ANDROID
+# VERSION: Kotlin_1.9+|Compose_1.6+|Android_14+
+# FOUNDATION: Google|JetBrains|Apache_License
+# PHILOSOPHY: concise_safe_interoperable|declarative_UI|modern_android
+
+==============================================================================
+HISTORY
+==============================================================================
+2011:JetBrains>Kotlin_announced
+2016:Kotlin_1.0>stable
+2017:Google>Kotlin_official_Android
+2019:Kotlin_first>preferred_language
+2021:Jetpack_Compose_1.0>stable
+2022:Compose_Material_3
+2023:Kotlin_2.0_preview|Compose_1.5
+2024:Kotlin_2.0>K2_compiler|Compose_1.6
+
+JETPACK_COMPOSE
++declarative_UI:describe_state>UI_follows
++less_code:vs_XML_views
++Kotlin_native:no_XML
++live_preview:instant_feedback
++interop:works_with_Views
+
+ANDROID_ARCHITECTURE
+ViewModel:UI_state|survives_config_change
+Repository:data_layer|single_source_truth
+UseCase:business_logic|optional
+DataSource:API|Database
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+ANDROID_STUDIO_NEW_PROJECT
+File > New > New Project
+Empty Activity (Compose)
+
+PROJECT_STRUCTURE
+app/
+  src/main/
+    java/com/example/myapp/
+      MainActivity.kt
+      ui/
+        screens/
+        components/
+        theme/
+      data/
+        repository/
+        model/
+        api/
+      di/
+    res/
+      values/
+      drawable/
+  build.gradle.kts
+
+BUILD_GRADLE_COMPOSE
+// app/build.gradle.kts
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.example.myapp"
+    compileSdk = 34
+    
+    defaultConfig {
+        applicationId = "com.example.myapp"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+    
+    buildFeatures {
+        compose = true
+    }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+}
+
+==============================================================================
+COMPOSE_FUNDAMENTALS
+==============================================================================
+BASIC_COMPOSABLE
+@Composable
+fun Greeting(name: String) {
+    Text(
+        text = "Hello, $name!",
+        style = MaterialTheme.typography.headlineMedium
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+fun GreetingPreview() {
+    MyAppTheme {
+        Greeting("Android")
+    }
+}
+
+STATE_MANAGEMENT
+// Remember state
+@Composable
+fun Counter() {
+    var count by remember { mutableStateOf(0) }
+    
+    Column {
+        Text("Count: $count")
+        Button(onClick = { count++ }) {
+            Text("Increment")
+        }
+    }
+}
+
+// Survive config change
+@Composable
+fun Counter() {
+    var count by rememberSaveable { mutableStateOf(0) }
+    // survives rotation
+}
+
+STATE_HOISTING
+// Stateless composable
+@Composable
+fun Counter(
+    count: Int,
+    onIncrement: () -> Unit
+) {
+    Column {
+        Text("Count: $count")
+        Button(onClick = onIncrement) {
+            Text("Increment")
+        }
+    }
+}
+
+// Stateful parent
+@Composable
+fun CounterScreen() {
+    var count by remember { mutableStateOf(0) }
+    Counter(count = count, onIncrement = { count++ })
+}
+
+REMEMBER_VARIANTS
+remember:survives_recomposition
+rememberSaveable:survives_config_change
+rememberCoroutineScope:coroutine_scope
+rememberUpdatedState:capture_latest_value
+
+==============================================================================
+LAYOUT_COMPOSABLES
+==============================================================================
+COLUMN_ROW_BOX
+Column(
+    modifier = Modifier.fillMaxSize(),
+    verticalArrangement = Arrangement.Center,
+    horizontalAlignment = Alignment.CenterHorizontally
+) {
+    Text("Top")
+    Text("Bottom")
+}
+
+Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween
+) {
+    Text("Left")
+    Text("Right")
+}
+
+Box(
+    modifier = Modifier.fillMaxSize(),
+    contentAlignment = Alignment.Center
+) {
+    Image(...)
+    Text("Overlay")
+}
+
+LAZY_LISTS
+LazyColumn {
+    items(items) { item ->
+        ItemCard(item)
+    }
+}
+
+LazyColumn {
+    item { Header() }
+    items(items, key = { it.id }) { item ->
+        ItemCard(item)
+    }
+    item { Footer() }
+}
+
+LazyRow(
+    horizontalArrangement = Arrangement.spacedBy(8.dp)
+) {
+    items(items) { item ->
+        ItemCard(item)
+    }
+}
+
+LAZY_GRIDS
+LazyVerticalGrid(
+    columns = GridCells.Fixed(2),
+    contentPadding = PaddingValues(16.dp),
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp)
+) {
+    items(items) { item ->
+        ItemCard(item)
+    }
+}
+
+SCAFFOLD
+Scaffold(
+    topBar = {
+        TopAppBar(
+            title = { Text("My App") },
+            navigationIcon = {
+                IconButton(onClick = { /* back */ }) {
+                    Icon(Icons.Default.ArrowBack, "Back")
+                }
+            }
+        )
+    },
+    bottomBar = {
+        NavigationBar { /* tabs */ }
+    },
+    floatingActionButton = {
+        FloatingActionButton(onClick = { /* action */ }) {
+            Icon(Icons.Default.Add, "Add")
+        }
+    }
+) { paddingValues ->
+    Content(Modifier.padding(paddingValues))
+}
+
+==============================================================================
+MODIFIERS
+==============================================================================
+COMMON_MODIFIERS
+Modifier
+    .fillMaxSize()
+    .fillMaxWidth()
+    .fillMaxHeight()
+    .size(100.dp)
+    .width(100.dp)
+    .height(50.dp)
+    .padding(16.dp)
+    .padding(horizontal = 16.dp, vertical = 8.dp)
+    .background(Color.Blue)
+    .clip(RoundedCornerShape(8.dp))
+    .border(1.dp, Color.Gray, RoundedCornerShape(8.dp))
+    .clickable { /* click */ }
+    .shadow(4.dp)
+    .alpha(0.5f)
+
+MODIFIER_ORDER_MATTERS
+// Padding inside background
+Modifier
+    .background(Color.Blue)
+    .padding(16.dp)
+
+// Padding outside background
+Modifier
+    .padding(16.dp)
+    .background(Color.Blue)
+
+CUSTOM_MODIFIER
+fun Modifier.card(): Modifier = this
+    .fillMaxWidth()
+    .padding(16.dp)
+    .clip(RoundedCornerShape(8.dp))
+    .background(MaterialTheme.colorScheme.surface)
+    .shadow(4.dp)
+
+==============================================================================
+NAVIGATION_PATTERNS
+==============================================================================
+NAVIGATION_COMPOSE
+// NavHost setup
+@Composable
+fun AppNavigation() {
+    val navController = rememberNavController()
+    
+    NavHost(navController = navController, startDestination = "home") {
+        composable("home") {
+            HomeScreen(
+                onItemClick = { id -> navController.navigate("detail/$id") }
+            )
+        }
+        composable(
+            route = "detail/{itemId}",
+            arguments = listOf(navArgument("itemId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val itemId = backStackEntry.arguments?.getString("itemId")
+            DetailScreen(itemId = itemId)
+        }
+    }
+}
+
+// Navigation actions
+navController.navigate("detail/123")
+navController.popBackStack()
+navController.navigate("home") {
+    popUpTo("home") { inclusive = true }
+}
+
+TYPE_SAFE_NAVIGATION
+// Define routes as sealed class
+sealed class Screen(val route: String) {
+    object Home : Screen("home")
+    data class Detail(val id: String) : Screen("detail/{id}") {
+        fun createRoute() = "detail/$id"
+    }
+}
+
+// Usage
+navController.navigate(Screen.Detail("123").createRoute())
+
+BOTTOM_NAVIGATION
+@Composable
+fun MainScreen() {
+    val navController = rememberNavController()
+    
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentRoute = navBackStackEntry?.destination?.route
+                
+                items.forEach { item ->
+                    NavigationBarItem(
+                        icon = { Icon(item.icon, item.label) },
+                        label = { Text(item.label) },
+                        selected = currentRoute == item.route,
+                        onClick = {
+                            navController.navigate(item.route) {
+                                popUpTo(navController.graph.startDestinationId)
+                                launchSingleTop = true
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    ) { padding ->
+        NavHost(
+            navController = navController,
+            startDestination = "home",
+            modifier = Modifier.padding(padding)
+        ) {
+            // routes
+        }
+    }
+}
+
+==============================================================================
+VIEWMODEL_PATTERNS
+==============================================================================
+VIEWMODEL_WITH_STATE
+class HomeViewModel : ViewModel() {
+    private val _uiState = MutableStateFlow(HomeUiState())
+    val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    
+    init {
+        loadItems()
+    }
+    
+    private fun loadItems() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            try {
+                val items = repository.getItems()
+                _uiState.update { it.copy(items = items, isLoading = false) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message, isLoading = false) }
+            }
+        }
+    }
+    
+    fun onItemClick(item: Item) {
+        // handle click
+    }
+}
+
+data class HomeUiState(
+    val items: List<Item> = emptyList(),
+    val isLoading: Boolean = false,
+    val error: String? = null
+)
+
+COMPOSE_WITH_VIEWMODEL
+@Composable
+fun HomeScreen(
+    viewModel: HomeViewModel = viewModel()
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    
+    when {
+        uiState.isLoading -> LoadingIndicator()
+        uiState.error != null -> ErrorMessage(uiState.error!!)
+        else -> ItemList(
+            items = uiState.items,
+            onItemClick = viewModel::onItemClick
+        )
+    }
+}
+
+SEALED_CLASS_UI_STATE
+sealed class UiState<out T> {
+    object Loading : UiState<Nothing>()
+    data class Success<T>(val data: T) : UiState<T>()
+    data class Error(val message: String) : UiState<Nothing>()
+}
+
+class HomeViewModel : ViewModel() {
+    private val _uiState = MutableStateFlow<UiState<List<Item>>>(UiState.Loading)
+    val uiState: StateFlow<UiState<List<Item>>> = _uiState.asStateFlow()
+}
+
+// In Composable
+when (val state = uiState) {
+    is UiState.Loading -> LoadingIndicator()
+    is UiState.Success -> ItemList(state.data)
+    is UiState.Error -> ErrorMessage(state.message)
+}
+
+==============================================================================
+DEPENDENCY_INJECTION_HILT
+==============================================================================
+SETUP
+// build.gradle.kts (project)
+plugins {
+    id("com.google.dagger.hilt.android") version "2.50" apply false
+}
+
+// build.gradle.kts (app)
+plugins {
+    id("com.google.dagger.hilt.android")
+    id("com.google.devtools.ksp")
+}
+
+dependencies {
+    implementation("com.google.dagger:hilt-android:2.50")
+    ksp("com.google.dagger:hilt-compiler:2.50")
+    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
+}
+
+APPLICATION
+@HiltAndroidApp
+class MyApplication : Application()
+
+MODULE
+@Module
+@InstallIn(SingletonComponent::class)
+object AppModule {
+    @Provides
+    @Singleton
+    fun provideApiService(): ApiService {
+        return Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(ApiService::class.java)
+    }
+    
+    @Provides
+    @Singleton
+    fun provideRepository(api: ApiService): ItemRepository {
+        return ItemRepositoryImpl(api)
+    }
+}
+
+VIEWMODEL_INJECTION
+@HiltViewModel
+class HomeViewModel @Inject constructor(
+    private val repository: ItemRepository
+) : ViewModel() {
+    // ...
+}
+
+// Usage in Compose
+@Composable
+fun HomeScreen(
+    viewModel: HomeViewModel = hiltViewModel()
+) {
+    // ...
+}
+
+ACTIVITY
+@AndroidEntryPoint
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { MyApp() }
+    }
+}
+
+==============================================================================
+NETWORKING_RETROFIT
+==============================================================================
+RETROFIT_SETUP
+interface ApiService {
+    @GET("items")
+    suspend fun getItems(): List<Item>
+    
+    @GET("items/{id}")
+    suspend fun getItem(@Path("id") id: String): Item
+    
+    @POST("items")
+    suspend fun createItem(@Body item: Item): Item
+    
+    @DELETE("items/{id}")
+    suspend fun deleteItem(@Path("id") id: String)
+}
+
+val retrofit = Retrofit.Builder()
+    .baseUrl("https://api.example.com/")
+    .addConverterFactory(GsonConverterFactory.create())
+    .client(okHttpClient)
+    .build()
+
+OKHTTP_INTERCEPTOR
+val okHttpClient = OkHttpClient.Builder()
+    .addInterceptor { chain ->
+        val request = chain.request().newBuilder()
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        chain.proceed(request)
+    }
+    .addInterceptor(HttpLoggingInterceptor().apply {
+        level = HttpLoggingInterceptor.Level.BODY
+    })
+    .build()
+
+==============================================================================
+PERSISTENCE_ROOM
+==============================================================================
+ENTITY
+@Entity(tableName = "items")
+data class ItemEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val description: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long
+)
+
+DAO
+@Dao
+interface ItemDao {
+    @Query("SELECT * FROM items")
+    fun getAll(): Flow<List<ItemEntity>>
+    
+    @Query("SELECT * FROM items WHERE id = :id")
+    suspend fun getById(id: String): ItemEntity?
+    
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(item: ItemEntity)
+    
+    @Delete
+    suspend fun delete(item: ItemEntity)
+}
+
+DATABASE
+@Database(entities = [ItemEntity::class], version = 1)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun itemDao(): ItemDao
+}
+
+// Provide via Hilt
+@Provides
+@Singleton
+fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
+    return Room.databaseBuilder(context, AppDatabase::class.java, "app.db")
+        .build()
+}
+
+==============================================================================
+ANIMATIONS
+==============================================================================
+ANIMATE_VISIBILITY
+AnimatedVisibility(
+    visible = isVisible,
+    enter = fadeIn() + slideInVertically(),
+    exit = fadeOut() + slideOutVertically()
+) {
+    Card { /* content */ }
+}
+
+ANIMATE_STATE
+val size by animateDpAsState(
+    targetValue = if (expanded) 200.dp else 100.dp,
+    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
+)
+
+Box(Modifier.size(size))
+
+ANIMATE_CONTENT
+AnimatedContent(
+    targetState = count,
+    transitionSpec = {
+        if (targetState > initialState) {
+            slideInVertically { -it } + fadeIn() togetherWith
+                slideOutVertically { it } + fadeOut()
+        } else {
+            slideInVertically { it } + fadeIn() togetherWith
+                slideOutVertically { -it } + fadeOut()
+        }
+    }
+) { targetCount ->
+    Text("Count: $targetCount")
+}
+
+INFINITE_ANIMATION
+val infiniteTransition = rememberInfiniteTransition()
+val alpha by infiniteTransition.animateFloat(
+    initialValue = 0f,
+    targetValue = 1f,
+    animationSpec = infiniteRepeatable(
+        animation = tween(1000),
+        repeatMode = RepeatMode.Reverse
+    )
+)
+
+==============================================================================
+TESTING
+==============================================================================
+COMPOSE_TESTING
+@get:Rule
+val composeTestRule = createComposeRule()
+
+@Test
+fun counterIncrements() {
+    composeTestRule.setContent {
+        CounterScreen()
+    }
+    
+    composeTestRule.onNodeWithText("Count: 0").assertIsDisplayed()
+    composeTestRule.onNodeWithText("Increment").performClick()
+    composeTestRule.onNodeWithText("Count: 1").assertIsDisplayed()
+}
+
+VIEWMODEL_TESTING
+class HomeViewModelTest {
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+    
+    private lateinit var viewModel: HomeViewModel
+    private val mockRepository = mockk<ItemRepository>()
+    
+    @Before
+    fun setup() {
+        viewModel = HomeViewModel(mockRepository)
+    }
+    
+    @Test
+    fun `loadItems success`() = runTest {
+        coEvery { mockRepository.getItems() } returns listOf(testItem)
+        
+        viewModel.loadItems()
+        
+        assertEquals(listOf(testItem), viewModel.uiState.value.items)
+    }
+}
+
+==============================================================================
+BUILD_DEPLOY
+==============================================================================
+BUILD_VARIANTS
+android {
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+        }
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")
+        }
+    }
+    
+    productFlavors {
+        create("dev") {
+            dimension = "environment"
+            applicationIdSuffix = ".dev"
+            buildConfigField("String", "BASE_URL", "\"https://dev.api.com\"")
+        }
+        create("prod") {
+            dimension = "environment"
+            buildConfigField("String", "BASE_URL", "\"https://api.com\"")
+        }
+    }
+}
+
+GENERATE_SIGNED_APK
+Build > Generate Signed Bundle/APK
+
+PLAY_CONSOLE
+1:Create_app_in_Play_Console
+2:Upload_AAB
+3:Set_up_testing_tracks
+4:Review_and_rollout
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Remember_ViewModel      | remember{ViewModel()}            | viewModel()
+State_In_Composable     | complex_state_in_composable      | hoist_to_ViewModel
+No_Key_In_List          | items{}_without_key              | items(key={it.id})
+Blocking_Main           | network_call_in_composable       | viewModelScope
+Recomposition_Heavy     | frequent_recomposition           | derivedStateOf
+No_State_Hoisting       | state_in_child_composable        | hoist_to_parent
+God_ViewModel           | ViewModel_1000+_lines            | split_by_feature
+Direct_Context_Use      | LocalContext.current_everywhere  | pass_via_params
+No_Error_Handling       | uncaught_coroutine_exception     | try_catch|handler
+Hardcoded_Strings       | Text("Hello")                    | stringResource

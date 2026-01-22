@@ -15,6 +15,15 @@ export {
   LearningDriftError
 } from './core/errors.js';
 
+// Security: Output sanitization
+export {
+  OutputSanitizer,
+  getSanitizer,
+  sanitize,
+  sanitizeError
+} from './core/OutputSanitizer.js';
+export type { SanitizationPattern } from './core/OutputSanitizer.js';
+
 // Export enums as values (not just types)
 export { MemorySource, CausalRelationType } from './core/types.js';
 

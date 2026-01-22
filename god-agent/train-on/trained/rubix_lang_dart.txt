@@ -1,0 +1,899 @@
+# RUBIX LANGUAGE: DART
+# VERSION: 3.x (2024)
+# HISTORY: 2011_Google_Bracha→1.0_2013→2.0_Sound_Null_Safety_2020→3.0_Records_Patterns_2023
+# PHILOSOPHY: client_optimized|sound_null_safety|productive|cross_platform
+
+==============================================================================
+SETUP_ENVIRONMENT
+==============================================================================
+# Installation
+# https://dart.dev/get-dart or comes with Flutter
+dart --version
+
+# New project
+dart create my_app
+dart create -t console my_console_app
+dart create -t package my_package
+dart create -t web my_web_app
+
+# Project structure
+my_app/
+├── pubspec.yaml
+├── pubspec.lock
+├── lib/
+│   └── my_app.dart
+├── bin/
+│   └── my_app.dart
+├── test/
+│   └── my_app_test.dart
+└── analysis_options.yaml
+
+# pubspec.yaml
+name: my_app
+description: My application
+version: 1.0.0
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  http: ^1.1.0
+  
+dev_dependencies:
+  lints: ^3.0.0
+  test: ^1.24.0
+
+# Commands
+dart run                    # Run
+dart compile exe bin/app.dart  # Compile to native
+dart test                   # Run tests
+dart analyze               # Analyze code
+dart format .              # Format code
+dart pub get               # Get dependencies
+dart pub add package       # Add dependency
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+# Numbers
+int integer = 42;
+double floating = 3.14;
+num number = 42;           # int or double
+
+# Strings
+String str = 'Hello';
+String str = "Hello";
+String interpolated = 'Hello, $name';
+String complex = 'Value: ${obj.value}';
+
+# Booleans
+bool flag = true;
+
+# Collections
+List<int> list = [1, 2, 3];
+Set<int> set = {1, 2, 3};
+Map<String, int> map = {'a': 1, 'b': 2};
+
+# Type inference
+var inferred = 42;         # int
+final immutable = 42;      # Can't reassign
+const constant = 42;       # Compile-time constant
+
+# Dynamic
+dynamic anything = 42;
+anything = 'now a string';
+
+# Object (base of all types)
+Object obj = 42;
+
+# Null safety
+String? nullable = null;
+String nonNull = 'value';
+
+# Type checking
+value is String
+value is! String
+value.runtimeType
+
+==============================================================================
+NULL_SAFETY
+==============================================================================
+# Nullable types
+String? name;              # Can be null
+String name = 'John';      # Cannot be null
+
+# Null-aware operators
+String? name;
+name ?? 'default'          # If null, use default
+name ??= 'default';        # Assign if null
+name?.length               # Null-safe access
+name?.toUpperCase()        # Null-safe method call
+
+# Null assertion
+String? name = getName();
+print(name!);              # Assert non-null (throws if null)
+
+# Late initialization
+late String name;
+late final String computed = expensiveOperation();
+
+# Required named parameters
+void greet({required String name}) {
+  print('Hello, $name');
+}
+
+# Type promotion
+void process(String? name) {
+  if (name != null) {
+    print(name.length);    # name is promoted to String
+  }
+  
+  if (name == null) return;
+  print(name.length);      # Also promoted
+}
+
+==============================================================================
+STRINGS
+==============================================================================
+# Creation
+var single = 'Single quotes';
+var double = "Double quotes";
+var raw = r'No \n escaping';
+var multiLine = '''
+  Multi-line
+  string
+''';
+
+# Interpolation
+var name = 'John';
+var greeting = 'Hello, $name!';
+var complex = 'Length: ${name.length}';
+
+# Common methods
+str.length
+str.isEmpty
+str.isNotEmpty
+str.toUpperCase()
+str.toLowerCase()
+str.trim()
+str.trimLeft()
+str.trimRight()
+str.contains('sub')
+str.startsWith('pre')
+str.endsWith('suf')
+str.indexOf('sub')
+str.lastIndexOf('sub')
+str.substring(0, 5)
+str.replaceAll('old', 'new')
+str.replaceFirst('old', 'new')
+str.split(',')
+str.padLeft(10, '0')
+str.padRight(10)
+str.compareTo('other')
+
+# StringBuffer
+var buffer = StringBuffer();
+buffer.write('Hello');
+buffer.writeln(' World');
+buffer.writeAll(['a', 'b', 'c'], ', ');
+var result = buffer.toString();
+
+==============================================================================
+COLLECTIONS
+==============================================================================
+# List
+List<int> list = [1, 2, 3];
+var list = <int>[];
+List<int> list = List.filled(5, 0);
+List<int> list = List.generate(5, (i) => i * 2);
+
+list.add(4);
+list.addAll([5, 6]);
+list.insert(0, 0);
+list.remove(3);
+list.removeAt(0);
+list.removeLast();
+list.removeWhere((e) => e > 5);
+list.clear();
+list.contains(2);
+list.indexOf(2);
+list.first;
+list.last;
+list.length;
+list.isEmpty;
+list.reversed;
+list.sort();
+list.shuffle();
+list.sublist(1, 3);
+
+# Spread operator
+var combined = [...list1, ...list2];
+var withNull = [...?nullableList];
+
+# Collection if/for
+var list = [
+  1,
+  2,
+  if (includeThree) 3,
+  for (var i in items) i * 2,
+];
+
+# Set
+Set<int> set = {1, 2, 3};
+var set = <int>{};
+
+set.add(4);
+set.addAll([5, 6]);
+set.remove(3);
+set.contains(2);
+set.union(otherSet);
+set.intersection(otherSet);
+set.difference(otherSet);
+
+# Map
+Map<String, int> map = {'a': 1, 'b': 2};
+var map = <String, int>{};
+
+map['key'] = 42;
+map.putIfAbsent('key', () => 42);
+map.remove('key');
+map.containsKey('key');
+map.containsValue(42);
+map.keys;
+map.values;
+map.entries;
+map.forEach((k, v) => print('$k: $v'));
+map.update('key', (v) => v + 1, ifAbsent: () => 1);
+
+# Iterable methods (work on List, Set, Iterable)
+list.map((e) => e * 2)
+list.where((e) => e > 2)
+list.firstWhere((e) => e > 2)
+list.lastWhere((e) => e > 2)
+list.singleWhere((e) => e == 2)
+list.any((e) => e > 2)
+list.every((e) => e > 0)
+list.fold(0, (sum, e) => sum + e)
+list.reduce((a, b) => a + b)
+list.take(3)
+list.skip(2)
+list.takeWhile((e) => e < 5)
+list.skipWhile((e) => e < 2)
+list.expand((e) => [e, e])
+list.toList()
+list.toSet()
+
+==============================================================================
+CONTROL_FLOW
+==============================================================================
+# If/else
+if (condition) {
+  // ...
+} else if (otherCondition) {
+  // ...
+} else {
+  // ...
+}
+
+# Conditional expression
+var result = condition ? 'yes' : 'no';
+
+# Switch statement
+switch (value) {
+  case 1:
+    // ...
+    break;
+  case 2:
+  case 3:
+    // ...
+    break;
+  default:
+    // ...
+}
+
+# Switch expression (Dart 3)
+var result = switch (value) {
+  1 => 'one',
+  2 || 3 => 'two or three',
+  > 10 => 'big',
+  _ => 'default',
+};
+
+# Loops
+for (var i = 0; i < 10; i++) {
+  print(i);
+}
+
+for (var item in collection) {
+  print(item);
+}
+
+while (condition) {
+  // ...
+}
+
+do {
+  // ...
+} while (condition);
+
+# Break and continue
+for (var i = 0; i < 10; i++) {
+  if (i == 5) break;
+  if (i % 2 == 0) continue;
+  print(i);
+}
+
+# Labels
+outer: for (var i = 0; i < 10; i++) {
+  for (var j = 0; j < 10; j++) {
+    if (condition) break outer;
+  }
+}
+
+==============================================================================
+PATTERN_MATCHING_DART3
+==============================================================================
+# Variable patterns
+var (a, b) = (1, 2);            # Destructure record
+var [first, second] = [1, 2];   # Destructure list
+var {'name': name} = {'name': 'John'};  # Destructure map
+
+# Object patterns
+if (obj case User(name: var n, age: var a)) {
+  print('$n is $a years old');
+}
+
+# Switch with patterns
+var result = switch (obj) {
+  int i when i > 0 => 'positive int: $i',
+  int i => 'non-positive int: $i',
+  String s => 'string: $s',
+  (int x, int y) => 'point: ($x, $y)',
+  [var first, ...var rest] => 'list starting with $first',
+  {'name': String name} => 'map with name: $name',
+  User(name: var n) => 'user: $n',
+  _ => 'unknown',
+};
+
+# If-case
+if (json case {'name': String name, 'age': int age}) {
+  print('$name is $age');
+}
+
+# Guard clauses
+switch (value) {
+  case int n when n > 0:
+    print('positive');
+  case int n when n < 0:
+    print('negative');
+  case int():
+    print('zero');
+}
+
+# Exhaustiveness checking
+sealed class Shape {}
+class Circle extends Shape { final double radius; }
+class Square extends Shape { final double side; }
+
+double area(Shape shape) => switch (shape) {
+  Circle(radius: var r) => 3.14 * r * r,
+  Square(side: var s) => s * s,
+};  # Compiler ensures all cases covered
+
+==============================================================================
+FUNCTIONS
+==============================================================================
+# Basic function
+int add(int a, int b) {
+  return a + b;
+}
+
+# Arrow function
+int add(int a, int b) => a + b;
+
+# Optional positional parameters
+void greet(String name, [String? title]) {
+  print('Hello, ${title ?? ''} $name');
+}
+greet('John');
+greet('John', 'Dr.');
+
+# Named parameters
+void greet({required String name, String title = ''}) {
+  print('Hello, $title $name');
+}
+greet(name: 'John');
+greet(name: 'John', title: 'Dr.');
+
+# Default values
+void greet(String name, {String greeting = 'Hello'}) {
+  print('$greeting, $name');
+}
+
+# Function as first-class object
+Function add = (int a, int b) => a + b;
+var add = (int a, int b) => a + b;
+
+# Closures
+Function makeAdder(int addend) {
+  return (int i) => addend + i;
+}
+var add2 = makeAdder(2);
+print(add2(3)); // 5
+
+# Anonymous functions
+list.map((item) => item * 2);
+list.forEach((item) {
+  print(item);
+});
+
+# Tear-offs (method references)
+list.forEach(print);           # Same as (x) => print(x)
+var upper = 'hello'.toUpperCase;
+
+# Typedef
+typedef IntOperation = int Function(int, int);
+
+IntOperation add = (a, b) => a + b;
+IntOperation multiply = (a, b) => a * b;
+
+==============================================================================
+CLASSES
+==============================================================================
+# Basic class
+class User {
+  // Instance variables
+  String name;
+  String email;
+  int _age = 0;  // Private (underscore prefix)
+  
+  // Constructor
+  User(this.name, this.email);
+  
+  // Named constructor
+  User.guest() : name = 'Guest', email = 'guest@example.com';
+  
+  // Factory constructor
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(json['name'], json['email']);
+  }
+  
+  // Getter
+  int get age => _age;
+  
+  // Setter
+  set age(int value) {
+    if (value >= 0) _age = value;
+  }
+  
+  // Method
+  String greet() => 'Hello, I am $name';
+  
+  // Static
+  static int count = 0;
+  static User create(String name, String email) {
+    count++;
+    return User(name, email);
+  }
+  
+  // Operator overloading
+  @override
+  bool operator ==(Object other) =>
+      other is User && other.name == name && other.email == email;
+  
+  @override
+  int get hashCode => Object.hash(name, email);
+  
+  @override
+  String toString() => 'User($name, $email)';
+}
+
+# Initializer list
+class Point {
+  final double x;
+  final double y;
+  final double distance;
+  
+  Point(double x, double y)
+      : x = x,
+        y = y,
+        distance = sqrt(x * x + y * y),
+        assert(x >= 0);
+}
+
+# Const constructor
+class ImmutablePoint {
+  final double x;
+  final double y;
+  
+  const ImmutablePoint(this.x, this.y);
+}
+
+const origin = ImmutablePoint(0, 0);
+
+# Inheritance
+class Admin extends User {
+  List<String> permissions;
+  
+  Admin(super.name, super.email, this.permissions);
+  
+  @override
+  String greet() => '${super.greet()} (Admin)';
+}
+
+# Abstract class
+abstract class Shape {
+  double get area;
+  void draw();
+}
+
+class Circle extends Shape {
+  final double radius;
+  Circle(this.radius);
+  
+  @override
+  double get area => 3.14159 * radius * radius;
+  
+  @override
+  void draw() => print('Drawing circle');
+}
+
+==============================================================================
+RECORDS_DART3
+==============================================================================
+# Record type
+(int, int) point = (10, 20);
+(String, int, bool) triple = ('hello', 42, true);
+
+# Named fields
+({String name, int age}) person = (name: 'John', age: 30);
+
+# Mixed
+(int x, int y, {String label}) labeled = (10, 20, label: 'Point');
+
+# Access
+var (x, y) = point;
+print(person.name);
+print(labeled.$1);  # Positional by index
+
+# Function returning record
+(String, int) getUserInfo() {
+  return ('John', 30);
+}
+
+var (name, age) = getUserInfo();
+
+# Record types in function signatures
+void printPoint((int, int) point) {
+  var (x, y) = point;
+  print('($x, $y)');
+}
+
+# Record equality (structural)
+var p1 = (1, 2);
+var p2 = (1, 2);
+print(p1 == p2);  // true
+
+==============================================================================
+MIXINS_INTERFACES
+==============================================================================
+# Interface (implicit)
+class Printable {
+  void print() => print(this);
+}
+
+class User implements Printable {
+  @override
+  void print() => print('User');
+}
+
+# Multiple interfaces
+class Admin implements User, Auditable {
+  // Must implement all methods
+}
+
+# Mixins
+mixin Logging {
+  void log(String message) {
+    print('[LOG] $message');
+  }
+}
+
+mixin Timestamped {
+  DateTime? createdAt;
+  DateTime? updatedAt;
+  
+  void touch() {
+    updatedAt = DateTime.now();
+  }
+}
+
+class Post with Logging, Timestamped {
+  String title;
+  Post(this.title) {
+    createdAt = DateTime.now();
+  }
+}
+
+# Mixin with on clause (requires superclass)
+mixin Musical on Performer {
+  void play() {
+    super.perform();
+    print('Playing music');
+  }
+}
+
+# Mixin class (Dart 3)
+mixin class Both {
+  void method() {}
+}
+
+class A extends Both {}  # As superclass
+class B with Both {}     # As mixin
+
+==============================================================================
+CLASS_MODIFIERS_DART3
+==============================================================================
+# Sealed (exhaustive switching)
+sealed class Result<T> {}
+class Success<T> extends Result<T> { final T value; }
+class Failure<T> extends Result<T> { final String error; }
+
+# Final (can't be extended outside library)
+final class FinalClass {}
+
+# Base (must be extended, not implemented)
+base class BaseClass {}
+
+# Interface (must be implemented, not extended)
+interface class InterfaceClass {}
+
+# Combined
+sealed class State {}
+final class Loading extends State {}
+final class Loaded extends State { final data; }
+final class Error extends State { final message; }
+
+==============================================================================
+GENERICS
+==============================================================================
+# Generic class
+class Box<T> {
+  T value;
+  Box(this.value);
+  
+  T getValue() => value;
+  void setValue(T newValue) => value = newValue;
+}
+
+var intBox = Box<int>(42);
+var stringBox = Box<String>('hello');
+
+# Generic method
+T first<T>(List<T> items) {
+  return items[0];
+}
+
+# Bounded generics
+class NumberBox<T extends num> {
+  T value;
+  NumberBox(this.value);
+  
+  double get asDouble => value.toDouble();
+}
+
+# Multiple type parameters
+class Pair<K, V> {
+  final K key;
+  final V value;
+  Pair(this.key, this.value);
+}
+
+# Generic typedef
+typedef JsonMap = Map<String, dynamic>;
+typedef Converter<T> = T Function(String);
+
+==============================================================================
+ASYNC_AWAIT
+==============================================================================
+# Future
+Future<String> fetchData() async {
+  await Future.delayed(Duration(seconds: 1));
+  return 'Data';
+}
+
+# Async/await
+Future<void> main() async {
+  try {
+    var data = await fetchData();
+    print(data);
+  } catch (e) {
+    print('Error: $e');
+  }
+}
+
+# Future methods
+Future<String> future = fetchData();
+future.then((data) => print(data));
+future.catchError((e) => print('Error: $e'));
+future.whenComplete(() => print('Done'));
+
+# Parallel futures
+var results = await Future.wait([
+  fetchUser(),
+  fetchOrders(),
+  fetchSettings(),
+]);
+
+# Stream
+Stream<int> countStream(int max) async* {
+  for (var i = 1; i <= max; i++) {
+    await Future.delayed(Duration(seconds: 1));
+    yield i;
+  }
+}
+
+# Consuming stream
+await for (var count in countStream(5)) {
+  print(count);
+}
+
+# Stream methods
+stream.listen(
+  (data) => print(data),
+  onError: (e) => print('Error: $e'),
+  onDone: () => print('Done'),
+);
+
+stream.map((e) => e * 2);
+stream.where((e) => e > 5);
+stream.take(5);
+stream.skip(2);
+stream.distinct();
+stream.expand((e) => [e, e]);
+await stream.toList();
+await stream.first;
+await stream.last;
+
+# StreamController
+var controller = StreamController<int>();
+controller.sink.add(1);
+controller.sink.add(2);
+controller.stream.listen(print);
+controller.close();
+
+# Broadcast stream
+var controller = StreamController<int>.broadcast();
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+# Try-catch
+try {
+  var result = riskyOperation();
+} on FormatException catch (e) {
+  print('Format error: $e');
+} on Exception catch (e, stackTrace) {
+  print('Error: $e');
+  print('Stack: $stackTrace');
+} catch (e) {
+  print('Unknown error: $e');
+  rethrow;  # Re-throw
+} finally {
+  cleanup();
+}
+
+# Throw
+throw Exception('Something went wrong');
+throw FormatException('Invalid format');
+throw 'Error message';  # Any object
+
+# Custom exception
+class UserNotFoundException implements Exception {
+  final int userId;
+  UserNotFoundException(this.userId);
+  
+  @override
+  String toString() => 'User not found: $userId';
+}
+
+throw UserNotFoundException(123);
+
+# Assert (development only)
+assert(value > 0, 'Value must be positive');
+
+==============================================================================
+EXTENSION_METHODS
+==============================================================================
+# Extension on existing type
+extension StringExtension on String {
+  String capitalize() {
+    if (isEmpty) return this;
+    return '${this[0].toUpperCase()}${substring(1)}';
+  }
+  
+  bool get isEmail => contains('@');
+}
+
+'hello'.capitalize();  // 'Hello'
+'test@example.com'.isEmail;  // true
+
+# Generic extension
+extension ListExtension<T> on List<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+  
+  List<T> distinct() => toSet().toList();
+}
+
+# Extension on nullable
+extension NullableString on String? {
+  bool get isNullOrEmpty => this == null || this!.isEmpty;
+}
+
+String? name;
+name.isNullOrEmpty;  // true
+
+# Named extension (for disambiguation)
+extension MyIntExtension on int {
+  int get doubled => this * 2;
+}
+
+==============================================================================
+ANNOTATIONS_METADATA
+==============================================================================
+# Common annotations
+@override
+@deprecated
+@Deprecated('Use newMethod instead')
+@pragma('vm:prefer-inline')
+
+# Custom annotation
+class Route {
+  final String path;
+  final String method;
+  const Route(this.path, {this.method = 'GET'});
+}
+
+@Route('/users')
+class UserController {
+  @Route('/users/:id', method: 'GET')
+  void getUser(int id) {}
+}
+
+# Reading annotations (with reflection)
+import 'dart:mirrors';
+
+var classMirror = reflectClass(UserController);
+var annotations = classMirror.metadata;
+
+==============================================================================
+DART_3_SUMMARY
+==============================================================================
+# Records
+(int, String) pair = (1, 'hello');
+({int x, int y}) point = (x: 10, y: 20);
+
+# Patterns
+var (a, b) = (1, 2);
+if (obj case Pattern()) { }
+switch (value) { case Pattern() => result }
+
+# Class modifiers
+sealed class State {}
+final class Closed {}
+base class MustExtend {}
+interface class MustImplement {}
+mixin class Both {}
+
+# Switch expressions
+var result = switch (x) {
+  1 => 'one',
+  _ => 'other',
+};
+
+# If-case
+if (json case {'name': String name}) {
+  print(name);
+}
+
+# Exhaustive switching with sealed classes

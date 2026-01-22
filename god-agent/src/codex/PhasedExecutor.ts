@@ -48,7 +48,9 @@ import type { CommunicationManager } from '../communication/CommunicationManager
 import { CollaborativePartner } from './CollaborativePartner.js';
 import { ContainmentManager } from './ContainmentManager.js';
 import { CodeReviewer } from '../review/CodeReviewer.js';
-import type { ReviewRequest } from '../review/types.js';
+import type { ReviewRequest, SecurityFinding } from '../review/types.js';
+// Security: Output sanitization
+import { getSanitizer } from '../core/OutputSanitizer.js';
 
 /**
  * Fix loop escalation tiers - All use API.
@@ -870,11 +872,15 @@ These paths are protected because they may contain sensitive data (credentials, 
       // Check for abort after Phase 5
       this.checkAborted();
 
-      // === GUARDRAIL: CODE REVIEW (OWASP Security Scanning) ===
-      // After files are written, scan for security vulnerabilities
+      // === PHASE 4a: CODE REVIEW (Deterministic OWASP Security Scanning) ===
+      // SECURITY CONSOLIDATION: CodeReviewer runs BEFORE PlanValidator
+      // - CodeReviewer: Deterministic pattern matching for OWASP Top 10
+      // - PlanValidator: LLM-based quality/logic/contextual security review
       let securityBlockers: string[] = [];
+      let securityFindings: SecurityFinding[] = [];  // Collect findings for PlanValidator
+
       if (this.guardrailsEnabled && this.codeReviewer && plan.files.length > 0) {
-        console.log('[PhasedExecutor] === GUARDRAIL: OWASP Security Scan ===');
+        console.log('[PhasedExecutor] === Phase 4a: CODE_REVIEWER (OWASP Security Scan) ===');
         try {
           // Get file paths that were written
           const filePaths = plan.files
@@ -891,9 +897,12 @@ These paths are protected because they may contain sensitive data (credentials, 
 
             const reviewResult = await this.codeReviewer.review(reviewRequest);
 
+            // Store ALL security findings to pass to PlanValidator
+            securityFindings = reviewResult.security;
+
             // Log the review result
             logger.logResponse(
-              'GUARDRAIL_CODE_REVIEW',
+              'PHASE_4A_CODE_REVIEW',
               `Security scan of ${filePaths.length} files`,
               JSON.stringify({
                 status: reviewResult.status,
@@ -901,7 +910,14 @@ These paths are protected because they may contain sensitive data (credentials, 
                 securityFindings: reviewResult.security.length,
                 criticalIssues: reviewResult.issues.filter(i => i.severity === 'critical').length,
                 highIssues: reviewResult.issues.filter(i => i.severity === 'high').length,
-                score: reviewResult.summary.score
+                score: reviewResult.summary.score,
+                // Include findings summary for debugging
+                findings: reviewResult.security.map(f => ({
+                  type: f.type,
+                  severity: f.severity,
+                  file: f.file,
+                  line: f.line
+                }))
               }, null, 2),
               reviewResult.security.length
             );
@@ -935,6 +951,8 @@ These paths are protected because they may contain sensitive data (credentials, 
             if (criticalIssues.length === 0 && highIssues.length === 0) {
               console.log('[PhasedExecutor] Security scan passed - no critical/high issues found');
             }
+
+            console.log(`[PhasedExecutor] Passing ${securityFindings.length} findings to PlanValidator`);
           } else {
             console.log('[PhasedExecutor] No files to scan for security');
           }
@@ -944,6 +962,7 @@ These paths are protected because they may contain sensitive data (credentials, 
       }
 
       // Phase 4: VALIDATOR (complexity-based model) - VALIDATE CREATED FILES
+      // SECURITY CONSOLIDATION: Receives pre-scanned findings from Phase 4a (CodeReviewer)
       const validatorModel = modelSelector.selectForPhase('validator', complexity);
       const validatorModelName = modelSelector.getModelName(validatorModel);
       console.log(`[PhasedExecutor] === Phase 4: VALIDATOR (${validatorModelName}) ===`);
@@ -953,7 +972,8 @@ These paths are protected because they may contain sensitive data (credentials, 
         this.engine,
         validatorModel
       );
-      const validation = await validator.validate(context, design, plan);
+      // Pass pre-scanned security findings from CodeReviewer (Phase 4a)
+      const validation = await validator.validate(context, design, plan, securityFindings);
       result.phases.validation = validation;
       result.apiCalls++;
       console.log(`[PhasedExecutor] VAL: ${validation.compressedToken.substring(0, 60)}...`);
@@ -1092,7 +1112,10 @@ These paths are protected because they may contain sensitive data (credentials, 
       return result;
 
     } catch (error) {
-      result.error = error instanceof Error ? error.message : String(error);
+      // SECURITY: Sanitize error messages to prevent secret leakage
+      const sanitizer = getSanitizer();
+      const rawError = error instanceof Error ? error.message : String(error);
+      result.error = sanitizer.sanitize(rawError);
       result.duration = Date.now() - startTime;
       console.error('[PhasedExecutor] Execution failed:', result.error);
 

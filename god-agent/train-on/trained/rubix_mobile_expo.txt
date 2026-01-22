@@ -1,0 +1,672 @@
+# RUBIX TOOL: EXPO
+# VERSION: SDK_50+
+# FOUNDATION: Expo_Inc|React_Native
+# PHILOSOPHY: build_react_native_apps_faster|managed_workflow|OTA_updates
+
+==============================================================================
+HISTORY
+==============================================================================
+2015:Exponent_founded>Charlie_Cheever|James_Ide
+2016:Exponent_SDK>managed_RN_experience
+2017:Renamed_to_Expo
+2019:Bare_workflow>eject_alternative
+2020:EAS_Build>cloud_builds
+2021:Expo_Dev_Client>custom_native_code
+2022:Expo_Router>file_based_routing
+2023:SDK_49>React_Native_0.72|Expo_Router_v2
+2024:SDK_50>React_Native_0.73|New_Architecture
+
+WHY_EXPO
++faster_development:no_Xcode_Android_Studio
++OTA_updates:skip_app_store_review
++managed_native:push_notifications|camera|etc
++EAS:cloud_builds|submissions
++Expo_Go:instant_testing
+
+WORKFLOW_TYPES
+Managed:Expo_handles_native|limited_customization
+Bare:full_native_access|manual_config
+Dev_Build:managed_DX+custom_native|recommended
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+CREATE_PROJECT
+npx create-expo-app@latest my-app
+cd my-app
+npx expo start
+
+TEMPLATES
+npx create-expo-app my-app                    # default
+npx create-expo-app my-app --template blank   # minimal
+npx create-expo-app my-app --template tabs    # bottom tabs
+npx create-expo-app my-app --template bare-minimum  # bare workflow
+
+PROJECT_STRUCTURE
+my-app/
+  app/                  # Expo Router pages
+    _layout.tsx
+    index.tsx
+    (tabs)/
+      _layout.tsx
+      home.tsx
+      profile.tsx
+  components/
+  constants/
+  hooks/
+  assets/
+  app.json              # Expo config
+  package.json
+  tsconfig.json
+
+APP_JSON_CONFIG
+{
+  "expo": {
+    "name": "My App",
+    "slug": "my-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.myapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.example.myapp"
+    },
+    "scheme": "myapp",
+    "plugins": [],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
+
+APP_CONFIG_JS_DYNAMIC
+// app.config.js
+export default ({ config }) => ({
+  ...config,
+  name: process.env.APP_ENV === 'production' ? 'My App' : 'My App (Dev)',
+  ios: {
+    ...config.ios,
+    bundleIdentifier: process.env.APP_ENV === 'production' 
+      ? 'com.example.myapp' 
+      : 'com.example.myapp.dev'
+  },
+  extra: {
+    apiUrl: process.env.API_URL,
+    eas: {
+      projectId: "your-project-id"
+    }
+  }
+})
+
+==============================================================================
+EXPO_ROUTER_PATTERNS
+==============================================================================
+FILE_BASED_ROUTING
+app/
+  _layout.tsx          # Root layout
+  index.tsx            # / route
+  about.tsx            # /about route
+  users/
+    _layout.tsx        # Nested layout
+    index.tsx          # /users route
+    [id].tsx           # /users/:id route
+  (tabs)/
+    _layout.tsx        # Tab navigator
+    home.tsx           # Tab screen
+    profile.tsx        # Tab screen
+  (auth)/
+    login.tsx          # Grouped route
+    register.tsx
+
+ROOT_LAYOUT
+// app/_layout.tsx
+import { Stack } from 'expo-router'
+
+export default function RootLayout() {
+  return (
+    <Stack>
+      <Stack.Screen name="index" options={{ title: 'Home' }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+    </Stack>
+  )
+}
+
+TAB_LAYOUT
+// app/(tabs)/_layout.tsx
+import { Tabs } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+
+export default function TabLayout() {
+  return (
+    <Tabs>
+      <Tabs.Screen
+        name="home"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="home" size={24} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="person" size={24} color={color} />
+          ),
+        }}
+      />
+    </Tabs>
+  )
+}
+
+NAVIGATION_HOOKS
+import { useRouter, useLocalSearchParams, useSegments, Link } from 'expo-router'
+
+function MyScreen() {
+  const router = useRouter()
+  const { id } = useLocalSearchParams()
+  const segments = useSegments()
+  
+  return (
+    <View>
+      {/* Declarative navigation */}
+      <Link href="/about">About</Link>
+      <Link href={{ pathname: '/users/[id]', params: { id: '123' } }}>
+        User 123
+      </Link>
+      
+      {/* Imperative navigation */}
+      <Button onPress={() => router.push('/about')} title="Go to About" />
+      <Button onPress={() => router.back()} title="Go Back" />
+      <Button onPress={() => router.replace('/home')} title="Replace" />
+    </View>
+  )
+}
+
+TYPED_ROUTES
+// Enable in app.json
+{
+  "expo": {
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
+
+// Usage - autocomplete and type checking
+router.push('/users/[id]', { id: '123' })
+
+PROTECTED_ROUTES
+// app/_layout.tsx
+import { useAuth } from '@/hooks/useAuth'
+import { Redirect, Stack } from 'expo-router'
+
+export default function RootLayout() {
+  const { user, isLoading } = useAuth()
+  
+  if (isLoading) {
+    return <LoadingScreen />
+  }
+  
+  if (!user) {
+    return <Redirect href="/login" />
+  }
+  
+  return <Stack />
+}
+
+==============================================================================
+EXPO_SDK_MODULES
+==============================================================================
+INSTALLATION
+npx expo install expo-camera
+npx expo install expo-location
+npx expo install expo-image-picker
+npx expo install expo-notifications
+
+CAMERA
+import { CameraView, useCameraPermissions } from 'expo-camera'
+
+function CameraScreen() {
+  const [permission, requestPermission] = useCameraPermissions()
+  const cameraRef = useRef<CameraView>(null)
+  
+  if (!permission) return <View />
+  
+  if (!permission.granted) {
+    return (
+      <View>
+        <Text>We need camera permission</Text>
+        <Button onPress={requestPermission} title="Grant Permission" />
+      </View>
+    )
+  }
+  
+  const takePicture = async () => {
+    if (cameraRef.current) {
+      const photo = await cameraRef.current.takePictureAsync()
+      console.log(photo.uri)
+    }
+  }
+  
+  return (
+    <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back">
+      <Button onPress={takePicture} title="Take Photo" />
+    </CameraView>
+  )
+}
+
+IMAGE_PICKER
+import * as ImagePicker from 'expo-image-picker'
+
+async function pickImage() {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: true,
+    aspect: [4, 3],
+    quality: 1,
+  })
+  
+  if (!result.canceled) {
+    setImage(result.assets[0].uri)
+  }
+}
+
+async function takePhoto() {
+  const result = await ImagePicker.launchCameraAsync({
+    allowsEditing: true,
+    quality: 1,
+  })
+  
+  if (!result.canceled) {
+    setImage(result.assets[0].uri)
+  }
+}
+
+LOCATION
+import * as Location from 'expo-location'
+
+async function getLocation() {
+  const { status } = await Location.requestForegroundPermissionsAsync()
+  if (status !== 'granted') {
+    Alert.alert('Permission denied')
+    return
+  }
+  
+  const location = await Location.getCurrentPositionAsync({})
+  console.log(location.coords.latitude, location.coords.longitude)
+}
+
+// Watch location
+const subscription = await Location.watchPositionAsync(
+  { accuracy: Location.Accuracy.High, timeInterval: 1000 },
+  (location) => {
+    setLocation(location)
+  }
+)
+
+// Cleanup
+subscription.remove()
+
+NOTIFICATIONS
+import * as Notifications from 'expo-notifications'
+import * as Device from 'expo-device'
+
+// Configure handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+})
+
+// Register for push notifications
+async function registerForPushNotifications() {
+  if (!Device.isDevice) {
+    alert('Must use physical device')
+    return
+  }
+  
+  const { status: existingStatus } = await Notifications.getPermissionsAsync()
+  let finalStatus = existingStatus
+  
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync()
+    finalStatus = status
+  }
+  
+  if (finalStatus !== 'granted') {
+    alert('Failed to get push token')
+    return
+  }
+  
+  const token = await Notifications.getExpoPushTokenAsync({
+    projectId: 'your-project-id'
+  })
+  
+  return token.data
+}
+
+// Listen for notifications
+useEffect(() => {
+  const subscription = Notifications.addNotificationReceivedListener(
+    notification => {
+      console.log(notification)
+    }
+  )
+  
+  const responseSubscription = Notifications.addNotificationResponseReceivedListener(
+    response => {
+      console.log(response)
+    }
+  )
+  
+  return () => {
+    subscription.remove()
+    responseSubscription.remove()
+  }
+}, [])
+
+SECURE_STORE
+import * as SecureStore from 'expo-secure-store'
+
+await SecureStore.setItemAsync('token', 'secret_value')
+const token = await SecureStore.getItemAsync('token')
+await SecureStore.deleteItemAsync('token')
+
+FILE_SYSTEM
+import * as FileSystem from 'expo-file-system'
+
+// Download file
+const { uri } = await FileSystem.downloadAsync(
+  'https://example.com/image.png',
+  FileSystem.documentDirectory + 'image.png'
+)
+
+// Read file
+const content = await FileSystem.readAsStringAsync(uri)
+
+// Write file
+await FileSystem.writeAsStringAsync(
+  FileSystem.documentDirectory + 'data.json',
+  JSON.stringify(data)
+)
+
+==============================================================================
+EAS_BUILD
+==============================================================================
+SETUP
+npm install -g eas-cli
+eas login
+eas build:configure
+
+EAS_JSON
+// eas.json
+{
+  "cli": {
+    "version": ">= 7.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {}
+  },
+  "submit": {
+    "production": {}
+  }
+}
+
+BUILD_COMMANDS
+eas build --platform ios
+eas build --platform android
+eas build --platform all
+
+# Development build
+eas build --profile development --platform ios
+
+# Preview build (internal testing)
+eas build --profile preview --platform android
+
+# Production build
+eas build --profile production --platform all
+
+DEV_CLIENT
+# Create development build with expo-dev-client
+npx expo install expo-dev-client
+eas build --profile development --platform ios
+
+# Then run
+npx expo start --dev-client
+
+ENVIRONMENT_VARIABLES
+// eas.json
+{
+  "build": {
+    "production": {
+      "env": {
+        "API_URL": "https://api.production.com"
+      }
+    },
+    "preview": {
+      "env": {
+        "API_URL": "https://api.staging.com"
+      }
+    }
+  }
+}
+
+// Or use EAS Secrets
+eas secret:create --name API_KEY --value "xxx" --scope project
+
+==============================================================================
+EAS_UPDATE_OTA
+==============================================================================
+SETUP
+npx expo install expo-updates
+eas update:configure
+
+UPDATE_COMMANDS
+# Create update
+eas update --branch production --message "Bug fixes"
+
+# Preview update
+eas update --branch preview --message "New feature"
+
+RUNTIME_VERSION
+// app.json
+{
+  "expo": {
+    "runtimeVersion": {
+      "policy": "sdkVersion"  // or "appVersion" or "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/your-project-id"
+    }
+  }
+}
+
+CHECKING_UPDATES
+import * as Updates from 'expo-updates'
+
+async function checkForUpdates() {
+  try {
+    const update = await Updates.checkForUpdateAsync()
+    if (update.isAvailable) {
+      await Updates.fetchUpdateAsync()
+      await Updates.reloadAsync()
+    }
+  } catch (e) {
+    console.log(e)
+  }
+}
+
+==============================================================================
+EAS_SUBMIT
+==============================================================================
+SUBMIT_COMMANDS
+# Submit to App Store
+eas submit --platform ios
+
+# Submit to Play Store
+eas submit --platform android
+
+# Auto-submit after build
+eas build --platform ios --auto-submit
+
+CREDENTIALS
+# iOS: EAS manages automatically or
+eas credentials
+
+# Android: Upload keystore
+eas credentials --platform android
+
+==============================================================================
+EXPO_PLUGINS_CONFIG
+==============================================================================
+CONFIG_PLUGINS
+// app.json
+{
+  "expo": {
+    "plugins": [
+      "expo-camera",
+      "expo-location",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access photos"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffffff"
+        }
+      ]
+    ]
+  }
+}
+
+CUSTOM_PLUGIN
+// plugins/withCustomConfig.js
+const { withAndroidManifest } = require('@expo/config-plugins')
+
+module.exports = function withCustomConfig(config) {
+  return withAndroidManifest(config, async (config) => {
+    // Modify AndroidManifest.xml
+    return config
+  })
+}
+
+// app.json
+{
+  "plugins": ["./plugins/withCustomConfig"]
+}
+
+==============================================================================
+EXPO_CONSTANTS
+==============================================================================
+import Constants from 'expo-constants'
+
+Constants.expoConfig?.name        // App name
+Constants.expoConfig?.version     // App version
+Constants.expoConfig?.extra       // Extra config values
+Constants.appOwnership            // 'expo' | 'standalone' | null
+Constants.isDevice                // Is physical device
+Constants.platform                // Platform info
+
+// Access extra config
+const apiUrl = Constants.expoConfig?.extra?.apiUrl
+
+==============================================================================
+EXPO_IMAGE_OPTIMIZED
+==============================================================================
+import { Image } from 'expo-image'
+
+<Image
+  source={{ uri: 'https://example.com/image.jpg' }}
+  placeholder={blurhash}
+  contentFit="cover"
+  transition={200}
+  style={{ width: 200, height: 200 }}
+/>
+
++better_performance_than_RN_Image
++blurhash_placeholders
++caching_built_in
+
+==============================================================================
+LOCAL_DEVELOPMENT
+==============================================================================
+EXPO_GO
+npx expo start                    # Start dev server
+# Scan QR code with Expo Go app
+
+DEVELOPMENT_BUILD
+npx expo start --dev-client       # Requires dev client build
+
+SIMULATORS
+npx expo start --ios              # iOS Simulator
+npx expo start --android          # Android Emulator
+
+TUNNEL
+npx expo start --tunnel           # For remote testing
+
+CLEAR_CACHE
+npx expo start --clear
+
+==============================================================================
+DEBUGGING
+==============================================================================
+REACT_DEVTOOLS
+npx react-devtools
+
+FLIPPER
+# Works with dev client builds
+
+LOGGING
+console.log()                     # Appears in terminal
+console.warn()                    # Yellow box warning
+console.error()                   # Red box error
+
+NETWORK_DEBUGGING
+# Use React Native Debugger or Flipper
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Expo_Go_Limitations     | native_module_needed             | dev_client_build
+No_OTA_Updates          | users_on_old_version             | eas_update
+Hardcoded_Config        | API_URL_in_code                  | app.config.js
+No_Error_Boundary       | white_screen_crash               | ErrorBoundary
+Large_Bundle            | slow_OTA_updates                 | code_splitting
+Missing_Permissions     | runtime_crash                    | config_plugins
+No_Splash_Config        | white_flash_on_load              | splash_config
+Sync_Storage            | blocking_UI                      | async_storage
+No_Deep_Linking         | can't_share_screens              | expo_router_scheme
+Dev_Only_Packages       | build_fails                      | proper_dependencies

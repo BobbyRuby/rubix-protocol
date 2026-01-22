@@ -1,0 +1,776 @@
+# RUBIX LANGUAGE: TYPESCRIPT
+# VERSION: 5.x
+# FOUNDATION: Microsoft|Anders_Hejlsberg|Open_Source
+# PHILOSOPHY: typed_superset_of_JS|gradual_typing|structural_typing
+
+==============================================================================
+HISTORY
+==============================================================================
+2012:Microsoft>Anders_Hejlsberg>TypeScript_announced
+2014:v1.0>stable
+2016:v2.0>null_checks|control_flow_analysis
+2018:v3.0>project_references|unknown_type
+2020:v4.0>variadic_tuple_types|labeled_tuples
+2022:v4.9>satisfies_operator
+2023:v5.0>decorators|const_type_parameters
+2024:v5.4>NoInfer|improved_narrowing
+
+TYPESCRIPT_VS_JAVASCRIPT
++static_type_checking:catch_errors_early
++IDE_support:autocomplete|refactoring
++documentation:types_are_docs
++gradual_adoption:valid_JS_is_valid_TS
+-compilation_step:build_required
+-learning_curve:type_system_complexity
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+INIT
+npm init -y
+npm install -D typescript @types/node
+npx tsc --init
+
+TSCONFIG_RECOMMENDED
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+
+STRICT_MODE_FLAGS
+strict:enables_all_below
+strictNullChecks:null|undefined_explicit
+strictFunctionTypes:contravariant_params
+strictBindCallApply:typed_bind_call_apply
+strictPropertyInitialization:class_property_init
+noImplicitAny:no_implicit_any
+noImplicitThis:no_implicit_this
+alwaysStrict:emit_use_strict
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+PRIMITIVES
+let str: string = "hello";
+let num: number = 42;
+let big: bigint = 100n;
+let bool: boolean = true;
+let sym: symbol = Symbol("key");
+let undef: undefined = undefined;
+let nul: null = null;
+
+SPECIAL_TYPES
+let any: any = "anything";     // Escape hatch - avoid
+let unknown: unknown = "safe"; // Type-safe any
+let never: never;              // Never returns/impossible
+let void_: void = undefined;   // No return value
+
+ARRAYS
+const numbers: number[] = [1, 2, 3];
+const strings: Array<string> = ["a", "b"];
+const mixed: (string | number)[] = [1, "two"];
+const readonly: readonly number[] = [1, 2, 3];
+const tuple: [string, number] = ["hello", 42];
+const namedTuple: [name: string, age: number] = ["John", 30];
+
+OBJECTS
+const user: { name: string; age: number } = {
+  name: "John",
+  age: 30,
+};
+
+// Optional properties
+const config: { host: string; port?: number } = {
+  host: "localhost",
+};
+
+// Readonly
+const point: { readonly x: number; readonly y: number } = {
+  x: 1,
+  y: 2,
+};
+
+// Index signature
+const dict: { [key: string]: number } = {
+  a: 1,
+  b: 2,
+};
+
+// Record utility
+const record: Record<string, number> = { a: 1, b: 2 };
+
+==============================================================================
+TYPE_ALIASES_AND_INTERFACES
+==============================================================================
+TYPE_ALIAS
+type UserID = string;
+type Point = { x: number; y: number };
+type StringOrNumber = string | number;
+type Callback = (data: string) => void;
+
+INTERFACE
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  age?: number;
+  readonly createdAt: Date;
+}
+
+// Extending
+interface Admin extends User {
+  permissions: string[];
+}
+
+// Multiple inheritance
+interface Employee extends User, Timestamps {
+  department: string;
+}
+
+TYPE_VS_INTERFACE
+// Interface - extendable, declaration merging
+interface User {
+  name: string;
+}
+interface User {
+  email: string;  // Merges with above
+}
+
+// Type - unions, intersections, mapped types
+type Result = Success | Failure;
+type UserWithTimestamps = User & Timestamps;
+
+WHEN_TO_USE
+interface:object_shapes|extendable|declaration_merging
+type:unions|intersections|primitives|tuples|mapped_types
+
+==============================================================================
+UNION_AND_INTERSECTION
+==============================================================================
+UNION_TYPES
+type StringOrNumber = string | number;
+
+function format(value: string | number): string {
+  if (typeof value === "string") {
+    return value.toUpperCase();
+  }
+  return value.toFixed(2);
+}
+
+DISCRIMINATED_UNIONS
+type Success = {
+  status: "success";
+  data: string;
+};
+
+type Failure = {
+  status: "failure";
+  error: Error;
+};
+
+type Result = Success | Failure;
+
+function handleResult(result: Result) {
+  switch (result.status) {
+    case "success":
+      console.log(result.data);  // TypeScript knows it's Success
+      break;
+    case "failure":
+      console.log(result.error); // TypeScript knows it's Failure
+      break;
+  }
+}
+
+INTERSECTION_TYPES
+type Timestamps = {
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type User = {
+  id: string;
+  name: string;
+};
+
+type UserWithTimestamps = User & Timestamps;
+
+==============================================================================
+GENERICS
+==============================================================================
+GENERIC_FUNCTIONS
+function identity<T>(value: T): T {
+  return value;
+}
+
+const str = identity("hello");  // string
+const num = identity(42);       // number
+
+function firstElement<T>(arr: T[]): T | undefined {
+  return arr[0];
+}
+
+// Multiple type parameters
+function map<T, U>(arr: T[], fn: (item: T) => U): U[] {
+  return arr.map(fn);
+}
+
+GENERIC_CONSTRAINTS
+interface HasLength {
+  length: number;
+}
+
+function logLength<T extends HasLength>(value: T): T {
+  console.log(value.length);
+  return value;
+}
+
+logLength("hello");     // OK
+logLength([1, 2, 3]);   // OK
+// logLength(123);      // Error - no length
+
+// keyof constraint
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+
+GENERIC_INTERFACES
+interface Repository<T> {
+  find(id: string): Promise<T | null>;
+  findAll(): Promise<T[]>;
+  save(entity: T): Promise<T>;
+  delete(id: string): Promise<void>;
+}
+
+class UserRepository implements Repository<User> {
+  async find(id: string): Promise<User | null> { /* ... */ }
+  async findAll(): Promise<User[]> { /* ... */ }
+  async save(entity: User): Promise<User> { /* ... */ }
+  async delete(id: string): Promise<void> { /* ... */ }
+}
+
+GENERIC_CLASSES
+class Stack<T> {
+  private items: T[] = [];
+  
+  push(item: T): void {
+    this.items.push(item);
+  }
+  
+  pop(): T | undefined {
+    return this.items.pop();
+  }
+}
+
+const numberStack = new Stack<number>();
+const stringStack = new Stack<string>();
+
+DEFAULT_TYPE_PARAMETERS
+interface ApiResponse<T = unknown> {
+  data: T;
+  status: number;
+}
+
+const response: ApiResponse = { data: "unknown type", status: 200 };
+const userResponse: ApiResponse<User> = { data: user, status: 200 };
+
+==============================================================================
+UTILITY_TYPES
+==============================================================================
+BUILT_IN_UTILITIES
+// Partial - all properties optional
+type PartialUser = Partial<User>;
+
+// Required - all properties required
+type RequiredUser = Required<User>;
+
+// Readonly - all properties readonly
+type ReadonlyUser = Readonly<User>;
+
+// Pick - select properties
+type UserName = Pick<User, "name" | "email">;
+
+// Omit - exclude properties
+type UserWithoutPassword = Omit<User, "password">;
+
+// Record - construct object type
+type UserRoles = Record<string, string[]>;
+
+// Exclude - remove from union
+type NonStringPrimitives = Exclude<string | number | boolean, string>;
+
+// Extract - extract from union
+type StringsOnly = Extract<string | number | boolean, string>;
+
+// NonNullable - remove null and undefined
+type DefinitelyString = NonNullable<string | null | undefined>;
+
+// ReturnType - function return type
+type FnReturn = ReturnType<typeof someFunction>;
+
+// Parameters - function parameter types
+type FnParams = Parameters<typeof someFunction>;
+
+// Awaited - unwrap Promise
+type ResolvedType = Awaited<Promise<string>>;  // string
+
+PRACTICAL_EXAMPLES
+// API update payload
+type UpdateUserPayload = Partial<Omit<User, "id" | "createdAt">>;
+
+// Form state
+type FormErrors<T> = Partial<Record<keyof T, string>>;
+
+// Deep readonly
+type DeepReadonly<T> = {
+  readonly [K in keyof T]: T[K] extends object ? DeepReadonly<T[K]> : T[K];
+};
+
+==============================================================================
+MAPPED_TYPES
+==============================================================================
+BASIC_MAPPED
+type Optional<T> = {
+  [K in keyof T]?: T[K];
+};
+
+type Nullable<T> = {
+  [K in keyof T]: T[K] | null;
+};
+
+type Getters<T> = {
+  [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K];
+};
+
+KEY_REMAPPING
+// Remove properties
+type RemoveKind<T> = {
+  [K in keyof T as Exclude<K, "kind">]: T[K];
+};
+
+// Filter properties
+type OnlyStrings<T> = {
+  [K in keyof T as T[K] extends string ? K : never]: T[K];
+};
+
+// Prefix keys
+type Prefixed<T> = {
+  [K in keyof T as `data_${string & K}`]: T[K];
+};
+
+TEMPLATE_LITERAL_TYPES
+type EventName = `on${Capitalize<string>}`;
+type PropEventSource<T> = {
+  [K in keyof T as `on${Capitalize<string & K>}Changed`]: (value: T[K]) => void;
+};
+
+type User = { name: string; age: number };
+type UserEvents = PropEventSource<User>;
+// { onNameChanged: (value: string) => void; onAgeChanged: (value: number) => void }
+
+==============================================================================
+CONDITIONAL_TYPES
+==============================================================================
+BASIC_CONDITIONAL
+type IsString<T> = T extends string ? true : false;
+
+type A = IsString<string>;  // true
+type B = IsString<number>;  // false
+
+INFERRING_TYPES
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+
+type A = UnwrapPromise<Promise<string>>;  // string
+type B = UnwrapPromise<number>;            // number
+
+type ArrayElement<T> = T extends (infer U)[] ? U : never;
+
+type A = ArrayElement<string[]>;  // string
+
+FUNCTION_INFERENCE
+type GetReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
+
+function foo(): string { return ""; }
+type FooReturn = GetReturnType<typeof foo>;  // string
+
+DISTRIBUTIVE_CONDITIONAL
+type ToArray<T> = T extends any ? T[] : never;
+
+type A = ToArray<string | number>;  // string[] | number[]
+
+// Non-distributive (wrap in tuple)
+type ToArrayNonDist<T> = [T] extends [any] ? T[] : never;
+
+type B = ToArrayNonDist<string | number>;  // (string | number)[]
+
+==============================================================================
+TYPE_GUARDS
+==============================================================================
+TYPEOF_GUARDS
+function process(value: string | number) {
+  if (typeof value === "string") {
+    return value.toUpperCase();  // string
+  }
+  return value.toFixed(2);       // number
+}
+
+INSTANCEOF_GUARDS
+function logError(error: Error | string) {
+  if (error instanceof Error) {
+    console.log(error.message);  // Error
+  } else {
+    console.log(error);          // string
+  }
+}
+
+IN_OPERATOR
+interface Bird { fly(): void; }
+interface Fish { swim(): void; }
+
+function move(animal: Bird | Fish) {
+  if ("fly" in animal) {
+    animal.fly();   // Bird
+  } else {
+    animal.swim();  // Fish
+  }
+}
+
+CUSTOM_TYPE_GUARDS
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isUser(obj: unknown): obj is User {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "id" in obj &&
+    "name" in obj
+  );
+}
+
+function process(value: unknown) {
+  if (isUser(value)) {
+    console.log(value.name);  // TypeScript knows it's User
+  }
+}
+
+ASSERTION_FUNCTIONS
+function assertIsString(value: unknown): asserts value is string {
+  if (typeof value !== "string") {
+    throw new Error("Not a string");
+  }
+}
+
+function process(value: unknown) {
+  assertIsString(value);
+  console.log(value.toUpperCase());  // TypeScript knows it's string
+}
+
+==============================================================================
+CONST_ASSERTIONS
+==============================================================================
+AS_CONST
+const routes = {
+  home: "/",
+  about: "/about",
+  users: "/users",
+} as const;
+
+type Route = (typeof routes)[keyof typeof routes];
+// "/" | "/about" | "/users"
+
+const colors = ["red", "green", "blue"] as const;
+type Color = (typeof colors)[number];  // "red" | "green" | "blue"
+
+SATISFIES_OPERATOR
+type Colors = Record<string, [number, number, number] | string>;
+
+const palette = {
+  red: [255, 0, 0],
+  green: "#00ff00",
+  blue: [0, 0, 255],
+} satisfies Colors;
+
+// palette.red is still [number, number, number], not string | [...]
+const redValue = palette.red[0];  // number, not error
+
+==============================================================================
+CLASSES
+==============================================================================
+CLASS_BASICS
+class User {
+  // Property declaration
+  readonly id: string;
+  name: string;
+  private password: string;
+  protected email: string;
+  
+  constructor(id: string, name: string, email: string, password: string) {
+    this.id = id;
+    this.name = name;
+    this.email = email;
+    this.password = password;
+  }
+  
+  // Method
+  greet(): string {
+    return `Hello, ${this.name}`;
+  }
+  
+  // Getter/Setter
+  get displayName(): string {
+    return this.name.toUpperCase();
+  }
+  
+  set displayName(value: string) {
+    this.name = value.toLowerCase();
+  }
+}
+
+PARAMETER_PROPERTIES
+class User {
+  constructor(
+    public readonly id: string,
+    public name: string,
+    private password: string,
+  ) {}
+}
+
+ABSTRACT_CLASSES
+abstract class Shape {
+  abstract area(): number;
+  
+  describe(): string {
+    return `Area: ${this.area()}`;
+  }
+}
+
+class Circle extends Shape {
+  constructor(private radius: number) {
+    super();
+  }
+  
+  area(): number {
+    return Math.PI * this.radius ** 2;
+  }
+}
+
+IMPLEMENTS_INTERFACE
+interface Serializable {
+  serialize(): string;
+}
+
+class User implements Serializable {
+  constructor(public name: string) {}
+  
+  serialize(): string {
+    return JSON.stringify(this);
+  }
+}
+
+==============================================================================
+DECORATORS_5_0+
+==============================================================================
+CLASS_DECORATOR
+function logged<T extends new (...args: any[]) => any>(
+  target: T,
+  context: ClassDecoratorContext
+) {
+  return class extends target {
+    constructor(...args: any[]) {
+      console.log(`Creating ${context.name}`);
+      super(...args);
+    }
+  };
+}
+
+@logged
+class User {
+  constructor(public name: string) {}
+}
+
+METHOD_DECORATOR
+function log<T extends (...args: any[]) => any>(
+  target: T,
+  context: ClassMethodDecoratorContext
+) {
+  return function (this: ThisParameterType<T>, ...args: Parameters<T>) {
+    console.log(`Calling ${String(context.name)}`);
+    return target.apply(this, args);
+  };
+}
+
+class Calculator {
+  @log
+  add(a: number, b: number): number {
+    return a + b;
+  }
+}
+
+==============================================================================
+MODULE_PATTERNS
+==============================================================================
+EXPORT_IMPORT
+// Named exports
+export const PI = 3.14;
+export function add(a: number, b: number): number { return a + b; }
+export class Calculator {}
+
+// Default export
+export default class User {}
+
+// Re-export
+export { User } from "./user";
+export * from "./utils";
+export * as Utils from "./utils";
+
+// Import
+import User from "./user";
+import { add, PI } from "./math";
+import * as Math from "./math";
+import type { User } from "./types";  // Type-only import
+
+TYPE_ONLY_IMPORTS
+import type { User, Post } from "./types";
+import { type User, createUser } from "./user";
+
+export type { User };
+
+DECLARATION_FILES
+// types.d.ts
+declare module "some-untyped-lib" {
+  export function doSomething(value: string): number;
+}
+
+// global.d.ts
+declare global {
+  interface Window {
+    myGlobal: string;
+  }
+}
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+RESULT_TYPE
+type Result<T, E = Error> =
+  | { success: true; data: T }
+  | { success: false; error: E };
+
+function divide(a: number, b: number): Result<number, string> {
+  if (b === 0) {
+    return { success: false, error: "Division by zero" };
+  }
+  return { success: true, data: a / b };
+}
+
+const result = divide(10, 2);
+if (result.success) {
+  console.log(result.data);  // number
+} else {
+  console.log(result.error); // string
+}
+
+CUSTOM_ERRORS
+class AppError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public statusCode: number = 500,
+  ) {
+    super(message);
+    this.name = "AppError";
+  }
+}
+
+class NotFoundError extends AppError {
+  constructor(resource: string) {
+    super(`${resource} not found`, "NOT_FOUND", 404);
+  }
+}
+
+==============================================================================
+COMMON_PATTERNS
+==============================================================================
+BUILDER_PATTERN
+class QueryBuilder<T> {
+  private filters: Array<(item: T) => boolean> = [];
+  private sortKey?: keyof T;
+  
+  where(predicate: (item: T) => boolean): this {
+    this.filters.push(predicate);
+    return this;
+  }
+  
+  orderBy(key: keyof T): this {
+    this.sortKey = key;
+    return this;
+  }
+  
+  execute(items: T[]): T[] {
+    let result = items.filter(item => 
+      this.filters.every(f => f(item))
+    );
+    if (this.sortKey) {
+      result.sort((a, b) => 
+        a[this.sortKey!] > b[this.sortKey!] ? 1 : -1
+      );
+    }
+    return result;
+  }
+}
+
+FACTORY_PATTERN
+interface Shape {
+  area(): number;
+}
+
+function createShape(type: "circle", radius: number): Shape;
+function createShape(type: "rectangle", width: number, height: number): Shape;
+function createShape(type: string, ...args: number[]): Shape {
+  switch (type) {
+    case "circle":
+      return { area: () => Math.PI * args[0] ** 2 };
+    case "rectangle":
+      return { area: () => args[0] * args[1] };
+    default:
+      throw new Error("Unknown shape");
+  }
+}
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+any_Type                | : any                            | unknown|proper_type
+Type_Assertions         | as Type                          | type_guards
+Non-Null_Assertion      | value!                           | proper_null_check
+Object_Type             | : object                         | specific_interface
+Function_Type           | : Function                       | typed_signature
+No_Strict_Mode          | strict: false                    | enable_strict
+Implicit_Any            | no_type_annotation               | explicit_types
+Type_vs_Interface       | inconsistent_usage               | pick_convention
+No_Readonly             | mutable_when_shouldnt_be         | readonly|as_const
+Excessive_Generics      | T_everywhere                     | simplify

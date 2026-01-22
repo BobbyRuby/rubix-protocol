@@ -1,0 +1,794 @@
+# RUBIX PLATFORM: SWIFT_SWIFTUI_IOS
+# VERSION: Swift_5.9+|SwiftUI_5+|iOS_17+
+# FOUNDATION: Apple|Open_Source_Swift
+# PHILOSOPHY: safe_fast_expressive|protocol_oriented|declarative_UI
+
+==============================================================================
+HISTORY
+==============================================================================
+2014:Apple>Swift_announced>WWDC
+2015:Swift_2.0>error_handling|protocol_extensions
+2016:Swift_3.0>API_design_guidelines|open_source
+2019:Swift_5.0>ABI_stability|SwiftUI_introduced
+2020:Swift_5.3>multiple_trailing_closures
+2021:Swift_5.5>async_await|actors
+2022:Swift_5.7>regex_literals|opaque_types
+2023:Swift_5.9>macros|parameter_packs
+2024:Swift_6.0>complete_concurrency_checking
+
+SWIFTUI_EVOLUTION
+2019:SwiftUI_1.0>declarative_UI
+2020:SwiftUI_2.0>App_protocol|LazyStacks
+2021:SwiftUI_3.0>async_refreshable|searchable
+2022:SwiftUI_4.0>NavigationStack|charts
+2023:SwiftUI_5.0>Observable_macro|animations
+
+WHY_SWIFTUI
++declarative:describe_what_not_how
++live_previews:instant_feedback
++cross_platform:iOS|macOS|watchOS|tvOS
++less_code:vs_UIKit
++state_management_built_in
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+XCODE_NEW_PROJECT
+File > New > Project > App
+Interface: SwiftUI
+Language: Swift
+Storage: SwiftData (or Core Data)
+
+PROJECT_STRUCTURE
+MyApp/
+  MyApp.swift              # @main entry
+  ContentView.swift
+  Models/
+  Views/
+  ViewModels/
+  Services/
+  Utilities/
+  Resources/
+    Assets.xcassets
+    Localizable.xcstrings
+
+APP_ENTRY_POINT
+import SwiftUI
+
+@main
+struct MyApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+==============================================================================
+SWIFTUI_FUNDAMENTALS
+==============================================================================
+BASIC_VIEW
+struct ContentView: View {
+    var body: some View {
+        Text("Hello, World!")
+            .font(.title)
+            .foregroundStyle(.primary)
+    }
+}
+
+STATE_MANAGEMENT
+// Local state
+@State private var count = 0
+
+// Observable object (legacy)
+@StateObject private var viewModel = ViewModel()
+@ObservedObject var viewModel: ViewModel
+
+// Observable macro (modern, iOS 17+)
+@Observable
+class ViewModel {
+    var count = 0
+}
+
+// In view
+@State private var viewModel = ViewModel()
+
+// Environment
+@Environment(\.colorScheme) var colorScheme
+@Environment(\.dismiss) var dismiss
+
+// Bindings
+@Binding var isOn: Bool
+
+STATE_PROPERTY_WRAPPERS
+@State:view_owned|value_types|simple
+@Binding:two_way_reference|child_views
+@StateObject:view_owned|reference_types|created_once
+@ObservedObject:passed_in|reference_types
+@EnvironmentObject:dependency_injection
+@Environment:system_values|custom_keys
+@Observable:modern|automatic_tracking|iOS_17+
+
+VIEW_MODIFIERS
+Text("Hello")
+    .font(.headline)
+    .foregroundStyle(.blue)
+    .padding()
+    .background(.gray.opacity(0.2))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
+    .shadow(radius: 4)
+
+CONDITIONAL_RENDERING
+var body: some View {
+    if isLoggedIn {
+        HomeView()
+    } else {
+        LoginView()
+    }
+}
+
+// Or with Group
+Group {
+    if condition {
+        Text("Yes")
+    } else {
+        Text("No")
+    }
+}
+
+==============================================================================
+LAYOUT_PATTERNS
+==============================================================================
+STACKS
+VStack(alignment: .leading, spacing: 16) {
+    Text("Title")
+    Text("Subtitle")
+}
+
+HStack(spacing: 8) {
+    Image(systemName: "star")
+    Text("Rating")
+    Spacer()
+    Text("5.0")
+}
+
+ZStack(alignment: .bottomTrailing) {
+    Image("background")
+    Text("Overlay")
+}
+
+GRIDS
+LazyVGrid(columns: [
+    GridItem(.flexible()),
+    GridItem(.flexible()),
+], spacing: 16) {
+    ForEach(items) { item in
+        ItemView(item: item)
+    }
+}
+
+LazyHGrid(rows: [GridItem(.fixed(100))]) {
+    ForEach(items) { item in
+        ItemView(item: item)
+    }
+}
+
+LISTS
+List {
+    ForEach(items) { item in
+        ItemRow(item: item)
+    }
+    .onDelete(perform: deleteItems)
+    .onMove(perform: moveItems)
+}
+
+List(items) { item in
+    NavigationLink(value: item) {
+        ItemRow(item: item)
+    }
+}
+
+SCROLLVIEW
+ScrollView {
+    LazyVStack {
+        ForEach(0..<100) { index in
+            Text("Row \(index)")
+        }
+    }
+}
+
+ScrollView(.horizontal, showsIndicators: false) {
+    LazyHStack {
+        ForEach(items) { item in
+            ItemCard(item: item)
+        }
+    }
+}
+
+GEOMETRY_READER
+GeometryReader { geometry in
+    VStack {
+        Rectangle()
+            .frame(width: geometry.size.width * 0.5)
+    }
+}
+
+==============================================================================
+NAVIGATION_PATTERNS
+==============================================================================
+NAVIGATION_STACK_MODERN
+NavigationStack {
+    List(items) { item in
+        NavigationLink(value: item) {
+            ItemRow(item: item)
+        }
+    }
+    .navigationTitle("Items")
+    .navigationDestination(for: Item.self) { item in
+        ItemDetailView(item: item)
+    }
+}
+
+PROGRAMMATIC_NAVIGATION
+@State private var path = NavigationPath()
+
+NavigationStack(path: $path) {
+    List(items) { item in
+        Button(item.name) {
+            path.append(item)
+        }
+    }
+    .navigationDestination(for: Item.self) { item in
+        DetailView(item: item)
+    }
+}
+
+// Navigate programmatically
+path.append(newItem)
+path.removeLast()
+
+TAB_VIEW
+TabView {
+    HomeView()
+        .tabItem {
+            Label("Home", systemImage: "house")
+        }
+    
+    SearchView()
+        .tabItem {
+            Label("Search", systemImage: "magnifyingglass")
+        }
+    
+    ProfileView()
+        .tabItem {
+            Label("Profile", systemImage: "person")
+        }
+}
+
+SHEETS_MODALS
+@State private var showingSheet = false
+
+Button("Show Sheet") {
+    showingSheet = true
+}
+.sheet(isPresented: $showingSheet) {
+    SheetView()
+}
+
+// With item
+.sheet(item: $selectedItem) { item in
+    DetailView(item: item)
+}
+
+// Full screen
+.fullScreenCover(isPresented: $showingFullScreen) {
+    FullScreenView()
+}
+
+ALERTS_DIALOGS
+@State private var showingAlert = false
+
+Button("Delete") {
+    showingAlert = true
+}
+.alert("Delete Item?", isPresented: $showingAlert) {
+    Button("Cancel", role: .cancel) { }
+    Button("Delete", role: .destructive) {
+        deleteItem()
+    }
+} message: {
+    Text("This cannot be undone.")
+}
+
+// Confirmation dialog
+.confirmationDialog("Options", isPresented: $showingOptions) {
+    Button("Edit") { }
+    Button("Delete", role: .destructive) { }
+}
+
+==============================================================================
+DATA_FLOW_PATTERNS
+==============================================================================
+OBSERVABLE_MACRO_MODERN
+@Observable
+class UserViewModel {
+    var user: User?
+    var isLoading = false
+    var error: Error?
+    
+    func loadUser() async {
+        isLoading = true
+        do {
+            user = try await api.fetchUser()
+        } catch {
+            self.error = error
+        }
+        isLoading = false
+    }
+}
+
+struct ProfileView: View {
+    @State private var viewModel = UserViewModel()
+    
+    var body: some View {
+        Group {
+            if viewModel.isLoading {
+                ProgressView()
+            } else if let user = viewModel.user {
+                UserCard(user: user)
+            }
+        }
+        .task {
+            await viewModel.loadUser()
+        }
+    }
+}
+
+ENVIRONMENT_VALUES
+// Define custom key
+struct ThemeKey: EnvironmentKey {
+    static let defaultValue = Theme.light
+}
+
+extension EnvironmentValues {
+    var theme: Theme {
+        get { self[ThemeKey.self] }
+        set { self[ThemeKey.self] = newValue }
+    }
+}
+
+// Provide
+ContentView()
+    .environment(\.theme, .dark)
+
+// Consume
+@Environment(\.theme) var theme
+
+DEPENDENCY_INJECTION
+@Observable
+class AuthService {
+    var currentUser: User?
+    func signIn() async throws { }
+}
+
+@main
+struct MyApp: App {
+    @State private var authService = AuthService()
+    
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environment(authService)
+        }
+    }
+}
+
+struct ProfileView: View {
+    @Environment(AuthService.self) var authService
+}
+
+==============================================================================
+ASYNC_PATTERNS
+==============================================================================
+ASYNC_AWAIT
+func fetchUser() async throws -> User {
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return try JSONDecoder().decode(User.self, from: data)
+}
+
+// In view
+.task {
+    do {
+        user = try await fetchUser()
+    } catch {
+        self.error = error
+    }
+}
+
+TASK_MODIFIER
+struct ContentView: View {
+    @State private var items: [Item] = []
+    
+    var body: some View {
+        List(items) { item in
+            ItemRow(item: item)
+        }
+        .task {
+            items = await loadItems()
+        }
+        .refreshable {
+            items = await loadItems()
+        }
+    }
+}
+
+ACTORS
+actor DataStore {
+    private var cache: [String: Data] = [:]
+    
+    func get(_ key: String) -> Data? {
+        cache[key]
+    }
+    
+    func set(_ key: String, data: Data) {
+        cache[key] = data
+    }
+}
+
+// Usage
+let store = DataStore()
+await store.set("key", data: data)
+let cached = await store.get("key")
+
+COMBINE_LEGACY
+import Combine
+
+class ViewModel: ObservableObject {
+    @Published var searchText = ""
+    @Published var results: [Item] = []
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    init() {
+        $searchText
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .removeDuplicates()
+            .sink { [weak self] text in
+                Task { await self?.search(text) }
+            }
+            .store(in: &cancellables)
+    }
+}
+
+==============================================================================
+NETWORKING
+==============================================================================
+URLSESSION_MODERN
+struct APIClient {
+    private let session = URLSession.shared
+    private let decoder = JSONDecoder()
+    
+    func fetch<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
+        var request = URLRequest(url: endpoint.url)
+        request.httpMethod = endpoint.method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = AuthService.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              200..<300 ~= httpResponse.statusCode else {
+            throw APIError.invalidResponse
+        }
+        
+        return try decoder.decode(T.self, from: data)
+    }
+}
+
+ENDPOINT_PATTERN
+enum Endpoint {
+    case users
+    case user(id: String)
+    case createUser(User)
+    
+    var url: URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "api.example.com"
+        components.path = path
+        return components.url!
+    }
+    
+    var path: String {
+        switch self {
+        case .users: return "/users"
+        case .user(let id): return "/users/\(id)"
+        case .createUser: return "/users"
+        }
+    }
+    
+    var method: String {
+        switch self {
+        case .users, .user: return "GET"
+        case .createUser: return "POST"
+        }
+    }
+}
+
+==============================================================================
+PERSISTENCE_PATTERNS
+==============================================================================
+SWIFTDATA_MODERN
+import SwiftData
+
+@Model
+class Item {
+    var name: String
+    var timestamp: Date
+    @Relationship(deleteRule: .cascade) var tags: [Tag]
+    
+    init(name: String) {
+        self.name = name
+        self.timestamp = Date()
+        self.tags = []
+    }
+}
+
+@main
+struct MyApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .modelContainer(for: Item.self)
+    }
+}
+
+struct ContentView: View {
+    @Environment(\.modelContext) private var context
+    @Query private var items: [Item]
+    
+    var body: some View {
+        List(items) { item in
+            Text(item.name)
+        }
+    }
+    
+    func addItem() {
+        let item = Item(name: "New Item")
+        context.insert(item)
+    }
+}
+
+USERDEFAULTS
+extension UserDefaults {
+    var hasOnboarded: Bool {
+        get { bool(forKey: "hasOnboarded") }
+        set { set(newValue, forKey: "hasOnboarded") }
+    }
+}
+
+// Or with @AppStorage
+@AppStorage("hasOnboarded") var hasOnboarded = false
+
+KEYCHAIN
+import Security
+
+func saveToKeychain(token: String) throws {
+    let data = token.data(using: .utf8)!
+    let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrAccount as String: "authToken",
+        kSecValueData as String: data
+    ]
+    SecItemDelete(query as CFDictionary)
+    let status = SecItemAdd(query as CFDictionary, nil)
+    guard status == errSecSuccess else {
+        throw KeychainError.saveFailed
+    }
+}
+
+==============================================================================
+ANIMATIONS
+==============================================================================
+IMPLICIT_ANIMATIONS
+@State private var isExpanded = false
+
+Circle()
+    .frame(width: isExpanded ? 200 : 100)
+    .animation(.spring(), value: isExpanded)
+
+// Or wrap changes
+withAnimation(.easeInOut) {
+    isExpanded.toggle()
+}
+
+EXPLICIT_ANIMATIONS
+@State private var rotation = 0.0
+
+Image(systemName: "arrow.clockwise")
+    .rotationEffect(.degrees(rotation))
+    .onTapGesture {
+        withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
+            rotation = 360
+        }
+    }
+
+TRANSITIONS
+if showDetails {
+    DetailView()
+        .transition(.slide)
+        .transition(.opacity)
+        .transition(.asymmetric(
+            insertion: .scale,
+            removal: .opacity
+        ))
+}
+
+MATCHED_GEOMETRY
+@Namespace private var animation
+
+// Source
+Image("photo")
+    .matchedGeometryEffect(id: "photo", in: animation)
+
+// Destination
+Image("photo")
+    .matchedGeometryEffect(id: "photo", in: animation)
+
+==============================================================================
+TESTING
+==============================================================================
+UNIT_TESTS
+import XCTest
+@testable import MyApp
+
+final class UserViewModelTests: XCTestCase {
+    var sut: UserViewModel!
+    var mockAPI: MockAPIClient!
+    
+    override func setUp() {
+        mockAPI = MockAPIClient()
+        sut = UserViewModel(api: mockAPI)
+    }
+    
+    func testLoadUser_Success() async {
+        mockAPI.mockUser = User(name: "John")
+        
+        await sut.loadUser()
+        
+        XCTAssertEqual(sut.user?.name, "John")
+        XCTAssertFalse(sut.isLoading)
+    }
+}
+
+UI_TESTS
+import XCTest
+
+final class LoginUITests: XCTestCase {
+    let app = XCUIApplication()
+    
+    override func setUp() {
+        continueAfterFailure = false
+        app.launch()
+    }
+    
+    func testLogin_Success() {
+        app.textFields["Email"].tap()
+        app.textFields["Email"].typeText("test@example.com")
+        
+        app.secureTextFields["Password"].tap()
+        app.secureTextFields["Password"].typeText("password")
+        
+        app.buttons["Sign In"].tap()
+        
+        XCTAssertTrue(app.staticTexts["Welcome"].exists)
+    }
+}
+
+PREVIEW_TESTING
+#Preview {
+    ContentView()
+        .environment(MockViewModel())
+}
+
+#Preview("Dark Mode") {
+    ContentView()
+        .preferredColorScheme(.dark)
+}
+
+==============================================================================
+APP_LIFECYCLE
+==============================================================================
+SCENE_PHASE
+@Environment(\.scenePhase) var scenePhase
+
+.onChange(of: scenePhase) { _, newPhase in
+    switch newPhase {
+    case .active:
+        print("App is active")
+    case .inactive:
+        print("App is inactive")
+    case .background:
+        print("App in background")
+    @unknown default:
+        break
+    }
+}
+
+DEEP_LINKING
+@main
+struct MyApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .onOpenURL { url in
+                    handleDeepLink(url)
+                }
+        }
+    }
+}
+
+PUSH_NOTIFICATIONS
+import UserNotifications
+
+func requestPermission() async throws -> Bool {
+    let center = UNUserNotificationCenter.current()
+    return try await center.requestAuthorization(options: [.alert, .badge, .sound])
+}
+
+func registerForPush() {
+    UIApplication.shared.registerForRemoteNotifications()
+}
+
+// AppDelegate
+func application(_ application: UIApplication,
+                 didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    let token = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
+    // Send to server
+}
+
+==============================================================================
+BUILD_DEPLOY
+==============================================================================
+SCHEMES_CONFIGS
+Debug:development|faster_builds
+Release:production|optimized
+
+ARCHIVE_DISTRIBUTE
+Product > Archive
+Window > Organizer > Distribute App
+
+TESTFLIGHT
+1:Archive_app
+2:Upload_to_App_Store_Connect
+3:Add_testers
+4:Distribute_via_TestFlight
+
+APP_STORE_CHECKLIST
++screenshots_all_sizes
++app_preview_video
++privacy_policy_URL
++app_description
++keywords
++support_URL
++review_notes
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+View_Does_Too_Much      | view_with_networking             | ViewModel|MVVM
+@State_Reference_Type   | @State_with_class                | @StateObject|@Observable
+Force_Unwrap            | optionalValue!                   | guard_let|if_let
+No_Accessibility        | missing_accessibilityLabel       | add_labels
+Main_Thread_Block       | sync_network_call                | async_await
+Memory_Leak             | strong_self_in_closure           | [weak_self]
+Magic_Numbers           | hardcoded_dimensions             | constants
+No_Error_Handling       | try!_usage                       | do_catch
+Massive_View            | 500+_lines                       | extract_subviews
+No_Preview              | no_#Preview                      | add_previews

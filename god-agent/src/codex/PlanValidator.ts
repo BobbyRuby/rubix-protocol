@@ -17,6 +17,7 @@ import type { ContextBundle } from './ContextScout.js';
 import type { DesignOutput, PlanOutput } from './ClaudeReasoner.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { getCodexLogger } from './Logger.js';
+import type { SecurityFinding } from '../review/types.js';
 
 /**
  * Validation result from Phase 4.
@@ -63,11 +64,21 @@ export class PlanValidator {
 
   /**
    * Validate the plan using Claude API.
+   *
+   * SECURITY CONSOLIDATION: CodeReviewer now handles deterministic OWASP scanning.
+   * PlanValidator receives pre-scanned findings and focuses on:
+   * - Type safety and error handling
+   * - Logic correctness and edge cases
+   * - Performance issues (N+1, memory leaks, blocking ops)
+   * - Business logic security (auth bypass, privilege escalation)
+   *
+   * @param preScannedSecurity - Security findings from CodeReviewer (OWASP patterns)
    */
   async validate(
     context: ContextBundle,
     design: DesignOutput,
-    plan: PlanOutput
+    plan: PlanOutput,
+    preScannedSecurity?: SecurityFinding[]
   ): Promise<ValidationResult> {
     console.log(`[PlanValidator] Phase 4: Validating plan for task ${context.taskId}`);
     const logger = getCodexLogger();
@@ -127,7 +138,7 @@ export class PlanValidator {
       }
     }
 
-    const prompt = this.buildValidationPrompt(context, design, plan, securityPatterns);
+    const prompt = this.buildValidationPrompt(context, design, plan, securityPatterns, preScannedSecurity);
 
     // Log the full validation prompt
     logger.logResponse(
@@ -197,30 +208,56 @@ export class PlanValidator {
 
   /**
    * Build the validation prompt with pre-gathered context.
+   *
+   * SECURITY CONSOLIDATION: CodeReviewer handles deterministic OWASP scanning.
+   * This prompt now focuses on quality/logic and contextual security checks.
    */
   private buildValidationPrompt(
     context: ContextBundle,
     design: DesignOutput,
     plan: PlanOutput,
-    securityPatterns: string[]
+    securityPatterns: string[],
+    preScannedSecurity?: SecurityFinding[]
   ): string {
     // Build file contents summary
     const filesSummary = plan.files.map(f =>
       `### ${f.path} (${f.action})\n\`\`\`typescript\n${f.content.substring(0, 1000)}${f.content.length > 1000 ? '\n// ... truncated ...' : ''}\n\`\`\``
     ).join('\n\n');
 
-    // Format security patterns
-    const securitySection = securityPatterns.length > 0
+    // Format security patterns from memory
+    const memoryPatternsSection = securityPatterns.length > 0
       ? `## SECURITY PATTERNS (from memory)\n${securityPatterns.map((p, i) => `${i + 1}. ${p}`).join('\n\n')}\n`
       : '';
 
-    return `# VALIDATOR + GUARDIAN - Review Phase
+    // Format pre-scanned security findings from CodeReviewer
+    const preScannedSection = preScannedSecurity && preScannedSecurity.length > 0
+      ? `## SECURITY SCAN RESULTS (from CodeReviewer - OWASP patterns)
+**${preScannedSecurity.length} issues found - these are ALREADY DETECTED and will be addressed in the fix loop:**
+
+${preScannedSecurity.map((f, i) => `${i + 1}. **[${f.severity.toUpperCase()}]** ${f.type}: ${f.description}
+   - File: ${f.file}:${f.line}
+   - Remediation: ${f.remediation}`).join('\n\n')}
+
+**DO NOT re-scan for these pattern-based issues.** Focus on quality, logic, and contextual security below.
+`
+      : `## SECURITY SCAN RESULTS
+No pattern-based security issues detected by CodeReviewer.
+`;
+
+    return `# VALIDATOR - Quality & Logic Review Phase
 
 ## Your Role
-You are VALIDATOR (quality) and GUARDIAN (security) combined.
-Review the proposed code changes for issues.
+You are the VALIDATOR focused on:
+1. **Quality** - Type safety, error handling, code patterns
+2. **Logic** - Correctness, edge cases, business logic
+3. **Performance** - N+1 queries, memory leaks, blocking operations
+4. **Contextual Security** - Auth bypass, privilege escalation, business logic flaws
 
-${securitySection}
+**IMPORTANT:** Pattern-based security scanning (OWASP Top 10: SQL injection, XSS, hardcoded secrets, etc.)
+has ALREADY been performed by CodeReviewer. Do NOT duplicate that work.
+
+${preScannedSection}
+${memoryPatternsSection}
 ## Context Tokens
 ${context.compressedToken}
 
@@ -236,23 +273,26 @@ ${filesSummary}
 
 ## Review Checklist
 
-### Security (OWASP Top 10)
-- [ ] Injection vulnerabilities (SQL, XSS, command)
-- [ ] Broken authentication
-- [ ] Sensitive data exposure
-- [ ] Hardcoded secrets
-- [ ] CSRF/SSRF vulnerabilities
+### Quality (YOUR FOCUS)
+- [ ] Type safety - proper typing, no unsafe casts
+- [ ] Error handling - try/catch, error boundaries, proper error messages
+- [ ] Edge cases - null/undefined, empty arrays, boundary conditions
+- [ ] Code patterns - matches existing codebase conventions
 
-### Quality
-- [ ] Type safety
-- [ ] Error handling
-- [ ] Edge cases
-- [ ] Code patterns match existing codebase
+### Logic Correctness (YOUR FOCUS)
+- [ ] Business logic - does it do what it's supposed to?
+- [ ] State management - race conditions, stale data
+- [ ] Data flow - correct transformations, no data loss
 
-### Performance
-- [ ] N+1 queries
-- [ ] Memory leaks
-- [ ] Blocking operations
+### Performance (YOUR FOCUS)
+- [ ] N+1 queries - database access patterns
+- [ ] Memory leaks - event listeners, subscriptions cleanup
+- [ ] Blocking operations - async/await usage, no main thread blocking
+
+### Contextual Security (YOUR FOCUS - not pattern-based)
+- [ ] Auth bypass - logic flaws that skip authentication
+- [ ] Privilege escalation - access to data/actions user shouldn't have
+- [ ] Business logic abuse - misuse of valid functionality
 
 ## Required Output
 
@@ -266,9 +306,9 @@ List test types needed:
 - e2e
 
 ### SECURITY_ISSUES
-List any security issues found:
-- xss: Description
-- sqli: Description
+List any CONTEXTUAL security issues found (NOT pattern-based, those are handled):
+- auth_bypass: Description
+- privilege_escalation: Description
 
 ### PERFORMANCE_ISSUES
 List any performance issues:
@@ -277,12 +317,12 @@ List any performance issues:
 
 ### REQUIRED_MODIFICATIONS
 If issues found, list required fixes:
-- MODIFY: path/to/file.ts: add input sanitization
+- MODIFY: path/to/file.ts: description of change needed
 
 ### BLOCKERS
 List any blockers requiring human review:
 - need_schema_review
-- security_audit_required
+- complex_auth_logic_needs_review
 
 Provide ONLY the structured sections above.`;
   }

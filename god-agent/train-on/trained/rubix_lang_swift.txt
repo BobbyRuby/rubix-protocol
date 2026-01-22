@@ -1,0 +1,997 @@
+# RUBIX LANGUAGE: SWIFT
+# VERSION: 5.10+ (2024)
+# HISTORY: 2014_Apple_Lattner→2.0_2015→3.0_Breaking_2016→4.0_Codable_2017→5.0_ABI_Stable_2019→5.5_Async_2021→5.9_Macros_2023
+# PHILOSOPHY: safe|fast|expressive|protocol_oriented
+
+==============================================================================
+SETUP_ENVIRONMENT
+==============================================================================
+# Installation (macOS - comes with Xcode)
+xcode-select --install
+
+# Swift version
+swift --version
+
+# REPL
+swift
+
+# Compile and run
+swift main.swift
+swiftc -o app main.swift && ./app
+
+# Swift Package Manager
+swift package init --type executable
+swift build
+swift run
+swift test
+
+# Package.swift
+// swift-tools-version: 5.10
+import PackageDescription
+
+let package = Package(
+    name: "MyApp",
+    platforms: [.macOS(.v14)],
+    dependencies: [
+        .package(url: "https://github.com/vapor/vapor.git", from: "4.0.0"),
+    ],
+    targets: [
+        .executableTarget(
+            name: "MyApp",
+            dependencies: ["Vapor"]
+        ),
+        .testTarget(
+            name: "MyAppTests",
+            dependencies: ["MyApp"]
+        ),
+    ]
+)
+
+# Project structure
+MyApp/
+├── Package.swift
+├── Sources/
+│   └── MyApp/
+│       └── main.swift
+└── Tests/
+    └── MyAppTests/
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+# Integers
+let int: Int = 42           // Platform-specific (64-bit usually)
+let int8: Int8 = 42
+let int16: Int16 = 42
+let int32: Int32 = 42
+let int64: Int64 = 42
+let uint: UInt = 42
+
+# Floating point
+let double: Double = 3.14   // 64-bit
+let float: Float = 3.14     // 32-bit
+
+# Boolean
+let flag: Bool = true
+
+# Character
+let char: Character = "A"
+
+# String
+let str: String = "Hello"
+
+# Type inference
+let inferred = 42           // Int
+let inferredStr = "Hello"   // String
+
+# Constants and variables
+let constant = 42           // Immutable
+var variable = 42           // Mutable
+
+# Type conversion (explicit)
+let i = 42
+let d = Double(i)
+let s = String(i)
+let fromString = Int("42")  // Optional
+
+# Optionals
+var optional: String? = nil
+var nonOptional: String = "value"
+
+# Any and AnyObject
+let anything: Any = 42
+let anyObject: AnyObject = NSString("Hello")
+
+==============================================================================
+OPTIONALS
+==============================================================================
+# Optional declaration
+var name: String? = nil
+var name: String? = "John"
+
+# Unwrapping
+if let unwrapped = optional {
+    print(unwrapped)
+}
+
+if let name {  // Shorthand (same name)
+    print(name)
+}
+
+# Guard
+guard let name = optional else {
+    return
+}
+print(name)  // name is unwrapped
+
+# Force unwrap (dangerous)
+let value = optional!  // Crashes if nil
+
+# Optional chaining
+let length = name?.count
+let upper = name?.uppercased()
+
+# Nil coalescing
+let value = optional ?? "default"
+
+# Optional binding with multiple values
+if let a = optionalA, let b = optionalB, a > 0 {
+    print("\(a), \(b)")
+}
+
+# Implicitly unwrapped optionals
+var assumed: String! = "value"
+let value: String = assumed  // Auto-unwrap
+
+# Optional map/flatMap
+let length = optional.map { $0.count }  // Optional<Int>
+let nested: String?? = "hello"
+let flat = nested.flatMap { $0 }  // String?
+
+==============================================================================
+STRINGS
+==============================================================================
+# Creation
+let str = "Hello"
+let multiline = """
+    Line 1
+    Line 2
+    Line 3
+    """
+
+# Interpolation
+let name = "John"
+let greeting = "Hello, \(name)"
+let complex = "Result: \(value, format: .number)"
+
+# Raw strings
+let raw = #"Line with "quotes" and \n"#
+let rawInterp = #"Hello, \#(name)"#
+
+# Common operations
+str.count
+str.isEmpty
+str.hasPrefix("He")
+str.hasSuffix("lo")
+str.uppercased()
+str.lowercased()
+str.capitalized
+str.contains("ell")
+str.replacingOccurrences(of: "l", with: "L")
+str.split(separator: ",")
+str.trimmingCharacters(in: .whitespaces)
+str.components(separatedBy: ",")
+
+# Character access
+str.first
+str.last
+str[str.startIndex]
+str[str.index(str.startIndex, offsetBy: 2)]
+
+# Substring
+let start = str.startIndex
+let end = str.index(start, offsetBy: 3)
+let sub = str[start..<end]
+let substring = String(sub)
+
+# String building
+var builder = ""
+builder.append("Hello")
+builder += " World"
+
+==============================================================================
+COLLECTIONS
+==============================================================================
+# Array
+var array: [Int] = [1, 2, 3]
+var array = [Int]()
+var array = Array(repeating: 0, count: 5)
+
+array.append(4)
+array.append(contentsOf: [5, 6])
+array.insert(0, at: 0)
+array.remove(at: 0)
+array.removeLast()
+array.removeAll()
+array[0]
+array.first
+array.last
+array.count
+array.isEmpty
+array.contains(2)
+array.firstIndex(of: 2)
+array.sorted()
+array.reversed()
+array.shuffled()
+
+# Set
+var set: Set<Int> = [1, 2, 3]
+var set = Set<Int>()
+
+set.insert(4)
+set.remove(2)
+set.contains(2)
+set.union(other)
+set.intersection(other)
+set.subtracting(other)
+set.symmetricDifference(other)
+
+# Dictionary
+var dict: [String: Int] = ["a": 1, "b": 2]
+var dict = [String: Int]()
+
+dict["key"] = 42
+dict["key"]  // Optional
+dict["key", default: 0]
+dict.removeValue(forKey: "key")
+dict.keys
+dict.values
+dict.count
+dict.isEmpty
+
+# Iteration
+for item in array { }
+for (index, item) in array.enumerated() { }
+for (key, value) in dict { }
+
+# Functional operations
+array.map { $0 * 2 }
+array.filter { $0 > 2 }
+array.reduce(0, +)
+array.reduce(0) { $0 + $1 }
+array.flatMap { [$0, $0 * 2] }
+array.compactMap { Int($0) }  // Remove nils
+array.sorted { $0 < $1 }
+array.sorted(by: <)
+array.first { $0 > 2 }
+array.contains { $0 > 2 }
+array.allSatisfy { $0 > 0 }
+array.forEach { print($0) }
+
+==============================================================================
+CONTROL_FLOW
+==============================================================================
+# If/else
+if condition {
+    // ...
+} else if other {
+    // ...
+} else {
+    // ...
+}
+
+# Ternary
+let result = condition ? "yes" : "no"
+
+# Switch
+switch value {
+case 1:
+    print("one")
+case 2, 3:
+    print("two or three")
+case 4...10:
+    print("four to ten")
+case let x where x > 100:
+    print("big: \(x)")
+default:
+    print("default")
+}
+
+# Switch with enums (exhaustive)
+switch direction {
+case .north: print("north")
+case .south: print("south")
+case .east: print("east")
+case .west: print("west")
+}
+
+# Switch with tuples
+switch (x, y) {
+case (0, 0): print("origin")
+case (_, 0): print("on x-axis")
+case (0, _): print("on y-axis")
+case (-2...2, -2...2): print("near origin")
+default: print("somewhere")
+}
+
+# For loops
+for i in 1...10 { }          // 1 to 10 inclusive
+for i in 1..<10 { }          // 1 to 9
+for i in stride(from: 0, to: 10, by: 2) { }  // 0, 2, 4, 6, 8
+for _ in 1...5 { }           // Ignore value
+
+for item in collection { }
+for (index, item) in collection.enumerated() { }
+
+# While
+while condition {
+    // ...
+}
+
+repeat {
+    // ...
+} while condition
+
+# Break and continue
+for i in 1...10 {
+    if i == 5 { break }
+    if i % 2 == 0 { continue }
+}
+
+# Labeled statements
+outer: for i in 1...10 {
+    for j in 1...10 {
+        if condition { break outer }
+    }
+}
+
+==============================================================================
+FUNCTIONS
+==============================================================================
+# Basic function
+func greet(name: String) -> String {
+    return "Hello, \(name)"
+}
+greet(name: "John")
+
+# Argument labels
+func greet(person name: String) -> String {
+    return "Hello, \(name)"
+}
+greet(person: "John")
+
+# Omit argument label
+func greet(_ name: String) -> String {
+    return "Hello, \(name)"
+}
+greet("John")
+
+# Default parameters
+func greet(_ name: String = "World") -> String {
+    return "Hello, \(name)"
+}
+
+# Variadic parameters
+func sum(_ numbers: Int...) -> Int {
+    return numbers.reduce(0, +)
+}
+sum(1, 2, 3, 4, 5)
+
+# Inout parameters
+func swap(_ a: inout Int, _ b: inout Int) {
+    let temp = a
+    a = b
+    b = temp
+}
+var x = 1, y = 2
+swap(&x, &y)
+
+# Return tuple
+func minMax(_ array: [Int]) -> (min: Int, max: Int)? {
+    guard let min = array.min(), let max = array.max() else { return nil }
+    return (min, max)
+}
+let result = minMax([1, 2, 3])
+print(result?.min, result?.max)
+
+# Function types
+let add: (Int, Int) -> Int = { $0 + $1 }
+func operate(_ a: Int, _ b: Int, _ op: (Int, Int) -> Int) -> Int {
+    return op(a, b)
+}
+
+# Closures
+let double = { (x: Int) -> Int in x * 2 }
+let double: (Int) -> Int = { x in x * 2 }
+let double: (Int) -> Int = { $0 * 2 }
+
+# Trailing closure
+array.map { $0 * 2 }
+array.sorted { $0 < $1 }
+
+# Multiple trailing closures
+UIView.animate(withDuration: 0.3) {
+    // animations
+} completion: { finished in
+    // completion
+}
+
+# Escaping closures
+func fetch(completion: @escaping (Result) -> Void) {
+    DispatchQueue.main.async {
+        completion(.success)
+    }
+}
+
+# Autoclosure
+func assert(_ condition: @autoclosure () -> Bool) {
+    if !condition() { fatalError() }
+}
+assert(x > 0)  // Wrapped in closure automatically
+
+==============================================================================
+CLASSES
+==============================================================================
+# Basic class (reference type)
+class User {
+    var name: String
+    var email: String
+    
+    init(name: String, email: String) {
+        self.name = name
+        self.email = email
+    }
+    
+    func greet() -> String {
+        return "Hello, \(name)"
+    }
+    
+    deinit {
+        print("User deinitialized")
+    }
+}
+
+let user = User(name: "John", email: "john@example.com")
+
+# Computed properties
+class Circle {
+    var radius: Double
+    
+    var diameter: Double {
+        get { radius * 2 }
+        set { radius = newValue / 2 }
+    }
+    
+    var area: Double {
+        radius * radius * .pi
+    }
+}
+
+# Property observers
+class User {
+    var age: Int = 0 {
+        willSet { print("Will change to \(newValue)") }
+        didSet { print("Changed from \(oldValue)") }
+    }
+}
+
+# Lazy properties
+class DataManager {
+    lazy var data: [String] = loadData()
+}
+
+# Type properties
+class User {
+    static var count = 0
+    static let maxAge = 150
+    
+    class var defaultName: String {  // Can override in subclass
+        return "Unknown"
+    }
+}
+
+# Inheritance
+class Animal {
+    var name: String
+    
+    init(name: String) {
+        self.name = name
+    }
+    
+    func sound() -> String {
+        return "..."
+    }
+}
+
+class Dog: Animal {
+    var breed: String
+    
+    init(name: String, breed: String) {
+        self.breed = breed
+        super.init(name: name)
+    }
+    
+    override func sound() -> String {
+        return "Woof!"
+    }
+}
+
+# Final
+final class FinalClass { }
+class Base {
+    final func cannotOverride() { }
+}
+
+==============================================================================
+STRUCTS
+==============================================================================
+# Struct (value type, recommended default)
+struct Point {
+    var x: Double
+    var y: Double
+    
+    // Automatic memberwise initializer
+    // Point(x: 0, y: 0)
+    
+    func distance(to other: Point) -> Double {
+        let dx = x - other.x
+        let dy = y - other.y
+        return (dx*dx + dy*dy).squareRoot()
+    }
+    
+    // Mutating methods (modify self)
+    mutating func moveBy(x: Double, y: Double) {
+        self.x += x
+        self.y += y
+    }
+}
+
+var point = Point(x: 0, y: 0)
+point.moveBy(x: 5, y: 5)
+
+# When to use struct vs class
+// Struct: Value semantics, no inheritance needed, small data
+// Class: Reference semantics, inheritance, identity matters
+
+==============================================================================
+ENUMS
+==============================================================================
+# Basic enum
+enum Direction {
+    case north
+    case south
+    case east
+    case west
+}
+
+enum Direction {
+    case north, south, east, west
+}
+
+let dir = Direction.north
+
+# Raw values
+enum Planet: Int {
+    case mercury = 1, venus, earth, mars
+}
+Planet.earth.rawValue  // 3
+Planet(rawValue: 3)    // .earth
+
+enum Color: String {
+    case red = "FF0000"
+    case green = "00FF00"
+}
+
+# Associated values
+enum Barcode {
+    case upc(Int, Int, Int, Int)
+    case qr(String)
+}
+
+let code = Barcode.upc(8, 85909, 51226, 3)
+
+switch code {
+case .upc(let system, let manufacturer, let product, let check):
+    print("UPC: \(system), \(manufacturer), \(product), \(check)")
+case .qr(let code):
+    print("QR: \(code)")
+}
+
+# Enum methods
+enum Direction {
+    case north, south, east, west
+    
+    var opposite: Direction {
+        switch self {
+        case .north: return .south
+        case .south: return .north
+        case .east: return .west
+        case .west: return .east
+        }
+    }
+    
+    mutating func turnRight() {
+        self = switch self {
+        case .north: .east
+        case .east: .south
+        case .south: .west
+        case .west: .north
+        }
+    }
+}
+
+# Recursive enums
+indirect enum ArithExpr {
+    case number(Int)
+    case add(ArithExpr, ArithExpr)
+    case multiply(ArithExpr, ArithExpr)
+}
+
+==============================================================================
+PROTOCOLS
+==============================================================================
+# Protocol definition
+protocol Drawable {
+    var color: String { get set }
+    func draw()
+}
+
+protocol Named {
+    var name: String { get }
+}
+
+# Protocol conformance
+struct Circle: Drawable {
+    var color: String
+    var radius: Double
+    
+    func draw() {
+        print("Drawing circle")
+    }
+}
+
+# Protocol extensions (default implementations)
+extension Drawable {
+    func describe() -> String {
+        return "Drawable with color \(color)"
+    }
+}
+
+# Protocol composition
+func process(_ item: Drawable & Named) {
+    print("\(item.name): \(item.color)")
+}
+
+# Protocol as type
+var drawable: Drawable = Circle(color: "red", radius: 5)
+var drawables: [Drawable] = []
+
+# Associated types
+protocol Container {
+    associatedtype Item
+    mutating func append(_ item: Item)
+    var count: Int { get }
+    subscript(i: Int) -> Item { get }
+}
+
+# Protocol with Self requirement
+protocol Copyable {
+    func copy() -> Self
+}
+
+# Common protocols
+Equatable       // ==, !=
+Hashable        // hash(into:)
+Comparable      // <, <=, >, >=
+Codable         // Encodable & Decodable
+CustomStringConvertible  // description
+Identifiable    // id property
+Sendable        // Thread-safe
+
+==============================================================================
+EXTENSIONS
+==============================================================================
+# Add functionality to existing types
+extension String {
+    var isEmail: Bool {
+        contains("@")
+    }
+    
+    func truncated(to length: Int) -> String {
+        if count <= length { return self }
+        return String(prefix(length)) + "..."
+    }
+}
+
+"test@example.com".isEmail
+
+# Protocol conformance via extension
+extension Int: Drawable {
+    var color: String { "blue" }
+    func draw() { print("Drawing \(self)") }
+}
+
+# Generic extensions
+extension Array where Element: Numeric {
+    var sum: Element {
+        reduce(0, +)
+    }
+}
+
+# Extension with constraints
+extension Collection where Element: Equatable {
+    func containsDuplicates() -> Bool {
+        for (index, element) in enumerated() {
+            if dropFirst(index + 1).contains(element) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+==============================================================================
+GENERICS
+==============================================================================
+# Generic function
+func swap<T>(_ a: inout T, _ b: inout T) {
+    let temp = a
+    a = b
+    b = temp
+}
+
+# Generic type
+struct Stack<Element> {
+    private var items: [Element] = []
+    
+    mutating func push(_ item: Element) {
+        items.append(item)
+    }
+    
+    mutating func pop() -> Element? {
+        return items.popLast()
+    }
+}
+
+# Type constraints
+func findIndex<T: Equatable>(of value: T, in array: [T]) -> Int? {
+    return array.firstIndex(of: value)
+}
+
+# Multiple constraints
+func process<T: Hashable & Codable>(_ value: T) { }
+
+# Where clauses
+func allMatch<C: Collection>(_ collection: C, _ predicate: (C.Element) -> Bool) -> Bool
+    where C.Element: Equatable {
+    return collection.allSatisfy(predicate)
+}
+
+# Associated type constraints
+protocol Container {
+    associatedtype Item: Equatable
+    var items: [Item] { get }
+}
+
+# Opaque types (some)
+func makeCollection() -> some Collection {
+    return [1, 2, 3]
+}
+
+# Primary associated types (Swift 5.7+)
+func process(_ items: some Collection<Int>) { }
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+# Error protocol
+enum NetworkError: Error {
+    case notConnected
+    case timeout
+    case serverError(code: Int)
+}
+
+# Throwing functions
+func fetchData() throws -> Data {
+    guard isConnected else {
+        throw NetworkError.notConnected
+    }
+    return Data()
+}
+
+# Calling throwing functions
+do {
+    let data = try fetchData()
+    process(data)
+} catch NetworkError.notConnected {
+    print("Not connected")
+} catch NetworkError.serverError(let code) {
+    print("Server error: \(code)")
+} catch {
+    print("Unknown error: \(error)")
+}
+
+# try? (optional result)
+let data = try? fetchData()
+
+# try! (force, crashes on error)
+let data = try! fetchData()
+
+# Rethrows
+func perform(_ action: () throws -> Void) rethrows {
+    try action()
+}
+
+# Typed throws (Swift 6)
+func fetch() throws(NetworkError) -> Data { }
+
+==============================================================================
+CONCURRENCY_ASYNC_AWAIT
+==============================================================================
+# Async function
+func fetchUser(id: Int) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\(id)")!
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return try JSONDecoder().decode(User.self, from: data)
+}
+
+# Calling async functions
+Task {
+    do {
+        let user = try await fetchUser(id: 1)
+        print(user.name)
+    } catch {
+        print("Error: \(error)")
+    }
+}
+
+# Async let (parallel)
+async let user = fetchUser(id: 1)
+async let orders = fetchOrders(userId: 1)
+let (u, o) = try await (user, orders)
+
+# Task groups
+await withTaskGroup(of: User.self) { group in
+    for id in userIds {
+        group.addTask {
+            try await fetchUser(id: id)
+        }
+    }
+    
+    for await user in group {
+        print(user.name)
+    }
+}
+
+# Actors (thread-safe)
+actor UserCache {
+    private var cache: [Int: User] = [:]
+    
+    func get(_ id: Int) -> User? {
+        return cache[id]
+    }
+    
+    func set(_ user: User) {
+        cache[user.id] = user
+    }
+}
+
+let cache = UserCache()
+await cache.set(user)
+let cached = await cache.get(1)
+
+# MainActor
+@MainActor
+func updateUI() {
+    label.text = "Updated"
+}
+
+# Sendable
+struct User: Sendable {
+    let id: Int
+    let name: String
+}
+
+==============================================================================
+PROPERTY_WRAPPERS
+==============================================================================
+# Define property wrapper
+@propertyWrapper
+struct Clamped<Value: Comparable> {
+    var wrappedValue: Value {
+        didSet { wrappedValue = min(max(wrappedValue, range.lowerBound), range.upperBound) }
+    }
+    let range: ClosedRange<Value>
+    
+    init(wrappedValue: Value, _ range: ClosedRange<Value>) {
+        self.range = range
+        self.wrappedValue = min(max(wrappedValue, range.lowerBound), range.upperBound)
+    }
+}
+
+struct Settings {
+    @Clamped(0...100) var volume: Int = 50
+}
+
+# Common property wrappers (SwiftUI)
+@State           // Local mutable state
+@Binding         // Two-way binding to state
+@Published       // Observable property
+@ObservedObject  // External observable
+@StateObject     // Owned observable
+@Environment     // Environment value
+@AppStorage      // UserDefaults
+
+==============================================================================
+RESULT_BUILDERS
+==============================================================================
+# Result builder definition
+@resultBuilder
+struct ArrayBuilder<Element> {
+    static func buildBlock(_ components: Element...) -> [Element] {
+        return components
+    }
+    
+    static func buildOptional(_ component: [Element]?) -> [Element] {
+        return component ?? []
+    }
+    
+    static func buildEither(first component: [Element]) -> [Element] {
+        return component
+    }
+    
+    static func buildEither(second component: [Element]) -> [Element] {
+        return component
+    }
+}
+
+# Usage
+@ArrayBuilder<Int>
+func buildArray() -> [Int] {
+    1
+    2
+    if condition {
+        3
+    }
+    4
+}
+
+# SwiftUI View builder
+struct ContentView: View {
+    var body: some View {
+        VStack {
+            Text("Hello")
+            Text("World")
+            if showButton {
+                Button("Tap") { }
+            }
+        }
+    }
+}
+
+==============================================================================
+MACROS_SWIFT5_9
+==============================================================================
+# Freestanding macro
+let (a, b) = #unwrap(optionalA, optionalB)
+
+# Attached macro
+@Observable
+class User {
+    var name: String = ""
+    var age: Int = 0
+}
+
+# Common macros
+#warning("TODO: Fix this")
+#error("Not implemented")
+#selector(viewDidLoad)
+#keyPath(User.name)
+
+# Observation (Swift 5.9+)
+@Observable
+class Model {
+    var value: Int = 0
+}
+
+// Automatically observable, no @Published needed

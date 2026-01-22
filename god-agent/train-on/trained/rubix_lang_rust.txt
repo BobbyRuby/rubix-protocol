@@ -1,0 +1,746 @@
+# RUBIX LANGUAGE: RUST
+# VERSION: 1.75+
+# FOUNDATION: Mozilla>Rust_Foundation|Graydon_Hoare
+# PHILOSOPHY: safety|speed|concurrency|zero_cost_abstractions
+
+==============================================================================
+HISTORY
+==============================================================================
+2010:Mozilla>Graydon_Hoare>announced
+2015:Rust_1.0>stable
+2018:Rust_2018_Edition>module_system_changes
+2021:Rust_2021_Edition>closures|IntoIterator
+2021:Rust_Foundation>formed>AWS|Google|Huawei|Microsoft|Mozilla
+2024:Rust_1.75>async_fn_in_traits|return_position_impl_trait
+
+WHY_RUST
++memory_safety:no_GC|compile_time_checks
++zero_cost_abstractions:high_level_low_level_perf
++fearless_concurrency:data_race_prevention
++great_tooling:cargo|rustfmt|clippy
++wasm_support:first_class
+-steep_learning_curve:borrow_checker
+-longer_compile_times:vs_Go
+
+OWNERSHIP_RULES
+1:each_value_has_one_owner
+2:one_owner_at_a_time
+3:value_dropped_when_owner_out_of_scope
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+CREATE_PROJECT
+cargo new myproject          # Binary
+cargo new mylib --lib        # Library
+cargo init                   # In existing directory
+
+PROJECT_STRUCTURE
+myproject/
+  src/
+    main.rs                  # Binary entry
+    lib.rs                   # Library entry
+    models/
+      mod.rs
+      user.rs
+    services/
+      mod.rs
+  tests/
+    integration_test.rs
+  benches/
+    benchmark.rs
+  Cargo.toml
+  Cargo.lock
+  README.md
+
+CARGO_TOML
+[package]
+name = "myproject"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <you@example.com>"]
+description = "My Rust project"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "my_benchmark"
+harness = false
+
+CARGO_COMMANDS
+cargo build                  # Debug build
+cargo build --release        # Release build
+cargo run                    # Build and run
+cargo test                   # Run tests
+cargo test -- --nocapture    # Show println
+cargo check                  # Type check (fast)
+cargo clippy                 # Linting
+cargo fmt                    # Format
+cargo doc --open             # Generate docs
+cargo add package            # Add dependency
+cargo update                 # Update deps
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+PRIMITIVES
+let i: i32 = 42;             // Signed: i8, i16, i32, i64, i128, isize
+let u: u32 = 42;             // Unsigned: u8, u16, u32, u64, u128, usize
+let f: f64 = 3.14;           // Floats: f32, f64
+let b: bool = true;          // Boolean
+let c: char = 'A';           // Unicode scalar (4 bytes)
+let unit: () = ();           // Unit type
+
+TYPE_INFERENCE
+let x = 42;                  // i32 by default
+let y = 3.14;                // f64 by default
+let z: i64 = 42;             // Explicit
+
+MUTABILITY
+let x = 5;                   // Immutable (default)
+let mut y = 5;               // Mutable
+y = 10;                      // OK
+
+SHADOWING
+let x = 5;
+let x = x + 1;               // New binding, shadows previous
+let x = "hello";             // Can change type with shadowing
+
+TUPLES
+let tup: (i32, f64, bool) = (500, 6.4, true);
+let (x, y, z) = tup;         // Destructuring
+let first = tup.0;           // Index access
+
+ARRAYS
+let arr: [i32; 5] = [1, 2, 3, 4, 5];
+let arr = [3; 5];            // [3, 3, 3, 3, 3]
+let first = arr[0];
+let len = arr.len();
+
+==============================================================================
+OWNERSHIP_BORROWING
+==============================================================================
+OWNERSHIP
+let s1 = String::from("hello");
+let s2 = s1;                 // s1 moved to s2, s1 invalid
+// println!("{}", s1);       // Error! s1 moved
+
+let s3 = s2.clone();         // Deep copy, both valid
+
+REFERENCES_BORROWING
+let s = String::from("hello");
+
+// Immutable borrow
+let len = calculate_length(&s);
+println!("{} is {} chars", s, len);  // s still valid
+
+fn calculate_length(s: &String) -> usize {
+    s.len()
+}
+
+// Mutable borrow
+let mut s = String::from("hello");
+change(&mut s);
+
+fn change(s: &mut String) {
+    s.push_str(" world");
+}
+
+BORROWING_RULES
+1:any_number_of_immutable_references
+2:OR_one_mutable_reference
+3:references_must_be_valid
+
+// OK: Multiple immutable
+let r1 = &s;
+let r2 = &s;
+println!("{} {}", r1, r2);
+
+// OK: One mutable
+let r3 = &mut s;
+
+// Error: Can't mix
+let r1 = &s;
+let r2 = &mut s;             // Error!
+
+LIFETIMES
+// Compiler usually infers, explicit when ambiguous
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() { x } else { y }
+}
+
+// Struct with references
+struct ImportantExcerpt<'a> {
+    part: &'a str,
+}
+
+// Static lifetime (entire program)
+let s: &'static str = "I live forever";
+
+==============================================================================
+STRINGS
+==============================================================================
+STRING_TYPES
+// &str - string slice (borrowed, immutable)
+let s: &str = "hello";
+
+// String - owned, growable
+let s: String = String::from("hello");
+let s: String = "hello".to_string();
+
+OPERATIONS
+let mut s = String::from("hello");
+s.push_str(" world");        // Append str
+s.push('!');                 // Append char
+
+let s1 = String::from("hello ");
+let s2 = String::from("world");
+let s3 = s1 + &s2;           // s1 moved, s2 borrowed
+
+let s = format!("{} {}", "hello", "world");
+
+// Iterate
+for c in s.chars() { }
+for b in s.bytes() { }
+
+// Slicing (byte indices, careful with UTF-8!)
+let hello = &s[0..5];
+
+==============================================================================
+COLLECTIONS
+==============================================================================
+VECTOR
+let v: Vec<i32> = Vec::new();
+let v = vec![1, 2, 3];
+let mut v = Vec::new();
+
+v.push(4);
+v.pop();
+let third = &v[2];           // Panics if out of bounds
+let third = v.get(2);        // Returns Option<&T>
+
+// Iteration
+for i in &v { }              // Immutable borrow
+for i in &mut v { }          // Mutable borrow
+for i in v { }               // Takes ownership
+
+HASHMAP
+use std::collections::HashMap;
+
+let mut map = HashMap::new();
+map.insert(String::from("blue"), 10);
+map.insert(String::from("red"), 50);
+
+let score = map.get("blue"); // Option<&V>
+
+// Entry API
+map.entry(String::from("yellow")).or_insert(50);
+
+// Iteration
+for (key, value) in &map { }
+
+HASHSET
+use std::collections::HashSet;
+
+let mut set = HashSet::new();
+set.insert(1);
+set.insert(2);
+set.contains(&1);            // true
+set.remove(&1);
+
+==============================================================================
+STRUCTS
+==============================================================================
+BASIC_STRUCT
+struct User {
+    username: String,
+    email: String,
+    active: bool,
+    sign_in_count: u64,
+}
+
+let user = User {
+    email: String::from("user@example.com"),
+    username: String::from("user123"),
+    active: true,
+    sign_in_count: 1,
+};
+
+// Field init shorthand
+let email = String::from("user@example.com");
+let user = User { email, ..Default::default() };
+
+// Update syntax
+let user2 = User {
+    email: String::from("another@example.com"),
+    ..user
+};
+
+TUPLE_STRUCTS
+struct Color(i32, i32, i32);
+struct Point(i32, i32, i32);
+
+let black = Color(0, 0, 0);
+let origin = Point(0, 0, 0);
+
+UNIT_STRUCT
+struct AlwaysEqual;
+
+IMPL_BLOCK
+struct Rectangle {
+    width: u32,
+    height: u32,
+}
+
+impl Rectangle {
+    // Associated function (constructor)
+    fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+    
+    fn square(size: u32) -> Self {
+        Self { width: size, height: size }
+    }
+    
+    // Method (takes &self)
+    fn area(&self) -> u32 {
+        self.width * self.height
+    }
+    
+    // Mutable method
+    fn scale(&mut self, factor: u32) {
+        self.width *= factor;
+        self.height *= factor;
+    }
+}
+
+let rect = Rectangle::new(30, 50);
+let area = rect.area();
+
+==============================================================================
+ENUMS_PATTERN_MATCHING
+==============================================================================
+BASIC_ENUM
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+let dir = Direction::North;
+
+ENUM_WITH_DATA
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+    ChangeColor(i32, i32, i32),
+}
+
+let msg = Message::Move { x: 10, y: 20 };
+let msg = Message::Write(String::from("hello"));
+
+OPTION
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+let some_number: Option<i32> = Some(5);
+let no_number: Option<i32> = None;
+
+// Handling
+match some_number {
+    Some(n) => println!("Got {}", n),
+    None => println!("Nothing"),
+}
+
+if let Some(n) = some_number {
+    println!("Got {}", n);
+}
+
+let value = some_number.unwrap();         // Panics if None
+let value = some_number.unwrap_or(0);     // Default
+let value = some_number.expect("msg");    // Panic with message
+
+RESULT
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn divide(a: f64, b: f64) -> Result<f64, String> {
+    if b == 0.0 {
+        Err(String::from("Division by zero"))
+    } else {
+        Ok(a / b)
+    }
+}
+
+// Handling
+match divide(10.0, 2.0) {
+    Ok(result) => println!("Result: {}", result),
+    Err(e) => println!("Error: {}", e),
+}
+
+// ? operator (propagates errors)
+fn calculate() -> Result<f64, String> {
+    let x = divide(10.0, 2.0)?;
+    let y = divide(x, 2.0)?;
+    Ok(y)
+}
+
+PATTERN_MATCHING
+match value {
+    1 => println!("one"),
+    2 | 3 => println!("two or three"),
+    4..=9 => println!("four to nine"),
+    n if n > 100 => println!("large: {}", n),
+    _ => println!("other"),
+}
+
+// Destructuring
+match point {
+    Point { x: 0, y } => println!("On y-axis at {}", y),
+    Point { x, y: 0 } => println!("On x-axis at {}", x),
+    Point { x, y } => println!("At ({}, {})", x, y),
+}
+
+// @ bindings
+match age {
+    n @ 0..=12 => println!("Child aged {}", n),
+    n @ 13..=19 => println!("Teen aged {}", n),
+    n => println!("Adult aged {}", n),
+}
+
+IF_LET_WHILE_LET
+if let Some(value) = optional {
+    println!("{}", value);
+}
+
+while let Some(value) = stack.pop() {
+    println!("{}", value);
+}
+
+let else PATTERN
+let Some(value) = optional else {
+    return Err("no value");
+};
+
+==============================================================================
+TRAITS
+==============================================================================
+DEFINING_TRAITS
+trait Summary {
+    fn summarize(&self) -> String;
+    
+    // Default implementation
+    fn preview(&self) -> String {
+        format!("Read more: {}", self.summarize())
+    }
+}
+
+IMPLEMENTING_TRAITS
+struct Article {
+    title: String,
+    content: String,
+}
+
+impl Summary for Article {
+    fn summarize(&self) -> String {
+        format!("{}: {}", self.title, &self.content[..50])
+    }
+}
+
+TRAIT_BOUNDS
+fn notify(item: &impl Summary) {
+    println!("Breaking: {}", item.summarize());
+}
+
+// Equivalent, more explicit
+fn notify<T: Summary>(item: &T) {
+    println!("Breaking: {}", item.summarize());
+}
+
+// Multiple bounds
+fn notify(item: &(impl Summary + Display)) { }
+fn notify<T: Summary + Display>(item: &T) { }
+
+// Where clause
+fn some_function<T, U>(t: &T, u: &U) -> i32
+where
+    T: Display + Clone,
+    U: Clone + Debug,
+{
+    // ...
+}
+
+RETURNING_TRAITS
+fn returns_summarizable() -> impl Summary {
+    Article { title: String::from("..."), content: String::from("...") }
+}
+
+COMMON_TRAITS
+Debug:debug_formatting|#[derive(Debug)]
+Clone:explicit_copy|.clone()
+Copy:implicit_copy|stack_only
+PartialEq:equality|==
+Eq:total_equality
+PartialOrd:ordering|<_>
+Ord:total_ordering
+Hash:hashing
+Default:default_values
+Display:user_facing_format
+From/Into:type_conversion
+Iterator:iteration
+Drop:destructor
+
+DERIVE_MACRO
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+THISERROR
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum AppError {
+    #[error("User not found: {0}")]
+    NotFound(String),
+    
+    #[error("Invalid input: {message}")]
+    InvalidInput { message: String },
+    
+    #[error("Database error")]
+    Database(#[from] sqlx::Error),
+    
+    #[error("IO error")]
+    Io(#[from] std::io::Error),
+}
+
+ANYHOW
+use anyhow::{Context, Result};
+
+fn read_config() -> Result<Config> {
+    let content = std::fs::read_to_string("config.toml")
+        .context("Failed to read config file")?;
+    
+    let config: Config = toml::from_str(&content)
+        .context("Failed to parse config")?;
+    
+    Ok(config)
+}
+
+==============================================================================
+ASYNC_RUST
+==============================================================================
+ASYNC_BASICS
+async fn fetch_data(url: &str) -> Result<String, reqwest::Error> {
+    let response = reqwest::get(url).await?;
+    let body = response.text().await?;
+    Ok(body)
+}
+
+// Calling async functions
+#[tokio::main]
+async fn main() {
+    let result = fetch_data("https://example.com").await;
+}
+
+TOKIO_RUNTIME
+use tokio;
+
+#[tokio::main]
+async fn main() {
+    // Spawn concurrent tasks
+    let handle1 = tokio::spawn(async {
+        fetch_data("url1").await
+    });
+    
+    let handle2 = tokio::spawn(async {
+        fetch_data("url2").await
+    });
+    
+    let (result1, result2) = tokio::join!(handle1, handle2);
+}
+
+CONCURRENT_FUTURES
+use futures::future::join_all;
+
+async fn fetch_all(urls: Vec<&str>) -> Vec<Result<String, reqwest::Error>> {
+    let futures: Vec<_> = urls.iter()
+        .map(|url| fetch_data(url))
+        .collect();
+    
+    join_all(futures).await
+}
+
+STREAMS
+use futures::StreamExt;
+
+async fn process_stream() {
+    let mut stream = some_async_stream();
+    
+    while let Some(item) = stream.next().await {
+        process(item);
+    }
+}
+
+==============================================================================
+ITERATORS
+==============================================================================
+ITERATOR_BASICS
+let v = vec![1, 2, 3];
+
+// Consuming
+let sum: i32 = v.iter().sum();
+let collected: Vec<_> = v.iter().collect();
+
+// Chaining
+let result: Vec<i32> = v.iter()
+    .map(|x| x * 2)
+    .filter(|x| *x > 2)
+    .collect();
+
+COMMON_ADAPTERS
+.map(|x| ...)            // Transform
+.filter(|x| ...)         // Keep matching
+.filter_map(|x| ...)     // Filter + map (Option)
+.flat_map(|x| ...)       // Map + flatten
+.take(n)                 // First n
+.skip(n)                 // Skip n
+.enumerate()             // (index, value)
+.zip(other)              // Pair with other
+.chain(other)            // Concatenate
+.rev()                   // Reverse
+.cloned()                // Clone elements
+.copied()                // Copy elements
+
+CONSUMERS
+.collect()               // Into collection
+.sum()                   // Sum
+.product()               // Product
+.count()                 // Count
+.fold(init, |acc, x| ...)  // Reduce
+.reduce(|acc, x| ...)    // Reduce no init
+.for_each(|x| ...)       // Side effects
+.find(|x| ...)           // First matching
+.any(|x| ...)            // Any match
+.all(|x| ...)            // All match
+.max() / .min()          // Max/min
+.max_by_key(|x| ...)     // Max by key
+
+ITERATOR_TYPES
+iter():&T|immutable_borrow
+iter_mut():&mut_T|mutable_borrow
+into_iter():T|takes_ownership
+
+==============================================================================
+TESTING
+==============================================================================
+UNIT_TESTS
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+    
+    #[test]
+    fn test_add() {
+        let result = add(2, 3);
+        assert_eq!(result, 5);
+    }
+    
+    #[test]
+    #[should_panic(expected = "divide by zero")]
+    fn test_divide_by_zero() {
+        divide(1, 0);
+    }
+    
+    #[test]
+    fn test_result() -> Result<(), String> {
+        let result = divide(10, 2)?;
+        assert_eq!(result, 5);
+        Ok(())
+    }
+}
+
+ASSERTIONS
+assert!(condition);
+assert_eq!(left, right);
+assert_ne!(left, right);
+assert!(condition, "Custom message: {}", value);
+
+INTEGRATION_TESTS
+// tests/integration_test.rs
+use myproject;
+
+#[test]
+fn test_public_api() {
+    let result = myproject::public_function();
+    assert!(result.is_ok());
+}
+
+ASYNC_TESTS
+#[tokio::test]
+async fn test_async() {
+    let result = async_function().await;
+    assert!(result.is_ok());
+}
+
+==============================================================================
+SERDE_SERIALIZATION
+==============================================================================
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: u64,
+    name: String,
+    #[serde(rename = "emailAddress")]
+    email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    age: Option<u32>,
+    #[serde(default)]
+    active: bool,
+}
+
+// JSON
+let json = serde_json::to_string(&user)?;
+let user: User = serde_json::from_str(&json)?;
+
+// Pretty print
+let json = serde_json::to_string_pretty(&user)?;
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Unwrap_Everywhere       | .unwrap()                        | ?_operator|match
+Clone_Overuse           | .clone()_everywhere              | borrow|lifetimes
+String_Instead_&str     | fn(String)                       | fn(&str)
+Box_Overuse             | Box<T>_everywhere                | stack_allocation
+Mutex_Overuse           | Mutex_for_read_heavy             | RwLock
+Panic_In_Library        | panic!_in_lib_code               | return_Result
+Arc_Clone_Overuse       | Arc::clone_in_loop               | borrow_Arc
+Lifetime_Elision        | explicit_'a_when_not_needed      | let_compiler_infer
+Vec_Index_Access        | vec[i]_without_bounds_check      | .get()
+Blocking_In_Async       | std::thread::sleep_in_async      | tokio::time::sleep

@@ -4,9 +4,12 @@
  * Orchestrates multi-channel escalation with fallback chain.
  * Phone → SMS → Slack → Discord → Email
  * Each channel has a configurable timeout (default 5 min).
+ *
+ * SECURITY: All outgoing messages are sanitized to prevent secret exposure.
  */
 
 import { randomUUID } from 'crypto';
+import { getSanitizer } from '../core/OutputSanitizer.js';
 import type {
   CommunicationConfig,
   ChannelType,
@@ -155,6 +158,9 @@ export class CommunicationManager {
     }
 
     // Single question - use standard flow
+    // SECURITY: Sanitize all content before building the request
+    const sanitizer = getSanitizer();
+
     // Build escalation request
     const request: EscalationRequest = {
       id: randomUUID(),
@@ -162,12 +168,12 @@ export class CommunicationManager {
       taskId: escalation.taskId,
       type: escalation.type,
       urgency: escalation.blocking ? 'critical' : 'high',
-      title: escalation.title,
+      title: sanitizer.sanitize(escalation.title),
       message: this.formatEscalationMessage(escalation),
-      context: escalation.context,
+      context: sanitizer.sanitize(escalation.context),
       options: escalation.options?.map(o => ({
-        label: o.label,
-        value: o.description
+        label: sanitizer.sanitize(o.label),
+        value: sanitizer.sanitize(o.description)
       })),
       timeout: this.config.timeoutMs,
       createdAt: new Date()
@@ -477,27 +483,31 @@ _Send any option number or text to change._`;
   /**
    * Queue-based escalation for multiple questions.
    * Sends questions one-by-one and collects responses sequentially.
+   * SECURITY: All content is sanitized before sending.
    */
   private async escalateQueued(
     escalation: Escalation,
     questions: Array<EscalationQuestion>
   ): Promise<EscalationResponse | null> {
+    const sanitizer = getSanitizer();
     const responses: string[] = [];
     const totalQuestions = questions.length;
     let lastChannel: ChannelType = 'telegram';
 
     console.log(`[CommunicationManager] Starting queued escalation with ${totalQuestions} questions`);
 
-    // Send title/context first as a header
+    // Send title/context first as a header (sanitized)
+    const sanitizedTitle = sanitizer.sanitize(escalation.title);
+    const sanitizedContext = sanitizer.sanitize(escalation.context);
     await this.sendAcknowledgment(
-      `📋 *${escalation.title}*\n\n${escalation.context}\n\n_${totalQuestions} questions to answer:_`
+      `📋 *${sanitizedTitle}*\n\n${sanitizedContext}\n\n_${totalQuestions} questions to answer:_`
     );
 
     for (let i = 0; i < questions.length; i++) {
       const question = questions[i];
       const questionNum = i + 1;
 
-      // Build single-question request
+      // Build single-question request with sanitized content
       const request: EscalationRequest = {
         id: `${escalation.id}-q${questionNum}`,
         escalationId: escalation.id,
@@ -505,11 +515,11 @@ _Send any option number or text to change._`;
         type: escalation.type,
         urgency: escalation.blocking ? 'critical' : 'high',
         title: `📝 Question ${questionNum}/${totalQuestions}`,
-        message: question.text,
-        context: escalation.context,
+        message: sanitizer.sanitize(question.text),
+        context: sanitizedContext,
         options: question.options?.map(o => ({
-          label: o.label,
-          value: o.description
+          label: sanitizer.sanitize(o.label),
+          value: sanitizer.sanitize(o.description)
         })),
         timeout: this.config.timeoutMs,
         createdAt: new Date()
@@ -622,30 +632,37 @@ _Send any option number or text to change._`;
 
   /**
    * Format escalation into readable message
+   * SECURITY: All content is sanitized to prevent secret exposure in notifications
    */
   private formatEscalationMessage(escalation: Escalation): string {
+    const sanitizer = getSanitizer();
     const lines: string[] = [];
 
-    lines.push(escalation.context);
+    // Sanitize context before adding
+    lines.push(sanitizer.sanitize(escalation.context));
 
     if (escalation.questions?.length) {
       lines.push('');
       lines.push('**Questions:**');
-      escalation.questions.forEach((q, i) => lines.push(`${i+1}. ${q}`));
+      escalation.questions.forEach((q, i) => {
+        const questionText = typeof q === 'string' ? q : q.text;
+        lines.push(`${i+1}. ${sanitizer.sanitize(questionText)}`);
+      });
     }
 
     if (escalation.options?.length) {
       lines.push('');
       lines.push('**Options:**');
       escalation.options.forEach((o, i) =>
-        lines.push(`${i+1}. **${o.label}**: ${o.description}`)
+        lines.push(`${i+1}. **${sanitizer.sanitize(o.label)}**: ${sanitizer.sanitize(o.description)}`)
       );
     }
 
     if (escalation.errors?.length) {
       lines.push('');
       lines.push('**Recent Errors:**');
-      escalation.errors.slice(0, 3).forEach(e => lines.push(`- ${e}`));
+      // Sanitize errors to prevent secret exposure in error messages
+      escalation.errors.slice(0, 3).forEach(e => lines.push(`- ${sanitizer.sanitize(e)}`));
     }
 
     return lines.join('\n');

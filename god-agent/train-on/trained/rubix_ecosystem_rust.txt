@@ -1,0 +1,869 @@
+# RUBIX ECOSYSTEM: RUST_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools
+# PHILOSOPHY: safety|performance|zero_cost_abstractions
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+AXUM
+desc:ergonomic_web_framework|Tokio_team
+site:github.com/tokio-rs/axum
+use_for:REST_APIs|microservices|production
++tower_ecosystem:middleware_compatible
++type_safe_extractors:compile_time_errors
++tokio_native:async_runtime
++popular:growing_fast
+
+cargo add axum tokio -F tokio/full
+
+use axum::{
+    routing::{get, post},
+    extract::{Path, State, Json},
+    http::StatusCode,
+    Router,
+};
+use std::sync::Arc;
+
+#[derive(Clone)]
+struct AppState {
+    db: DatabasePool,
+}
+
+async fn get_user(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i32>,
+) -> Result<Json<User>, StatusCode> {
+    state.db.get_user(id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::NOT_FOUND)
+}
+
+async fn create_user(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateUser>,
+) -> Result<(StatusCode, Json<User>), StatusCode> {
+    let user = state.db.create_user(payload).await?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+
+#[tokio::main]
+async fn main() {
+    let state = Arc::new(AppState { db: create_pool() });
+    
+    let app = Router::new()
+        .route("/users/:id", get(get_user))
+        .route("/users", post(create_user))
+        .with_state(state);
+    
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+// Extractors
+Path<T>:URL_path_params
+Query<T>:query_string
+Json<T>:JSON_body
+State<T>:shared_state
+Extension<T>:request_extensions
+HeaderMap:all_headers
+
+ACTIX_WEB
+desc:powerful_web_framework|actor_model
+site:actix.rs
+use_for:high_performance|production
++very_fast:benchmarks_leader
++actor_model:concurrency
++mature:production_ready
+
+cargo add actix-web
+
+use actix_web::{web, App, HttpServer, HttpResponse};
+
+async fn get_user(path: web::Path<i32>) -> HttpResponse {
+    let id = path.into_inner();
+    HttpResponse::Ok().json(User { id })
+}
+
+async fn create_user(body: web::Json<CreateUser>) -> HttpResponse {
+    HttpResponse::Created().json(body.into_inner())
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/users/{id}", web::get().to(get_user))
+            .route("/users", web::post().to(create_user))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
+}
+
+ROCKET
+desc:easy_web_framework|type_safe
+site:rocket.rs
+use_for:rapid_development|type_safety
++attribute_macros:clean_syntax
++fairings:middleware
++managed_state:easy
+
+cargo add rocket -F json
+
+#[macro_use] extern crate rocket;
+
+#[get("/users/<id>")]
+fn get_user(id: i32) -> Json<User> {
+    Json(User { id })
+}
+
+#[post("/users", data = "<user>")]
+fn create_user(user: Json<CreateUser>) -> status::Created<Json<User>> {
+    status::Created::new("/").body(Json(user.into_inner().into()))
+}
+
+#[launch]
+fn rocket() -> _ {
+    rocket::build()
+        .mount("/", routes![get_user, create_user])
+}
+
+POEM
+desc:web_framework|OpenAPI_native
+site:github.com/poem-web/poem
++OpenAPI:automatic_generation
++clean_API:ergonomic
+
+WARP
+desc:composable_web_framework|filter_based
+use_for:functional_style
++composable:filters
++type_safe:compile_time
+
+use warp::Filter;
+
+let hello = warp::path!("hello" / String)
+    .map(|name| format!("Hello, {}!", name));
+
+warp::serve(hello).run(([127, 0, 0, 1], 3030)).await;
+
+==============================================================================
+ORM_DATABASE
+==============================================================================
+SQLX
+desc:async_SQL|compile_time_checked
+site:github.com/launchbadge/sqlx
+use_for:type_safe_SQL|async_apps
++compile_time_checking:SQL_verified
++async:tokio|async-std
++no_DSL:pure_SQL
+
+cargo add sqlx -F runtime-tokio,postgres
+
+use sqlx::postgres::PgPoolOptions;
+
+#[derive(sqlx::FromRow)]
+struct User {
+    id: i32,
+    name: String,
+    email: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), sqlx::Error> {
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect("postgres://user:pass@localhost/db")
+        .await?;
+    
+    // Compile-time checked query
+    let user = sqlx::query_as!(
+        User,
+        "SELECT id, name, email FROM users WHERE id = $1",
+        1
+    )
+    .fetch_one(&pool)
+    .await?;
+    
+    // Dynamic query
+    let users: Vec<User> = sqlx::query_as("SELECT * FROM users")
+        .fetch_all(&pool)
+        .await?;
+    
+    // Insert
+    sqlx::query!(
+        "INSERT INTO users (name, email) VALUES ($1, $2)",
+        "John",
+        "john@example.com"
+    )
+    .execute(&pool)
+    .await?;
+    
+    Ok(())
+}
+
+// Migrations
+// sqlx migrate add create_users
+// sqlx migrate run
+
+DIESEL
+desc:ORM|query_builder|compile_time
+site:diesel.rs
+use_for:ORM|type_safe_queries
++compile_time:SQL_validated
++query_builder:Rust_DSL
++migrations:built_in
+
+cargo add diesel -F postgres
+
+use diesel::prelude::*;
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = users)]
+struct User {
+    id: i32,
+    name: String,
+    email: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = users)]
+struct NewUser<'a> {
+    name: &'a str,
+    email: &'a str,
+}
+
+fn get_users(conn: &mut PgConnection) -> Vec<User> {
+    use schema::users::dsl::*;
+    
+    users
+        .filter(active.eq(true))
+        .order(name.asc())
+        .load(conn)
+        .expect("Error loading users")
+}
+
+fn create_user(conn: &mut PgConnection, name: &str, email: &str) -> User {
+    let new_user = NewUser { name, email };
+    
+    diesel::insert_into(users::table)
+        .values(&new_user)
+        .returning(User::as_returning())
+        .get_result(conn)
+        .expect("Error creating user")
+}
+
+SEA_ORM
+desc:async_ORM|ActiveRecord_style
+site:sea-ql.org/SeaORM
+use_for:async_ORM|familiar_patterns
++async:sqlx_based
++ActiveRecord:familiar_pattern
++migrations:sea-orm-migration
+
+cargo add sea-orm -F sqlx-postgres,runtime-tokio-native-tls
+
+use sea_orm::*;
+
+#[derive(Clone, Debug, DeriveEntityModel)]
+#[sea_orm(table_name = "users")]
+pub struct Model {
+    #[sea_orm(primary_key)]
+    pub id: i32,
+    pub name: String,
+    pub email: String,
+}
+
+// Find
+let user: Option<Model> = Entity::find_by_id(1).one(&db).await?;
+let users: Vec<Model> = Entity::find()
+    .filter(Column::Active.eq(true))
+    .all(&db)
+    .await?;
+
+// Insert
+let user = ActiveModel {
+    name: Set("John".to_owned()),
+    email: Set("john@example.com".to_owned()),
+    ..Default::default()
+};
+let result = Entity::insert(user).exec(&db).await?;
+
+RUSQLITE
+desc:SQLite_bindings|sync
+cargo add rusqlite
+
+let conn = Connection::open("my.db")?;
+conn.execute("INSERT INTO users (name) VALUES (?)", params!["John"])?;
+
+TOKIO_POSTGRES
+desc:async_PostgreSQL|low_level
+cargo add tokio-postgres
+
+let (client, connection) = tokio_postgres::connect(connstr, NoTls).await?;
+let rows = client.query("SELECT * FROM users", &[]).await?;
+
+==============================================================================
+SERIALIZATION
+==============================================================================
+SERDE
+desc:serialization_framework|ubiquitous
+site:serde.rs
++derive_macros:automatic
++format_agnostic:JSON|YAML|TOML|etc
++zero_copy:efficient
+
+cargo add serde -F derive
+cargo add serde_json
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: i32,
+    name: String,
+    #[serde(rename = "emailAddress")]
+    email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    age: Option<u32>,
+    #[serde(default)]
+    active: bool,
+}
+
+// JSON
+let json = serde_json::to_string(&user)?;
+let user: User = serde_json::from_str(&json)?;
+
+// With value
+let value: serde_json::Value = serde_json::from_str(&json)?;
+let name = value["name"].as_str();
+
+SERDE_JSON
+desc:JSON_serialization
+
+SERDE_YAML
+desc:YAML_serialization
+cargo add serde_yaml
+
+TOML
+desc:TOML_serialization
+cargo add toml
+
+let config: Config = toml::from_str(&contents)?;
+
+BINCODE
+desc:binary_serialization|compact
+cargo add bincode
+
+let bytes = bincode::serialize(&user)?;
+let user: User = bincode::deserialize(&bytes)?;
+
+==============================================================================
+HTTP_CLIENTS
+==============================================================================
+REQWEST
+desc:HTTP_client|async|ergonomic
+site:github.com/seanmonstar/reqwest
++async:tokio_based
++connection_pooling:automatic
++JSON:serde_integration
+
+cargo add reqwest -F json
+
+use reqwest::Client;
+
+let client = Client::new();
+
+// GET
+let user: User = client
+    .get("https://api.example.com/users/1")
+    .header("Authorization", format!("Bearer {}", token))
+    .send()
+    .await?
+    .json()
+    .await?;
+
+// POST
+let new_user = client
+    .post("https://api.example.com/users")
+    .json(&CreateUser { name: "John".into() })
+    .send()
+    .await?
+    .json::<User>()
+    .await?;
+
+// With timeout
+let client = Client::builder()
+    .timeout(Duration::from_secs(10))
+    .build()?;
+
+HYPER
+desc:low_level_HTTP|fast
+use_for:custom_clients|servers
+
+UREQ
+desc:blocking_HTTP|simple
+cargo add ureq
+
+let body: String = ureq::get("https://example.com")
+    .call()?
+    .into_string()?;
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+THISERROR
+desc:derive_macro_for_Error
+cargo add thiserror
+
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum AppError {
+    #[error("User not found: {0}")]
+    NotFound(String),
+    
+    #[error("Invalid input: {message}")]
+    InvalidInput { message: String },
+    
+    #[error("Database error")]
+    Database(#[from] sqlx::Error),
+    
+    #[error("HTTP error")]
+    Http(#[from] reqwest::Error),
+}
+
+ANYHOW
+desc:easy_error_handling|applications
+cargo add anyhow
+
+use anyhow::{Context, Result, bail, ensure};
+
+fn read_config() -> Result<Config> {
+    let contents = std::fs::read_to_string("config.toml")
+        .context("Failed to read config file")?;
+    
+    let config: Config = toml::from_str(&contents)
+        .context("Failed to parse config")?;
+    
+    ensure!(config.port > 0, "Port must be positive");
+    
+    if config.debug && config.env == "production" {
+        bail!("Debug mode not allowed in production");
+    }
+    
+    Ok(config)
+}
+
+MIETTE
+desc:fancy_error_reporting|diagnostics
+cargo add miette -F fancy
+
+==============================================================================
+ASYNC_RUNTIME
+==============================================================================
+TOKIO
+desc:async_runtime|dominant
+site:tokio.rs
++mature:production_ready
++ecosystem:huge
++features:io|time|sync|fs
+
+cargo add tokio -F full
+
+#[tokio::main]
+async fn main() {
+    // Spawn task
+    let handle = tokio::spawn(async {
+        // async work
+    });
+    handle.await.unwrap();
+    
+    // Sleep
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    
+    // Select
+    tokio::select! {
+        _ = async_operation1() => println!("op1 done"),
+        _ = async_operation2() => println!("op2 done"),
+    }
+    
+    // Channels
+    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    tx.send("hello").await.unwrap();
+    let msg = rx.recv().await;
+    
+    // Mutex
+    let data = Arc::new(tokio::sync::Mutex::new(0));
+    let mut lock = data.lock().await;
+    *lock += 1;
+}
+
+ASYNC_STD
+desc:async_runtime|std_like_API
+cargo add async-std -F attributes
+
+#[async_std::main]
+async fn main() {
+    // Similar API to std
+}
+
+SMOL
+desc:small_async_runtime
+cargo add smol
+
+==============================================================================
+CLI
+==============================================================================
+CLAP
+desc:CLI_argument_parser|popular
+site:clap.rs
++derive_macro:declarative
++shell_completions:automatic
++help_generation:automatic
+
+cargo add clap -F derive
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "myapp")]
+#[command(about = "My CLI application")]
+struct Cli {
+    #[arg(short, long, default_value = "info")]
+    log_level: String,
+    
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Start the server
+    Serve {
+        #[arg(short, long, default_value = "8080")]
+        port: u16,
+    },
+    /// Run migrations
+    Migrate,
+}
+
+fn main() {
+    let cli = Cli::parse();
+    
+    match cli.command {
+        Commands::Serve { port } => start_server(port),
+        Commands::Migrate => run_migrations(),
+    }
+}
+
+DIALOGUER
+desc:interactive_prompts
+cargo add dialoguer
+
+use dialoguer::{Input, Confirm, Select};
+
+let name: String = Input::new()
+    .with_prompt("Your name")
+    .interact_text()?;
+
+let proceed = Confirm::new()
+    .with_prompt("Continue?")
+    .interact()?;
+
+let selection = Select::new()
+    .with_prompt("Pick option")
+    .items(&["Option 1", "Option 2"])
+    .interact()?;
+
+INDICATIF
+desc:progress_bars|spinners
+cargo add indicatif
+
+use indicatif::{ProgressBar, ProgressStyle};
+
+let pb = ProgressBar::new(100);
+pb.set_style(ProgressStyle::default_bar()
+    .template("{bar:40} {pos}/{len}")?);
+
+for _ in 0..100 {
+    pb.inc(1);
+}
+pb.finish();
+
+COLORED
+desc:terminal_colors
+cargo add colored
+
+use colored::*;
+
+println!("{}", "Error!".red().bold());
+println!("{}", "Success!".green());
+
+==============================================================================
+LOGGING_TRACING
+==============================================================================
+TRACING
+desc:async_aware_logging|instrumentation
+site:tracing.rs
++async_aware:spans_across_await
++structured:key_value
++subscriber:pluggable
+
+cargo add tracing tracing-subscriber
+
+use tracing::{info, warn, error, instrument, span, Level};
+
+#[instrument]
+async fn process_user(user_id: i32) -> Result<User, Error> {
+    info!(user_id, "Processing user");
+    
+    let user = fetch_user(user_id).await?;
+    
+    if user.is_inactive() {
+        warn!(user_id, "User is inactive");
+    }
+    
+    Ok(user)
+}
+
+fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(Level::DEBUG)
+        .json()
+        .init();
+    
+    // Manual span
+    let span = span!(Level::INFO, "my_span", key = "value");
+    let _guard = span.enter();
+}
+
+LOG
+desc:logging_facade|simple
+cargo add log env_logger
+
+use log::{info, warn, error, debug};
+
+env_logger::init();
+info!("Starting application");
+
+==============================================================================
+TESTING
+==============================================================================
+BUILTIN_TESTING
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_add() {
+        assert_eq!(add(2, 3), 5);
+    }
+    
+    #[test]
+    #[should_panic(expected = "divide by zero")]
+    fn test_divide_by_zero() {
+        divide(1, 0);
+    }
+    
+    #[test]
+    fn test_result() -> Result<(), String> {
+        let result = operation()?;
+        assert_eq!(result, expected);
+        Ok(())
+    }
+}
+
+// Async tests with tokio
+#[tokio::test]
+async fn test_async() {
+    let result = async_function().await;
+    assert!(result.is_ok());
+}
+
+MOCKALL
+desc:mocking_framework
+cargo add mockall
+
+use mockall::automock;
+
+#[automock]
+trait UserRepository {
+    fn find_by_id(&self, id: i32) -> Option<User>;
+}
+
+#[test]
+fn test_with_mock() {
+    let mut mock = MockUserRepository::new();
+    mock.expect_find_by_id()
+        .with(eq(1))
+        .returning(|_| Some(User { id: 1 }));
+    
+    let service = UserService::new(mock);
+    let user = service.get_user(1);
+    assert!(user.is_some());
+}
+
+RSTEST
+desc:fixtures_parameterized_tests
+cargo add rstest
+
+use rstest::*;
+
+#[rstest]
+#[case(1, 2, 3)]
+#[case(0, 0, 0)]
+#[case(-1, 1, 0)]
+fn test_add(#[case] a: i32, #[case] b: i32, #[case] expected: i32) {
+    assert_eq!(add(a, b), expected);
+}
+
+#[fixture]
+fn user() -> User {
+    User { id: 1, name: "Test".into() }
+}
+
+#[rstest]
+fn test_user_name(user: User) {
+    assert_eq!(user.name, "Test");
+}
+
+PROPTEST
+desc:property_based_testing
+cargo add proptest
+
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn test_add_commutative(a: i32, b: i32) {
+        prop_assert_eq!(add(a, b), add(b, a));
+    }
+}
+
+==============================================================================
+VALIDATION
+==============================================================================
+VALIDATOR
+desc:struct_validation
+cargo add validator -F derive
+
+use validator::Validate;
+
+#[derive(Validate)]
+struct User {
+    #[validate(length(min = 1, max = 100))]
+    name: String,
+    #[validate(email)]
+    email: String,
+    #[validate(range(min = 0, max = 150))]
+    age: u32,
+}
+
+let user = User { ... };
+user.validate()?;
+
+GARDE
+desc:validation_library|modern
+cargo add garde -F derive
+
+use garde::Validate;
+
+#[derive(Validate)]
+struct User {
+    #[garde(length(min = 1, max = 100))]
+    name: String,
+    #[garde(email)]
+    email: String,
+}
+
+==============================================================================
+UTILITIES
+==============================================================================
+REGEX
+desc:regular_expressions
+cargo add regex
+
+use regex::Regex;
+
+let re = Regex::new(r"^\d{4}-\d{2}-\d{2}$")?;
+re.is_match("2024-01-01");
+
+let caps = re.captures(text)?;
+let date = &caps[1];
+
+CHRONO
+desc:date_time
+cargo add chrono
+
+use chrono::{DateTime, Utc, NaiveDate, Duration};
+
+let now: DateTime<Utc> = Utc::now();
+let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+let tomorrow = now + Duration::days(1);
+
+TIME
+desc:date_time|alternative
+cargo add time
+
+UUID
+desc:UUID_generation
+cargo add uuid -F v4
+
+use uuid::Uuid;
+
+let id = Uuid::new_v4();
+
+RAND
+desc:random_numbers
+cargo add rand
+
+use rand::Rng;
+
+let mut rng = rand::thread_rng();
+let n: u32 = rng.gen();
+let n: u32 = rng.gen_range(1..100);
+
+ONCE_CELL
+desc:lazy_static_alternative
+cargo add once_cell
+
+use once_cell::sync::Lazy;
+
+static CONFIG: Lazy<Config> = Lazy::new(|| {
+    load_config().expect("Failed to load config")
+});
+
+PARKING_LOT
+desc:faster_mutex
+cargo add parking_lot
+
+use parking_lot::Mutex;
+let data = Mutex::new(0);
+*data.lock() += 1;
+
+RAYON
+desc:parallel_iteration
+cargo add rayon
+
+use rayon::prelude::*;
+
+let sum: i32 = (0..1000)
+    .into_par_iter()
+    .map(|x| x * 2)
+    .sum();
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB:axum|actix-web|rocket|warp|poem
+ORM:sqlx|diesel|sea-orm
+SERIALIZATION:serde|serde_json|toml
+HTTP_CLIENT:reqwest|hyper|ureq
+ERROR:thiserror|anyhow|miette
+ASYNC:tokio|async-std|smol
+CLI:clap|dialoguer|indicatif
+LOGGING:tracing|log
+TESTING:mockall|rstest|proptest
+VALIDATION:validator|garde

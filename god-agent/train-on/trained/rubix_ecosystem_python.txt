@@ -1,0 +1,906 @@
+# RUBIX ECOSYSTEM: PYTHON_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (excluding Django - see rubix_platform_django.txt)
+# PHILOSOPHY: batteries_included|readable|extensive_ecosystem
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+FASTAPI
+desc:modern_async_API_framework|automatic_docs|type_hints
+site:fastapi.tiangolo.com
+use_for:REST_APIs|microservices|async_apps
++automatic_OpenAPI:Swagger_UI|ReDoc
++type_validation:Pydantic_integration
++async_native:high_performance
++dependency_injection:built_in
+
+pip install fastapi uvicorn
+
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class User(BaseModel):
+    name: str
+    email: str
+
+@app.get("/users/{user_id}")
+async def get_user(user_id: int):
+    return {"user_id": user_id}
+
+@app.post("/users", status_code=201)
+async def create_user(user: User):
+    return user
+
+# Run: uvicorn main:app --reload
+
+FLASK
+desc:micro_framework|flexible|minimal
+site:flask.palletsprojects.com
+use_for:simple_APIs|prototypes|microservices
++minimal:no_batteries
++flexible:choose_your_tools
++extensions:Flask-SQLAlchemy|Flask-Login|etc
+
+pip install flask
+
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+@app.route('/users/<int:user_id>')
+def get_user(user_id):
+    return jsonify({'user_id': user_id})
+
+@app.route('/users', methods=['POST'])
+def create_user():
+    data = request.get_json()
+    return jsonify(data), 201
+
+# Flask extensions
+Flask-SQLAlchemy:ORM_integration
+Flask-Migrate:database_migrations
+Flask-Login:user_sessions
+Flask-RESTful:REST_APIs
+Flask-JWT-Extended:JWT_auth
+Flask-CORS:CORS_handling
+Flask-WTF:forms
+
+STARLETTE
+desc:lightweight_ASGI_framework|FastAPI_foundation
+use_for:low_level_async|custom_frameworks
+
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+async def homepage(request):
+    return JSONResponse({'hello': 'world'})
+
+app = Starlette(routes=[Route('/', homepage)])
+
+LITESTAR
+desc:modern_ASGI|performance_focused|formerly_Starlite
+site:litestar.dev
++fast:high_performance
++OpenAPI:automatic
++dependency_injection:advanced
+
+SANIC
+desc:async_web_framework|fast
+use_for:high_performance_APIs
+
+from sanic import Sanic
+from sanic.response import json
+
+app = Sanic("MyApp")
+
+@app.route("/")
+async def test(request):
+    return json({"hello": "world"})
+
+AIOHTTP
+desc:async_HTTP_client_server
+use_for:async_web_apps|HTTP_client
+
+# Server
+from aiohttp import web
+
+async def handle(request):
+    return web.json_response({'hello': 'world'})
+
+app = web.Application()
+app.add_routes([web.get('/', handle)])
+
+# Client
+async with aiohttp.ClientSession() as session:
+    async with session.get(url) as response:
+        data = await response.json()
+
+TORNADO
+desc:async_networking|WebSockets|long_polling
+use_for:real_time_apps|WebSockets
+
+==============================================================================
+ORM_DATABASE
+==============================================================================
+SQLALCHEMY
+desc:SQL_toolkit_ORM|most_popular|flexible
+site:sqlalchemy.org
++ORM:high_level
++Core:low_level_SQL
++async:SQLAlchemy_2.0
+
+pip install sqlalchemy
+
+# SQLAlchemy 2.0 style
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.orm import DeclarativeBase, Session, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(100), unique=True)
+
+engine = create_engine("postgresql://user:pass@localhost/db")
+Base.metadata.create_all(engine)
+
+with Session(engine) as session:
+    user = User(name="John", email="john@example.com")
+    session.add(user)
+    session.commit()
+    
+    users = session.query(User).filter(User.name == "John").all()
+
+# Async SQLAlchemy
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+engine = create_async_engine("postgresql+asyncpg://...")
+async with AsyncSession(engine) as session:
+    result = await session.execute(select(User))
+
+SQLMODEL
+desc:SQLAlchemy+Pydantic|FastAPI_creator
+site:sqlmodel.tiangolo.com
++Pydantic_models:validation_built_in
++SQLAlchemy_compatible:full_power
+
+from sqlmodel import SQLModel, Field, create_engine, Session
+
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    email: str
+
+TORTOISE_ORM
+desc:async_ORM|Django_inspired
+use_for:async_apps|FastAPI
+
+from tortoise import fields
+from tortoise.models import Model
+
+class User(Model):
+    id = fields.IntField(pk=True)
+    name = fields.CharField(max_length=100)
+
+PEEWEE
+desc:simple_ORM|lightweight
+use_for:small_projects|SQLite
+
+from peewee import *
+
+db = SqliteDatabase('my_app.db')
+
+class User(Model):
+    name = CharField()
+    email = CharField(unique=True)
+    class Meta:
+        database = db
+
+DATABASES
+desc:async_database_support|encode
+pip install databases asyncpg
+database = databases.Database("postgresql://...")
+await database.connect()
+await database.execute(query)
+
+ALEMBIC
+desc:SQLAlchemy_migrations
+pip install alembic
+alembic init alembic
+alembic revision --autogenerate -m "create users"
+alembic upgrade head
+
+==============================================================================
+HTTP_CLIENTS
+==============================================================================
+HTTPX
+desc:modern_HTTP_client|async_sync|HTTP_2
+pip install httpx
+
+import httpx
+
+# Sync
+response = httpx.get("https://api.example.com")
+response = httpx.post(url, json={"name": "John"})
+
+# Async
+async with httpx.AsyncClient() as client:
+    response = await client.get(url)
+    
+# With timeout and headers
+client = httpx.Client(
+    base_url="https://api.example.com",
+    headers={"Authorization": f"Bearer {token}"},
+    timeout=30.0
+)
+
+REQUESTS
+desc:simple_HTTP|most_popular|sync_only
+pip install requests
+
+import requests
+
+response = requests.get(url)
+response = requests.post(url, json=data, headers=headers)
+response.json()
+response.raise_for_status()
+
+# Session for connection pooling
+session = requests.Session()
+session.headers.update({"Authorization": f"Bearer {token}"})
+
+AIOHTTP_CLIENT
+desc:async_HTTP_client
+async with aiohttp.ClientSession() as session:
+    async with session.get(url) as response:
+        data = await response.json()
+
+URLLIB3
+desc:low_level_HTTP|connection_pooling
+http = urllib3.PoolManager()
+response = http.request('GET', url)
+
+==============================================================================
+DATA_VALIDATION
+==============================================================================
+PYDANTIC
+desc:data_validation|settings|serialization
+pip install pydantic
+
+from pydantic import BaseModel, Field, EmailStr, field_validator
+from datetime import datetime
+
+class User(BaseModel):
+    id: int
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    age: int = Field(ge=0, le=150)
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    @field_validator('name')
+    @classmethod
+    def name_must_not_be_empty(cls, v):
+        if not v.strip():
+            raise ValueError('Name cannot be empty')
+        return v.strip()
+
+# Parse and validate
+user = User(id=1, name="John", email="john@example.com", age=30)
+user_dict = user.model_dump()
+user_json = user.model_dump_json()
+
+# From dict/JSON
+user = User.model_validate(data_dict)
+user = User.model_validate_json(json_string)
+
+PYDANTIC_SETTINGS
+desc:settings_management|env_vars
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str
+    api_key: str
+    debug: bool = False
+    
+    model_config = {'env_file': '.env'}
+
+settings = Settings()
+
+MARSHMALLOW
+desc:serialization|validation|older_alternative
+from marshmallow import Schema, fields, validate
+
+class UserSchema(Schema):
+    id = fields.Int(dump_only=True)
+    name = fields.Str(required=True, validate=validate.Length(min=1))
+    email = fields.Email(required=True)
+
+schema = UserSchema()
+result = schema.load(data)  # Deserialize
+result = schema.dump(user)  # Serialize
+
+ATTRS
+desc:classes_without_boilerplate
+import attrs
+
+@attrs.define
+class User:
+    name: str
+    email: str
+    age: int = 0
+
+==============================================================================
+ASYNC_TASK_QUEUES
+==============================================================================
+CELERY
+desc:distributed_task_queue|scheduling
+pip install celery redis
+
+from celery import Celery
+
+app = Celery('tasks', broker='redis://localhost:6379/0')
+
+@app.task
+def send_email(to: str, subject: str, body: str):
+    # Send email
+    return f"Sent to {to}"
+
+# Call async
+result = send_email.delay("user@example.com", "Hello", "Body")
+result = send_email.apply_async(args=[...], countdown=60)
+
+# Get result
+result.get(timeout=10)
+result.ready()
+result.successful()
+
+# Scheduling (celery beat)
+app.conf.beat_schedule = {
+    'cleanup-every-hour': {
+        'task': 'tasks.cleanup',
+        'schedule': 3600.0,
+    },
+}
+
+# Run: celery -A tasks worker --loglevel=info
+# Beat: celery -A tasks beat --loglevel=info
+
+RQ_REDIS_QUEUE
+desc:simple_task_queue|Redis_based
+pip install rq
+
+from redis import Redis
+from rq import Queue
+
+q = Queue(connection=Redis())
+
+@job
+def process_data(data):
+    return data
+
+job = q.enqueue(process_data, data)
+job.result
+
+DRAMATIQ
+desc:task_queue|RabbitMQ_Redis
+pip install dramatiq
+
+import dramatiq
+
+@dramatiq.actor
+def send_email(to, subject, body):
+    pass
+
+send_email.send("user@example.com", "Hello", "Body")
+
+ARQP
+desc:async_task_queue|Redis
+pip install arq
+
+from arq import create_pool
+from arq.connections import RedisSettings
+
+async def send_email(ctx, to: str):
+    pass
+
+class WorkerSettings:
+    functions = [send_email]
+    redis_settings = RedisSettings()
+
+HUEY
+desc:lightweight_task_queue
+from huey import RedisHuey
+
+huey = RedisHuey()
+
+@huey.task()
+def process(data):
+    return data
+
+==============================================================================
+TESTING
+==============================================================================
+PYTEST
+desc:testing_framework|fixtures|plugins
+pip install pytest
+
+def test_addition():
+    assert 1 + 1 == 2
+
+@pytest.fixture
+def user():
+    return User(name="John")
+
+def test_user(user):
+    assert user.name == "John"
+
+@pytest.mark.parametrize("a,b,expected", [
+    (1, 2, 3),
+    (0, 0, 0),
+])
+def test_add(a, b, expected):
+    assert add(a, b) == expected
+
+# Async tests
+@pytest.mark.asyncio
+async def test_async():
+    result = await async_function()
+    assert result
+
+PYTEST_PLUGINS
+pytest-asyncio:async_test_support
+pytest-cov:coverage_reporting
+pytest-mock:mocking_fixtures
+pytest-xdist:parallel_execution
+pytest-env:environment_variables
+pytest-httpx:HTTPX_mocking
+pytest-factoryboy:factory_integration
+
+UNITTEST_MOCK
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
+
+mock = Mock()
+mock.method.return_value = "result"
+
+@patch("module.function")
+def test_with_patch(mock_func):
+    mock_func.return_value = "mocked"
+
+# Async mock
+mock = AsyncMock(return_value="result")
+
+FACTORY_BOY
+desc:test_fixtures|factories
+import factory
+
+class UserFactory(factory.Factory):
+    class Meta:
+        model = User
+    
+    name = factory.Faker('name')
+    email = factory.Faker('email')
+
+user = UserFactory()
+users = UserFactory.create_batch(10)
+
+FAKER
+desc:fake_data_generation
+from faker import Faker
+
+fake = Faker()
+fake.name()
+fake.email()
+fake.address()
+fake.text()
+
+HYPOTHESIS
+desc:property_based_testing
+from hypothesis import given, strategies as st
+
+@given(st.integers(), st.integers())
+def test_add_commutative(a, b):
+    assert add(a, b) == add(b, a)
+
+RESPONSES
+desc:mock_requests_library
+import responses
+
+@responses.activate
+def test_api():
+    responses.add(responses.GET, "https://api.example.com/users",
+                  json={"name": "John"}, status=200)
+    response = requests.get("https://api.example.com/users")
+
+RESPX
+desc:mock_httpx_library
+import respx
+
+@respx.mock
+async def test_api():
+    respx.get("https://api.example.com/users").respond(json={"name": "John"})
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://api.example.com/users")
+
+==============================================================================
+CLI_TOOLS
+==============================================================================
+TYPER
+desc:CLI_framework|type_hints|FastAPI_creator
+pip install typer
+
+import typer
+
+app = typer.Typer()
+
+@app.command()
+def hello(name: str, count: int = 1):
+    """Say hello"""
+    for _ in range(count):
+        typer.echo(f"Hello {name}")
+
+@app.command()
+def goodbye(name: str):
+    typer.echo(f"Goodbye {name}")
+
+if __name__ == "__main__":
+    app()
+
+CLICK
+desc:CLI_framework|composable|decorators
+import click
+
+@click.command()
+@click.option('--name', prompt='Your name', help='Name to greet')
+@click.option('--count', default=1, help='Number of greetings')
+def hello(name, count):
+    for _ in range(count):
+        click.echo(f'Hello, {name}!')
+
+ARGPARSE
+desc:built_in_CLI|standard_library
+import argparse
+
+parser = argparse.ArgumentParser(description='Process data')
+parser.add_argument('input', help='Input file')
+parser.add_argument('--output', '-o', help='Output file')
+parser.add_argument('--verbose', '-v', action='store_true')
+args = parser.parse_args()
+
+RICH
+desc:beautiful_terminal_output|tables|progress
+from rich.console import Console
+from rich.table import Table
+from rich.progress import track
+
+console = Console()
+console.print("[bold red]Error![/bold red]")
+
+table = Table(title="Users")
+table.add_column("Name")
+table.add_row("John")
+console.print(table)
+
+for item in track(items, description="Processing..."):
+    process(item)
+
+==============================================================================
+DATA_SCIENCE_ML
+==============================================================================
+NUMPY
+desc:numerical_computing|arrays
+import numpy as np
+
+arr = np.array([1, 2, 3])
+arr = np.zeros((3, 4))
+arr = np.arange(0, 10, 2)
+arr.mean(), arr.std(), arr.sum()
+arr @ other  # Matrix multiply
+
+PANDAS
+desc:data_manipulation|DataFrames
+import pandas as pd
+
+df = pd.read_csv("data.csv")
+df = pd.DataFrame({"name": ["John"], "age": [30]})
+df.head()
+df.describe()
+df[df["age"] > 25]
+df.groupby("category").mean()
+df.to_csv("output.csv")
+
+POLARS
+desc:fast_DataFrames|Rust_based
+import polars as pl
+
+df = pl.read_csv("data.csv")
+df.filter(pl.col("age") > 25)
+df.group_by("category").agg(pl.col("value").mean())
+
+SCIKIT_LEARN
+desc:machine_learning|traditional_ML
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+model = RandomForestClassifier()
+model.fit(X_train, y_train)
+predictions = model.predict(X_test)
+accuracy_score(y_test, predictions)
+
+PYTORCH
+desc:deep_learning|dynamic_graphs
+import torch
+import torch.nn as nn
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 1)
+    
+    def forward(self, x):
+        return self.linear(x)
+
+model = Model()
+optimizer = torch.optim.Adam(model.parameters())
+loss_fn = nn.MSELoss()
+
+TENSORFLOW_KERAS
+desc:deep_learning|production
+import tensorflow as tf
+from tensorflow import keras
+
+model = keras.Sequential([
+    keras.layers.Dense(64, activation='relu'),
+    keras.layers.Dense(10, activation='softmax')
+])
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy')
+model.fit(X_train, y_train, epochs=10)
+
+MATPLOTLIB
+desc:plotting|visualization
+import matplotlib.pyplot as plt
+
+plt.plot(x, y)
+plt.xlabel("X")
+plt.ylabel("Y")
+plt.title("Title")
+plt.savefig("plot.png")
+plt.show()
+
+SEABORN
+desc:statistical_visualization
+import seaborn as sns
+
+sns.scatterplot(data=df, x="age", y="income", hue="category")
+sns.histplot(data=df, x="age")
+sns.heatmap(correlation_matrix)
+
+==============================================================================
+WEB_SCRAPING
+==============================================================================
+BEAUTIFULSOUP
+desc:HTML_XML_parsing
+from bs4 import BeautifulSoup
+
+soup = BeautifulSoup(html, 'html.parser')
+soup.find('div', class_='content')
+soup.find_all('a')
+soup.select('div.content > p')
+element.text
+element['href']
+
+SCRAPY
+desc:web_scraping_framework|spiders
+import scrapy
+
+class MySpider(scrapy.Spider):
+    name = 'myspider'
+    start_urls = ['https://example.com']
+    
+    def parse(self, response):
+        for item in response.css('div.item'):
+            yield {
+                'title': item.css('h2::text').get(),
+                'link': item.css('a::attr(href)').get(),
+            }
+
+SELECTOLAX
+desc:fast_HTML_parsing|Cython
+from selectolax.parser import HTMLParser
+
+tree = HTMLParser(html)
+tree.css_first('div.content').text()
+
+PLAYWRIGHT_PYTHON
+desc:browser_automation
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.goto("https://example.com")
+    page.click("button")
+    content = page.content()
+
+SELENIUM
+desc:browser_automation|legacy
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+driver = webdriver.Chrome()
+driver.get("https://example.com")
+element = driver.find_element(By.CSS_SELECTOR, ".button")
+element.click()
+
+==============================================================================
+UTILITIES
+==============================================================================
+PYTHON_DOTENV
+desc:environment_variables|.env
+from dotenv import load_dotenv
+load_dotenv()
+os.getenv("API_KEY")
+
+TENACITY
+desc:retry_library
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential())
+def call_api():
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+
+ARROW
+desc:better_datetime
+import arrow
+
+now = arrow.now()
+arrow.get("2023-01-01")
+now.shift(days=1)
+now.humanize()  # "just now"
+
+PENDULUM
+desc:datetime_made_easy
+import pendulum
+
+now = pendulum.now()
+pendulum.parse("2023-01-01")
+now.add(days=1)
+now.diff_for_humans()
+
+STRUCTLOG
+desc:structured_logging
+import structlog
+
+log = structlog.get_logger()
+log.info("user_logged_in", user_id=123, ip="1.2.3.4")
+
+LOGURU
+desc:logging_made_easy
+from loguru import logger
+
+logger.info("Processing {item}", item=item)
+logger.add("file.log", rotation="500 MB")
+
+ORJSON
+desc:fast_JSON|Rust_based
+import orjson
+
+data = orjson.loads(json_bytes)
+json_bytes = orjson.dumps(data)
+
+UJSON
+desc:ultra_fast_JSON
+import ujson
+
+data = ujson.loads(json_string)
+json_string = ujson.dumps(data)
+
+CACHETOOLS
+desc:caching_utilities
+from cachetools import TTLCache, cached
+
+cache = TTLCache(maxsize=100, ttl=300)
+
+@cached(cache)
+def get_user(user_id):
+    return fetch_user(user_id)
+
+DEPENDENCY_INJECTOR
+desc:dependency_injection_framework
+from dependency_injector import containers, providers
+
+class Container(containers.DeclarativeContainer):
+    config = providers.Configuration()
+    db = providers.Singleton(Database, url=config.db_url)
+    user_service = providers.Factory(UserService, db=db)
+
+==============================================================================
+PACKAGE_MANAGEMENT
+==============================================================================
+UV
+desc:fast_package_manager|Rust_based
+uv venv
+uv pip install package
+uv pip install -r requirements.txt
+
+POETRY
+desc:dependency_management|packaging
+poetry init
+poetry add package
+poetry install
+poetry build
+poetry publish
+
+PDM
+desc:modern_package_manager|PEP_standards
+pdm init
+pdm add package
+pdm install
+
+PIPX
+desc:install_CLI_tools_isolated
+pipx install black
+pipx install ruff
+
+==============================================================================
+CODE_QUALITY
+==============================================================================
+RUFF
+desc:fast_linter_formatter|Rust_based
+pip install ruff
+ruff check .
+ruff format .
+
+BLACK
+desc:opinionated_formatter
+pip install black
+black .
+
+MYPY
+desc:static_type_checker
+pip install mypy
+mypy .
+
+PYRIGHT
+desc:fast_type_checker|Microsoft
+pip install pyright
+pyright
+
+ISORT
+desc:import_sorting
+pip install isort
+isort .
+
+BANDIT
+desc:security_linter
+pip install bandit
+bandit -r .
+
+PRE_COMMIT
+desc:git_hooks
+pip install pre-commit
+pre-commit install
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB_API:FastAPI|Flask|Starlette|Litestar
+ORM:SQLAlchemy|SQLModel|Tortoise|Peewee
+HTTP:httpx|requests|aiohttp
+VALIDATION:Pydantic|marshmallow|attrs
+TASKS:Celery|RQ|Dramatiq|ARQ
+TESTING:pytest|factory_boy|hypothesis
+CLI:Typer|Click|argparse
+DATA:pandas|polars|numpy
+ML:scikit-learn|PyTorch|TensorFlow
+SCRAPING:BeautifulSoup|Scrapy|Playwright

@@ -1,0 +1,888 @@
+# RUBIX ECOSYSTEM: DART_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (beyond Flutter widgets - see rubix_mobile_flutter.txt)
+# PHILOSOPHY: fast|productive|cross_platform|single_codebase
+
+==============================================================================
+STATE_MANAGEMENT
+==============================================================================
+RIVERPOD
+desc:reactive_state|compile_safe
+site:riverpod.dev
+use_for:complex_state|dependency_injection
++compile_safe:no_runtime_errors
++testable:easy_mocking
++flexible:any_state_pattern
+
+// pubspec.yaml
+dependencies:
+  flutter_riverpod: ^2.4.0
+  riverpod_annotation: ^2.3.0
+dev_dependencies:
+  riverpod_generator: ^2.3.0
+  build_runner: ^2.4.0
+
+// Provider types
+final counterProvider = StateProvider<int>((ref) => 0);
+
+final userProvider = FutureProvider<User>((ref) async {
+  final repository = ref.watch(userRepositoryProvider);
+  return repository.getCurrentUser();
+});
+
+final usersProvider = StreamProvider<List<User>>((ref) {
+  final repository = ref.watch(userRepositoryProvider);
+  return repository.watchUsers();
+});
+
+// Notifier (recommended)
+@riverpod
+class Counter extends _$Counter {
+  @override
+  int build() => 0;
+  
+  void increment() => state++;
+  void decrement() => state--;
+}
+
+@riverpod
+class UserNotifier extends _$UserNotifier {
+  @override
+  FutureOr<User?> build() async {
+    return ref.watch(userRepositoryProvider).getCurrentUser();
+  }
+  
+  Future<void> updateName(String name) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      final user = await ref.read(userRepositoryProvider).updateName(name);
+      return user;
+    });
+  }
+}
+
+// Usage in widget
+class MyWidget extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(counterProvider);
+    final userAsync = ref.watch(userProvider);
+    
+    return userAsync.when(
+      data: (user) => Text(user.name),
+      loading: () => CircularProgressIndicator(),
+      error: (e, st) => Text('Error: $e'),
+    );
+  }
+}
+
+BLOC_CUBIT
+desc:BLoC_pattern|events_states
+site:bloclibrary.dev
+use_for:complex_business_logic|enterprise
++predictable:unidirectional_flow
++testable:easy_testing
++DevTools:debugging
+
+// pubspec.yaml
+dependencies:
+  flutter_bloc: ^8.1.0
+  bloc: ^8.1.0
+
+// Cubit (simpler)
+class CounterCubit extends Cubit<int> {
+  CounterCubit() : super(0);
+  
+  void increment() => emit(state + 1);
+  void decrement() => emit(state - 1);
+}
+
+// BLoC (events)
+sealed class UserEvent {}
+class LoadUser extends UserEvent {
+  final int id;
+  LoadUser(this.id);
+}
+class UpdateUserName extends UserEvent {
+  final String name;
+  UpdateUserName(this.name);
+}
+
+sealed class UserState {}
+class UserInitial extends UserState {}
+class UserLoading extends UserState {}
+class UserLoaded extends UserState {
+  final User user;
+  UserLoaded(this.user);
+}
+class UserError extends UserState {
+  final String message;
+  UserError(this.message);
+}
+
+class UserBloc extends Bloc<UserEvent, UserState> {
+  final UserRepository repository;
+  
+  UserBloc(this.repository) : super(UserInitial()) {
+    on<LoadUser>(_onLoadUser);
+    on<UpdateUserName>(_onUpdateUserName);
+  }
+  
+  Future<void> _onLoadUser(LoadUser event, Emitter<UserState> emit) async {
+    emit(UserLoading());
+    try {
+      final user = await repository.getUser(event.id);
+      emit(UserLoaded(user));
+    } catch (e) {
+      emit(UserError(e.toString()));
+    }
+  }
+}
+
+// Usage
+BlocProvider(
+  create: (context) => UserBloc(repository)..add(LoadUser(1)),
+  child: BlocBuilder<UserBloc, UserState>(
+    builder: (context, state) {
+      return switch (state) {
+        UserLoading() => CircularProgressIndicator(),
+        UserLoaded(:final user) => Text(user.name),
+        UserError(:final message) => Text(message),
+        _ => SizedBox.shrink(),
+      };
+    },
+  ),
+)
+
+GETX
+desc:state|routes|DI|all_in_one
+site:pub.dev/packages/get
+use_for:rapid_development|simple_apps
++minimal_boilerplate:reactive
++navigation:simple
++DI:built_in
+-opinionated:all_or_nothing
+
+// Controller
+class CounterController extends GetxController {
+  var count = 0.obs;
+  void increment() => count++;
+}
+
+// Usage
+Get.put(CounterController());
+
+Obx(() => Text('${controller.count}'));
+
+// Navigation
+Get.to(() => DetailsPage());
+Get.toNamed('/details');
+Get.back();
+
+==============================================================================
+NETWORKING
+==============================================================================
+DIO
+desc:powerful_HTTP_client
+site:pub.dev/packages/dio
++interceptors:logging|auth|retry
++FormData:file_uploads
++transformers:custom
+
+// pubspec.yaml
+dependencies:
+  dio: ^5.4.0
+
+final dio = Dio(BaseOptions(
+  baseUrl: 'https://api.example.com',
+  connectTimeout: Duration(seconds: 10),
+  receiveTimeout: Duration(seconds: 10),
+  headers: {'Accept': 'application/json'},
+));
+
+// Interceptors
+dio.interceptors.add(InterceptorsWrapper(
+  onRequest: (options, handler) {
+    options.headers['Authorization'] = 'Bearer $token';
+    return handler.next(options);
+  },
+  onError: (error, handler) {
+    if (error.response?.statusCode == 401) {
+      // Refresh token
+    }
+    return handler.next(error);
+  },
+));
+
+// Logging
+dio.interceptors.add(LogInterceptor(
+  requestBody: true,
+  responseBody: true,
+));
+
+// GET
+final response = await dio.get('/users/1');
+final user = User.fromJson(response.data);
+
+// POST
+final response = await dio.post('/users', data: {
+  'name': 'John',
+  'email': 'john@example.com',
+});
+
+// File upload
+final formData = FormData.fromMap({
+  'file': await MultipartFile.fromFile(path, filename: 'image.jpg'),
+  'name': 'John',
+});
+await dio.post('/upload', data: formData);
+
+RETROFIT
+desc:type_safe_HTTP|code_generation
+// pubspec.yaml
+dependencies:
+  dio: ^5.4.0
+  retrofit: ^4.0.0
+dev_dependencies:
+  retrofit_generator: ^8.0.0
+  build_runner: ^2.4.0
+  json_serializable: ^6.7.0
+
+@RestApi(baseUrl: 'https://api.example.com')
+abstract class ApiClient {
+  factory ApiClient(Dio dio, {String baseUrl}) = _ApiClient;
+  
+  @GET('/users/{id}')
+  Future<User> getUser(@Path('id') int id);
+  
+  @GET('/users')
+  Future<List<User>> getUsers(@Query('page') int page);
+  
+  @POST('/users')
+  Future<User> createUser(@Body() CreateUserRequest request);
+  
+  @PUT('/users/{id}')
+  Future<User> updateUser(@Path('id') int id, @Body() UpdateUserRequest request);
+  
+  @DELETE('/users/{id}')
+  Future<void> deleteUser(@Path('id') int id);
+  
+  @MultiPart()
+  @POST('/upload')
+  Future<void> uploadFile(@Part(name: 'file') File file);
+}
+
+// Generate: dart run build_runner build
+
+GRAPHQL_FLUTTER
+desc:GraphQL_client
+dependencies:
+  graphql_flutter: ^5.1.0
+
+final client = GraphQLClient(
+  link: HttpLink('https://api.example.com/graphql'),
+  cache: GraphQLCache(),
+);
+
+final result = await client.query(QueryOptions(
+  document: gql('''
+    query GetUser(\$id: ID!) {
+      user(id: \$id) {
+        id
+        name
+        email
+      }
+    }
+  '''),
+  variables: {'id': '1'},
+));
+
+==============================================================================
+PERSISTENCE
+==============================================================================
+DRIFT
+desc:reactive_SQLite|type_safe
+site:drift.simonbinder.eu
++type_safe:compile_time_checks
++reactive:streams
++migrations:versioned
+
+// pubspec.yaml
+dependencies:
+  drift: ^2.14.0
+  sqlite3_flutter_libs: ^0.5.0
+dev_dependencies:
+  drift_dev: ^2.14.0
+  build_runner: ^2.4.0
+
+// Database definition
+@DataClassName('User')
+class Users extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 100)();
+  TextColumn get email => text().unique()();
+  BoolColumn get active => boolean().withDefault(const Constant(true))();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+}
+
+@DriftDatabase(tables: [Users])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase() : super(_openConnection());
+  
+  @override
+  int get schemaVersion => 1;
+  
+  // Queries
+  Future<List<User>> getAllUsers() => select(users).get();
+  
+  Stream<List<User>> watchActiveUsers() {
+    return (select(users)..where((u) => u.active.equals(true))).watch();
+  }
+  
+  Future<User> getUserById(int id) {
+    return (select(users)..where((u) => u.id.equals(id))).getSingle();
+  }
+  
+  Future<int> insertUser(UsersCompanion user) => into(users).insert(user);
+  
+  Future<bool> updateUser(User user) => update(users).replace(user);
+  
+  Future<int> deleteUser(int id) {
+    return (delete(users)..where((u) => u.id.equals(id))).go();
+  }
+}
+
+HIVE
+desc:lightweight_NoSQL|fast
+site:pub.dev/packages/hive
++fast:no_native_deps
++encrypted:AES_256
++simple:key_value
+
+// pubspec.yaml
+dependencies:
+  hive: ^2.2.0
+  hive_flutter: ^1.1.0
+dev_dependencies:
+  hive_generator: ^2.0.0
+  build_runner: ^2.4.0
+
+// Model
+@HiveType(typeId: 0)
+class User extends HiveObject {
+  @HiveField(0)
+  late String name;
+  
+  @HiveField(1)
+  late String email;
+  
+  @HiveField(2)
+  late int age;
+}
+
+// Initialize
+await Hive.initFlutter();
+Hive.registerAdapter(UserAdapter());
+final box = await Hive.openBox<User>('users');
+
+// CRUD
+await box.add(User()..name = 'John'..email = 'john@example.com');
+final user = box.get(0);
+user?.name = 'Jane';
+await user?.save();
+await box.delete(0);
+
+// Queries
+final users = box.values.where((u) => u.age > 18).toList();
+
+ISAR
+desc:super_fast_NoSQL
+site:isar.dev
++fast:written_in_Rust
++full_text_search:built_in
++indexes:composite
+
+@collection
+class User {
+  Id id = Isar.autoIncrement;
+  
+  @Index()
+  late String email;
+  
+  late String name;
+  
+  @Index(composite: [CompositeIndex('name')])
+  late int age;
+}
+
+final isar = await Isar.open([UserSchema]);
+
+// Write
+await isar.writeTxn(() async {
+  await isar.users.put(User()..name = 'John'..email = 'john@example.com');
+});
+
+// Query
+final users = await isar.users
+    .filter()
+    .ageGreaterThan(18)
+    .sortByName()
+    .findAll();
+
+// Watch
+isar.users.watchLazy().listen((_) {
+  // Refresh
+});
+
+SHARED_PREFERENCES
+desc:simple_key_value
+final prefs = await SharedPreferences.getInstance();
+await prefs.setString('token', token);
+final token = prefs.getString('token');
+
+FLUTTER_SECURE_STORAGE
+desc:encrypted_storage
+final storage = FlutterSecureStorage();
+await storage.write(key: 'api_key', value: apiKey);
+final apiKey = await storage.read(key: 'api_key');
+
+==============================================================================
+DEPENDENCY_INJECTION
+==============================================================================
+GET_IT
+desc:service_locator|simple_DI
+site:pub.dev/packages/get_it
++simple:easy_setup
++lazy:lazy_singletons
+
+final getIt = GetIt.instance;
+
+void setupDependencies() {
+  // Singleton
+  getIt.registerSingleton<ApiClient>(ApiClient(Dio()));
+  
+  // Lazy singleton
+  getIt.registerLazySingleton<UserRepository>(() => 
+    UserRepositoryImpl(getIt<ApiClient>()));
+  
+  // Factory
+  getIt.registerFactory<UserBloc>(() => 
+    UserBloc(getIt<UserRepository>()));
+}
+
+// Usage
+final repository = getIt<UserRepository>();
+
+INJECTABLE
+desc:code_gen_DI|get_it_based
+// pubspec.yaml
+dependencies:
+  get_it: ^7.6.0
+  injectable: ^2.3.0
+dev_dependencies:
+  injectable_generator: ^2.4.0
+  build_runner: ^2.4.0
+
+@module
+abstract class AppModule {
+  @lazySingleton
+  Dio get dio => Dio(BaseOptions(baseUrl: 'https://api.example.com'));
+}
+
+@injectable
+class UserRepository {
+  final ApiClient _client;
+  UserRepository(this._client);
+}
+
+@injectable
+class UserBloc {
+  final UserRepository _repository;
+  UserBloc(this._repository);
+}
+
+@InjectableInit()
+void configureDependencies() => getIt.init();
+
+==============================================================================
+NAVIGATION
+==============================================================================
+GO_ROUTER
+desc:declarative_routing|recommended
+site:pub.dev/packages/go_router
+(covered in Flutter mobile file, extended patterns here)
+
+// Deep linking
+final router = GoRouter(
+  routes: [
+    GoRoute(
+      path: '/',
+      builder: (context, state) => HomeScreen(),
+      routes: [
+        GoRoute(
+          path: 'user/:id',
+          builder: (context, state) {
+            final id = state.pathParameters['id']!;
+            return UserScreen(id: id);
+          },
+        ),
+      ],
+    ),
+  ],
+  redirect: (context, state) {
+    final isLoggedIn = authService.isLoggedIn;
+    final isLoggingIn = state.matchedLocation == '/login';
+    
+    if (!isLoggedIn && !isLoggingIn) return '/login';
+    if (isLoggedIn && isLoggingIn) return '/';
+    return null;
+  },
+);
+
+AUTO_ROUTE
+desc:type_safe_routing|code_gen
+// pubspec.yaml
+dependencies:
+  auto_route: ^7.8.0
+dev_dependencies:
+  auto_route_generator: ^7.3.0
+  build_runner: ^2.4.0
+
+@AutoRouterConfig()
+class AppRouter extends $AppRouter {
+  @override
+  List<AutoRoute> get routes => [
+    AutoRoute(page: HomeRoute.page, initial: true),
+    AutoRoute(page: UserRoute.page, path: '/user/:id'),
+  ];
+}
+
+@RoutePage()
+class HomeScreen extends StatelessWidget { }
+
+@RoutePage()
+class UserScreen extends StatelessWidget {
+  final int id;
+  const UserScreen(@PathParam('id') this.id);
+}
+
+// Navigation
+context.router.push(UserRoute(id: 1));
+context.router.pushNamed('/user/1');
+
+==============================================================================
+SERIALIZATION
+==============================================================================
+JSON_SERIALIZABLE
+desc:JSON_code_generation
+// pubspec.yaml
+dependencies:
+  json_annotation: ^4.8.0
+dev_dependencies:
+  json_serializable: ^6.7.0
+  build_runner: ^2.4.0
+
+@JsonSerializable()
+class User {
+  final int id;
+  final String name;
+  @JsonKey(name: 'email_address')
+  final String email;
+  @JsonKey(includeIfNull: false)
+  final int? age;
+  @JsonKey(fromJson: _dateFromJson, toJson: _dateToJson)
+  final DateTime createdAt;
+  
+  User({
+    required this.id,
+    required this.name,
+    required this.email,
+    this.age,
+    required this.createdAt,
+  });
+  
+  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+  Map<String, dynamic> toJson() => _$UserToJson(this);
+}
+
+// Generate: dart run build_runner build
+
+FREEZED
+desc:immutable_classes|unions
+site:pub.dev/packages/freezed
++immutable:copyWith
++unions:sealed_classes
++JSON:integration
+
+// pubspec.yaml
+dependencies:
+  freezed_annotation: ^2.4.0
+dev_dependencies:
+  freezed: ^2.4.0
+  build_runner: ^2.4.0
+
+@freezed
+class User with _$User {
+  const factory User({
+    required int id,
+    required String name,
+    required String email,
+    int? age,
+  }) = _User;
+  
+  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+}
+
+// Usage
+final user = User(id: 1, name: 'John', email: 'john@example.com');
+final updated = user.copyWith(name: 'Jane');
+
+// Union types
+@freezed
+sealed class Result<T> with _$Result<T> {
+  const factory Result.success(T data) = Success<T>;
+  const factory Result.failure(String message) = Failure<T>;
+}
+
+result.when(
+  success: (data) => print(data),
+  failure: (message) => print(message),
+);
+
+==============================================================================
+TESTING
+==============================================================================
+FLUTTER_TEST
+desc:widget_testing|built_in
+testWidgets('Counter increments', (tester) async {
+  await tester.pumpWidget(MyApp());
+  
+  expect(find.text('0'), findsOneWidget);
+  
+  await tester.tap(find.byIcon(Icons.add));
+  await tester.pump();
+  
+  expect(find.text('1'), findsOneWidget);
+});
+
+MOCKITO
+desc:mocking_framework
+// pubspec.yaml
+dev_dependencies:
+  mockito: ^5.4.0
+  build_runner: ^2.4.0
+
+@GenerateMocks([UserRepository])
+void main() {
+  late MockUserRepository mockRepository;
+  
+  setUp(() {
+    mockRepository = MockUserRepository();
+  });
+  
+  test('fetches user', () async {
+    when(mockRepository.getUser(1))
+        .thenAnswer((_) async => User(id: 1, name: 'John'));
+    
+    final bloc = UserBloc(mockRepository);
+    bloc.add(LoadUser(1));
+    
+    await expectLater(
+      bloc.stream,
+      emitsInOrder([UserLoading(), isA<UserLoaded>()]),
+    );
+    
+    verify(mockRepository.getUser(1)).called(1);
+  });
+}
+
+MOCKTAIL
+desc:mocking|no_code_gen
+// pubspec.yaml
+dev_dependencies:
+  mocktail: ^1.0.0
+
+class MockUserRepository extends Mock implements UserRepository {}
+
+test('fetches user', () async {
+  final mockRepository = MockUserRepository();
+  
+  when(() => mockRepository.getUser(any()))
+      .thenAnswer((_) async => User(id: 1, name: 'John'));
+  
+  // Test
+  
+  verify(() => mockRepository.getUser(1)).called(1);
+});
+
+BLOC_TEST
+desc:BLoC_testing
+// pubspec.yaml
+dev_dependencies:
+  bloc_test: ^9.1.0
+
+blocTest<UserBloc, UserState>(
+  'emits [UserLoading, UserLoaded] when LoadUser is added',
+  build: () {
+    when(() => mockRepository.getUser(1))
+        .thenAnswer((_) async => testUser);
+    return UserBloc(mockRepository);
+  },
+  act: (bloc) => bloc.add(LoadUser(1)),
+  expect: () => [
+    UserLoading(),
+    UserLoaded(testUser),
+  ],
+);
+
+INTEGRATION_TEST
+desc:end_to_end_testing
+// integration_test/app_test.dart
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  
+  testWidgets('full app test', (tester) async {
+    app.main();
+    await tester.pumpAndSettle();
+    
+    await tester.tap(find.text('Login'));
+    await tester.pumpAndSettle();
+    
+    await tester.enterText(find.byType(TextField).first, 'user@example.com');
+    await tester.enterText(find.byType(TextField).last, 'password');
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    
+    expect(find.text('Welcome'), findsOneWidget);
+  });
+}
+
+==============================================================================
+UTILITIES
+==============================================================================
+FPDART
+desc:functional_programming
+// pubspec.yaml
+dependencies:
+  fpdart: ^1.1.0
+
+// Either
+Either<Failure, User> result = await repository.getUser(1);
+
+result.fold(
+  (failure) => print(failure.message),
+  (user) => print(user.name),
+);
+
+// Option
+Option<User> maybeUser = Option.of(user);
+maybeUser.map((u) => u.name).getOrElse(() => 'Unknown');
+
+// TaskEither (async Either)
+TaskEither<Failure, User> getUser(int id) {
+  return TaskEither.tryCatch(
+    () => api.getUser(id),
+    (error, _) => Failure(error.toString()),
+  );
+}
+
+DARTZ
+desc:functional_programming|older
+final Either<Failure, User> result = await repository.getUser(1);
+result.fold((l) => handleError(l), (r) => handleSuccess(r));
+
+LOGGER
+desc:logging
+final logger = Logger(
+  printer: PrettyPrinter(
+    methodCount: 2,
+    errorMethodCount: 8,
+    lineLength: 120,
+    colors: true,
+    printTime: true,
+  ),
+);
+
+logger.d('Debug message');
+logger.i('Info message');
+logger.w('Warning message');
+logger.e('Error message', error: exception, stackTrace: stackTrace);
+
+INTL
+desc:internationalization
+// pubspec.yaml
+dependencies:
+  intl: ^0.18.0
+  flutter_localizations:
+    sdk: flutter
+
+// Date formatting
+DateFormat('yyyy-MM-dd').format(DateTime.now());
+DateFormat.yMMMMd('en_US').format(date);
+
+// Number formatting
+NumberFormat.currency(locale: 'en_US', symbol: '\$').format(1234.56);
+NumberFormat.compact().format(1000000);  // 1M
+
+// Messages
+Intl.message('Hello', name: 'greeting');
+
+==============================================================================
+UI_UTILITIES
+==============================================================================
+FLUTTER_HOOKS
+desc:React_hooks_for_Flutter
+// pubspec.yaml
+dependencies:
+  flutter_hooks: ^0.20.0
+
+class MyWidget extends HookWidget {
+  @override
+  Widget build(BuildContext context) {
+    final counter = useState(0);
+    final controller = useTextEditingController();
+    final focusNode = useFocusNode();
+    
+    useEffect(() {
+      // Side effect
+      return () {
+        // Cleanup
+      };
+    }, []);
+    
+    final future = useFuture(fetchData());
+    final stream = useStream(dataStream);
+    
+    return Column(
+      children: [
+        Text('${counter.value}'),
+        TextField(controller: controller, focusNode: focusNode),
+      ],
+    );
+  }
+}
+
+CACHED_NETWORK_IMAGE
+desc:image_caching
+CachedNetworkImage(
+  imageUrl: 'https://example.com/image.jpg',
+  placeholder: (context, url) => CircularProgressIndicator(),
+  errorWidget: (context, url, error) => Icon(Icons.error),
+);
+
+FLUTTER_SVG
+desc:SVG_rendering
+SvgPicture.asset('assets/icon.svg');
+SvgPicture.network('https://example.com/icon.svg');
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+STATE:Riverpod|BLoC|GetX|Provider
+NETWORKING:Dio|Retrofit|http|GraphQL
+PERSISTENCE:Drift|Hive|Isar|SharedPreferences
+DI:GetIt|Injectable|Riverpod
+NAVIGATION:GoRouter|AutoRoute|Navigator
+SERIALIZATION:json_serializable|Freezed
+TESTING:flutter_test|Mockito|Mocktail|bloc_test
+FP:fpdart|dartz
+UTILITIES:Logger|Intl|flutter_hooks

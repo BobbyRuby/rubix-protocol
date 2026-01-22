@@ -1,0 +1,865 @@
+# RUBIX ECOSYSTEM: GO_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools
+# PHILOSOPHY: simplicity|stdlib_first|minimal_dependencies
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+GIN
+desc:fastest_HTTP_framework|httprouter
+site:gin-gonic.com
+use_for:REST_APIs|microservices
++fast:httprouter_based
++middleware:rich_ecosystem
++popular:most_used
+
+go get -u github.com/gin-gonic/gin
+
+package main
+
+import "github.com/gin-gonic/gin"
+
+func main() {
+    r := gin.Default()
+    
+    r.GET("/users/:id", func(c *gin.Context) {
+        id := c.Param("id")
+        c.JSON(200, gin.H{"id": id})
+    })
+    
+    r.POST("/users", func(c *gin.Context) {
+        var user User
+        if err := c.ShouldBindJSON(&user); err != nil {
+            c.JSON(400, gin.H{"error": err.Error()})
+            return
+        }
+        c.JSON(201, user)
+    })
+    
+    // Middleware
+    r.Use(gin.Logger(), gin.Recovery())
+    
+    // Groups
+    api := r.Group("/api/v1")
+    {
+        api.GET("/users", listUsers)
+        api.POST("/users", createUser)
+    }
+    
+    r.Run(":8080")
+}
+
+ECHO
+desc:high_performance|minimalist
+site:echo.labstack.com
+use_for:REST_APIs|microservices
++fast:optimized_router
++middleware:built_in
++data_binding:automatic
+
+go get github.com/labstack/echo/v4
+
+import "github.com/labstack/echo/v4"
+
+func main() {
+    e := echo.New()
+    
+    e.GET("/users/:id", func(c echo.Context) error {
+        id := c.Param("id")
+        return c.JSON(200, map[string]string{"id": id})
+    })
+    
+    e.POST("/users", func(c echo.Context) error {
+        var user User
+        if err := c.Bind(&user); err != nil {
+            return err
+        }
+        return c.JSON(201, user)
+    })
+    
+    e.Logger.Fatal(e.Start(":8080"))
+}
+
+FIBER
+desc:Express_inspired|fasthttp
+site:gofiber.io
+use_for:high_performance_APIs
++Express_like:familiar_API
++fasthttp:not_net/http
++fast:low_allocations
+
+go get github.com/gofiber/fiber/v2
+
+import "github.com/gofiber/fiber/v2"
+
+func main() {
+    app := fiber.New()
+    
+    app.Get("/users/:id", func(c *fiber.Ctx) error {
+        id := c.Params("id")
+        return c.JSON(fiber.Map{"id": id})
+    })
+    
+    app.Listen(":8080")
+}
+
+CHI
+desc:lightweight_router|stdlib_compatible
+site:go-chi.io
+use_for:REST_APIs|stdlib_lovers
++net/http_compatible:middleware_reuse
++minimal:just_routing
++composable:modular
+
+go get github.com/go-chi/chi/v5
+
+import "github.com/go-chi/chi/v5"
+
+func main() {
+    r := chi.NewRouter()
+    r.Use(middleware.Logger)
+    r.Use(middleware.Recoverer)
+    
+    r.Route("/users", func(r chi.Router) {
+        r.Get("/", listUsers)
+        r.Post("/", createUser)
+        r.Route("/{id}", func(r chi.Router) {
+            r.Get("/", getUser)
+            r.Put("/", updateUser)
+            r.Delete("/", deleteUser)
+        })
+    })
+    
+    http.ListenAndServe(":8080", r)
+}
+
+GORILLA_MUX
+desc:powerful_router|mature
+use_for:complex_routing
+!maintenance_mode:use_chi_instead
+
+go get github.com/gorilla/mux
+
+NET_HTTP_STDLIB
+desc:standard_library|no_dependencies
+use_for:simple_APIs|minimal_deps
++Go_1.22:enhanced_routing
+
+http.HandleFunc("GET /users/{id}", func(w http.ResponseWriter, r *http.Request) {
+    id := r.PathValue("id")
+    json.NewEncoder(w).Encode(map[string]string{"id": id})
+})
+http.ListenAndServe(":8080", nil)
+
+HUMA
+desc:modern_API_framework|OpenAPI
+site:huma.rocks
+use_for:OpenAPI_first|type_safe_APIs
++OpenAPI:automatic_generation
++validation:built_in
++operations:typed
+
+==============================================================================
+ORM_DATABASE
+==============================================================================
+GORM
+desc:full_featured_ORM|popular
+site:gorm.io
+use_for:CRUD_apps|rapid_development
++associations:has_many|belongs_to
++migrations:auto_migrate
++hooks:callbacks
+
+go get -u gorm.io/gorm
+go get -u gorm.io/driver/postgres
+
+import (
+    "gorm.io/gorm"
+    "gorm.io/driver/postgres"
+)
+
+type User struct {
+    gorm.Model
+    Name   string
+    Email  string `gorm:"uniqueIndex"`
+    Orders []Order
+}
+
+type Order struct {
+    gorm.Model
+    UserID uint
+    Total  float64
+}
+
+dsn := "host=localhost user=postgres password=pass dbname=mydb"
+db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+
+db.AutoMigrate(&User{}, &Order{})
+
+// Create
+db.Create(&User{Name: "John", Email: "john@example.com"})
+
+// Read
+var user User
+db.First(&user, 1)
+db.Where("email = ?", "john@example.com").First(&user)
+
+// Update
+db.Model(&user).Update("Name", "Jane")
+
+// Delete
+db.Delete(&user, 1)
+
+// Preload associations
+db.Preload("Orders").Find(&users)
+
+// Transactions
+db.Transaction(func(tx *gorm.DB) error {
+    if err := tx.Create(&user).Error; err != nil {
+        return err
+    }
+    return nil
+})
+
+SQLX
+desc:extensions_to_database/sql
+use_for:SQL_control|type_safety
++Get/Select:struct_scanning
++NamedExec:named_parameters
++no_ORM:SQL_first
+
+go get github.com/jmoiron/sqlx
+
+import "github.com/jmoiron/sqlx"
+
+db, err := sqlx.Connect("postgres", dsn)
+
+var users []User
+db.Select(&users, "SELECT * FROM users WHERE active = $1", true)
+
+var user User
+db.Get(&user, "SELECT * FROM users WHERE id = $1", 1)
+
+db.NamedExec(`INSERT INTO users (name, email) VALUES (:name, :email)`,
+    map[string]interface{}{"name": "John", "email": "john@example.com"})
+
+SQLC
+desc:compile_time_SQL|code_generation
+site:sqlc.dev
+use_for:type_safe_SQL|no_runtime_overhead
++type_safe:generated_Go_code
++fast:no_reflection
++SQL_first:write_SQL
+
+# sqlc.yaml
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "query.sql"
+    schema: "schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "db"
+
+-- query.sql
+-- name: GetUser :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: ListUsers :many
+SELECT * FROM users ORDER BY name;
+
+-- name: CreateUser :one
+INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *;
+
+// Generated code usage
+queries := db.New(conn)
+user, err := queries.GetUser(ctx, 1)
+users, err := queries.ListUsers(ctx)
+
+ENT
+desc:entity_framework|Facebook
+site:entgo.io
+use_for:complex_schemas|graph_traversal
++schema_as_code:Go_types
++graph_traversal:edges
++code_generation:type_safe
+
+go get entgo.io/ent/cmd/ent
+
+// Schema definition
+type User struct {
+    ent.Schema
+}
+
+func (User) Fields() []ent.Field {
+    return []ent.Field{
+        field.String("name"),
+        field.String("email").Unique(),
+    }
+}
+
+func (User) Edges() []ent.Edge {
+    return []ent.Edge{
+        edge.To("orders", Order.Type),
+    }
+}
+
+BUN
+desc:SQL_first_ORM|lightweight
+site:bun.uptrace.dev
++SQL_first:query_builder
++struct_mapping:automatic
++migrations:built_in
+
+PGXPOOL
+desc:PostgreSQL_driver|high_performance
+go get github.com/jackc/pgx/v5
+
+pool, err := pgxpool.New(ctx, connString)
+rows, err := pool.Query(ctx, "SELECT * FROM users")
+
+==============================================================================
+HTTP_CLIENTS
+==============================================================================
+NET_HTTP_STDLIB
+desc:built_in|sufficient_for_most
+client := &http.Client{Timeout: 10 * time.Second}
+
+resp, err := client.Get(url)
+defer resp.Body.Close()
+
+req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+req.Header.Set("Content-Type", "application/json")
+resp, err := client.Do(req)
+
+RESTY
+desc:simple_HTTP_client|feature_rich
+go get github.com/go-resty/resty/v2
+
+import "github.com/go-resty/resty/v2"
+
+client := resty.New()
+
+resp, err := client.R().
+    SetHeader("Accept", "application/json").
+    SetAuthToken(token).
+    SetResult(&User{}).
+    Get("https://api.example.com/users/1")
+
+user := resp.Result().(*User)
+
+// POST with JSON
+resp, err := client.R().
+    SetBody(User{Name: "John"}).
+    SetResult(&User{}).
+    Post("https://api.example.com/users")
+
+// Retry
+client.SetRetryCount(3).SetRetryWaitTime(1 * time.Second)
+
+HEIMDALL
+desc:enhanced_HTTP_client|hystrix
+go get github.com/gojek/heimdall/v7
+
+client := heimdall.NewHTTPClient(
+    heimdall.WithHTTPTimeout(10*time.Second),
+    heimdall.WithRetrier(heimdall.NewRetrier(
+        heimdall.NewConstantBackoff(1*time.Second, 3),
+    )),
+)
+
+==============================================================================
+CONFIGURATION
+==============================================================================
+VIPER
+desc:configuration_management|popular
+site:github.com/spf13/viper
++multiple_formats:JSON|YAML|TOML|env
++env_vars:automatic
++remote_config:consul|etcd
+
+go get github.com/spf13/viper
+
+viper.SetConfigName("config")
+viper.SetConfigType("yaml")
+viper.AddConfigPath(".")
+viper.AutomaticEnv()
+
+if err := viper.ReadInConfig(); err != nil {
+    log.Fatal(err)
+}
+
+dbHost := viper.GetString("database.host")
+dbPort := viper.GetInt("database.port")
+debug := viper.GetBool("debug")
+
+// Unmarshal to struct
+var config Config
+viper.Unmarshal(&config)
+
+ENVCONFIG
+desc:env_vars_to_struct
+go get github.com/kelseyhightower/envconfig
+
+type Config struct {
+    Port     int    `envconfig:"PORT" default:"8080"`
+    DBHost   string `envconfig:"DB_HOST" required:"true"`
+    LogLevel string `envconfig:"LOG_LEVEL" default:"info"`
+}
+
+var cfg Config
+envconfig.Process("", &cfg)
+
+KOANF
+desc:lighter_viper_alternative
+go get github.com/knadh/koanf/v2
+
+GODOTENV
+desc:load_.env_files
+go get github.com/joho/godotenv
+
+godotenv.Load()
+os.Getenv("DATABASE_URL")
+
+==============================================================================
+LOGGING
+==============================================================================
+SLOG_STDLIB
+desc:structured_logging|Go_1.21+
+import "log/slog"
+
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+slog.SetDefault(logger)
+
+slog.Info("user logged in",
+    slog.String("user_id", "123"),
+    slog.String("ip", "1.2.3.4"),
+)
+
+ZEROLOG
+desc:zero_allocation_JSON_logging
+go get github.com/rs/zerolog
+
+import "github.com/rs/zerolog/log"
+
+zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+log.Info().
+    Str("user_id", "123").
+    Str("ip", "1.2.3.4").
+    Msg("user logged in")
+
+ZAP
+desc:fast_structured_logging|Uber
+go get go.uber.org/zap
+
+logger, _ := zap.NewProduction()
+defer logger.Sync()
+
+logger.Info("user logged in",
+    zap.String("user_id", "123"),
+    zap.String("ip", "1.2.3.4"),
+)
+
+sugar := logger.Sugar()
+sugar.Infow("user logged in", "user_id", "123", "ip", "1.2.3.4")
+
+LOGRUS
+desc:structured_logging|older_popular
+go get github.com/sirupsen/logrus
+
+logrus.WithFields(logrus.Fields{
+    "user_id": "123",
+    "ip":      "1.2.3.4",
+}).Info("user logged in")
+
+==============================================================================
+VALIDATION
+==============================================================================
+VALIDATOR
+desc:struct_validation|go-playground
+go get github.com/go-playground/validator/v10
+
+import "github.com/go-playground/validator/v10"
+
+type User struct {
+    Name  string `validate:"required,min=1,max=100"`
+    Email string `validate:"required,email"`
+    Age   int    `validate:"gte=0,lte=150"`
+}
+
+validate := validator.New()
+
+user := User{Name: "", Email: "invalid"}
+err := validate.Struct(user)
+if err != nil {
+    for _, err := range err.(validator.ValidationErrors) {
+        fmt.Println(err.Field(), err.Tag())
+    }
+}
+
+OZZO_VALIDATION
+desc:code_based_validation
+go get github.com/go-ozzo/ozzo-validation/v4
+
+import validation "github.com/go-ozzo/ozzo-validation/v4"
+
+func (u User) Validate() error {
+    return validation.ValidateStruct(&u,
+        validation.Field(&u.Name, validation.Required, validation.Length(1, 100)),
+        validation.Field(&u.Email, validation.Required, is.Email),
+    )
+}
+
+==============================================================================
+AUTHENTICATION
+==============================================================================
+JWT_GO
+desc:JWT_implementation
+go get github.com/golang-jwt/jwt/v5
+
+import "github.com/golang-jwt/jwt/v5"
+
+// Create token
+claims := jwt.MapClaims{
+    "user_id": 123,
+    "exp":     time.Now().Add(time.Hour * 24).Unix(),
+}
+token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+tokenString, err := token.SignedString([]byte(secret))
+
+// Parse token
+token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    return []byte(secret), nil
+})
+if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+    userID := claims["user_id"]
+}
+
+CASBIN
+desc:authorization_library|RBAC_ABAC
+go get github.com/casbin/casbin/v2
+
+e, _ := casbin.NewEnforcer("model.conf", "policy.csv")
+ok, _ := e.Enforce("alice", "data1", "read")
+
+GORILLA_SESSIONS
+desc:session_management
+go get github.com/gorilla/sessions
+
+store := sessions.NewCookieStore([]byte(secret))
+session, _ := store.Get(r, "session-name")
+session.Values["user_id"] = 123
+session.Save(r, w)
+
+==============================================================================
+CACHING
+==============================================================================
+GO_CACHE
+desc:in_memory_cache|simple
+go get github.com/patrickmn/go-cache
+
+c := cache.New(5*time.Minute, 10*time.Minute)
+c.Set("key", value, cache.DefaultExpiration)
+value, found := c.Get("key")
+
+RISTRETTO
+desc:high_performance_cache|Dgraph
+go get github.com/dgraph-io/ristretto
+
+cache, _ := ristretto.NewCache(&ristretto.Config{
+    NumCounters: 1e7,
+    MaxCost:     1 << 30,
+    BufferItems: 64,
+})
+cache.Set("key", value, 1)
+value, found := cache.Get("key")
+
+GO_REDIS
+desc:Redis_client
+go get github.com/redis/go-redis/v9
+
+import "github.com/redis/go-redis/v9"
+
+rdb := redis.NewClient(&redis.Options{
+    Addr: "localhost:6379",
+})
+
+rdb.Set(ctx, "key", "value", time.Hour)
+val, err := rdb.Get(ctx, "key").Result()
+
+// Pipeline
+pipe := rdb.Pipeline()
+pipe.Set(ctx, "key1", "value1", 0)
+pipe.Set(ctx, "key2", "value2", 0)
+pipe.Exec(ctx)
+
+==============================================================================
+MESSAGING
+==============================================================================
+SARAMA
+desc:Kafka_client
+go get github.com/IBM/sarama
+
+// Producer
+producer, _ := sarama.NewSyncProducer([]string{"localhost:9092"}, nil)
+msg := &sarama.ProducerMessage{Topic: "topic", Value: sarama.StringEncoder("message")}
+producer.SendMessage(msg)
+
+// Consumer
+consumer, _ := sarama.NewConsumer([]string{"localhost:9092"}, nil)
+partitionConsumer, _ := consumer.ConsumePartition("topic", 0, sarama.OffsetNewest)
+for msg := range partitionConsumer.Messages() {
+    fmt.Println(string(msg.Value))
+}
+
+AMQP091_GO
+desc:RabbitMQ_client
+go get github.com/rabbitmq/amqp091-go
+
+NATS
+desc:NATS_client|cloud_native_messaging
+go get github.com/nats-io/nats.go
+
+nc, _ := nats.Connect(nats.DefaultURL)
+nc.Publish("subject", []byte("message"))
+nc.Subscribe("subject", func(m *nats.Msg) {
+    fmt.Println(string(m.Data))
+})
+
+WATERMILL
+desc:message_streaming_library
+go get github.com/ThreeDotsLabs/watermill
+
+==============================================================================
+TESTING
+==============================================================================
+TESTIFY
+desc:assertions_mocking|popular
+go get github.com/stretchr/testify
+
+import (
+    "testing"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/mock"
+    "github.com/stretchr/testify/suite"
+)
+
+func TestSomething(t *testing.T) {
+    assert.Equal(t, 5, Add(2, 3))
+    assert.NotNil(t, result)
+    assert.NoError(t, err)
+    assert.Contains(t, slice, item)
+    
+    // require stops on failure
+    require.NotNil(t, result)
+}
+
+// Mocking
+type MockRepository struct {
+    mock.Mock
+}
+
+func (m *MockRepository) FindByID(id string) (*User, error) {
+    args := m.Called(id)
+    return args.Get(0).(*User), args.Error(1)
+}
+
+func TestService(t *testing.T) {
+    mockRepo := new(MockRepository)
+    mockRepo.On("FindByID", "1").Return(&User{ID: "1"}, nil)
+    
+    service := NewService(mockRepo)
+    user, err := service.GetUser("1")
+    
+    mockRepo.AssertExpectations(t)
+}
+
+GOMOCK
+desc:mocking_framework|Google
+go install github.com/golang/mock/mockgen@latest
+
+//go:generate mockgen -source=repository.go -destination=mock_repository.go
+
+HTTPTEST
+desc:HTTP_testing|stdlib
+import "net/http/httptest"
+
+func TestHandler(t *testing.T) {
+    req := httptest.NewRequest("GET", "/users/1", nil)
+    w := httptest.NewRecorder()
+    
+    handler(w, req)
+    
+    assert.Equal(t, 200, w.Code)
+}
+
+// Test server
+ts := httptest.NewServer(http.HandlerFunc(handler))
+defer ts.Close()
+resp, _ := http.Get(ts.URL)
+
+GINKGO_GOMEGA
+desc:BDD_testing
+go get github.com/onsi/ginkgo/v2
+go get github.com/onsi/gomega
+
+Describe("User", func() {
+    It("should be created", func() {
+        user := NewUser("John")
+        Expect(user.Name).To(Equal("John"))
+    })
+})
+
+TESTCONTAINERS
+desc:Docker_for_tests
+go get github.com/testcontainers/testcontainers-go
+
+container, _ := postgres.RunContainer(ctx,
+    testcontainers.WithImage("postgres:15"),
+    postgres.WithDatabase("test"),
+)
+defer container.Terminate(ctx)
+connStr, _ := container.ConnectionString(ctx)
+
+==============================================================================
+CLI
+==============================================================================
+COBRA
+desc:CLI_framework|popular
+site:cobra.dev
+go get github.com/spf13/cobra
+
+var rootCmd = &cobra.Command{
+    Use:   "app",
+    Short: "My CLI app",
+}
+
+var serveCmd = &cobra.Command{
+    Use:   "serve",
+    Short: "Start server",
+    Run: func(cmd *cobra.Command, args []string) {
+        port, _ := cmd.Flags().GetInt("port")
+        startServer(port)
+    },
+}
+
+func init() {
+    rootCmd.AddCommand(serveCmd)
+    serveCmd.Flags().IntP("port", "p", 8080, "Port to listen on")
+}
+
+func main() {
+    rootCmd.Execute()
+}
+
+URFAVE_CLI
+desc:simple_CLI_framework
+go get github.com/urfave/cli/v2
+
+app := &cli.App{
+    Name:  "app",
+    Usage: "my cli app",
+    Commands: []*cli.Command{
+        {
+            Name:  "serve",
+            Usage: "start server",
+            Flags: []cli.Flag{
+                &cli.IntFlag{Name: "port", Value: 8080},
+            },
+            Action: func(c *cli.Context) error {
+                return startServer(c.Int("port"))
+            },
+        },
+    },
+}
+app.Run(os.Args)
+
+BUBBLETEA
+desc:TUI_framework|Charm
+go get github.com/charmbracelet/bubbletea
+
+LIP_GLOSS
+desc:terminal_styling|Charm
+go get github.com/charmbracelet/lipgloss
+
+==============================================================================
+UTILITIES
+==============================================================================
+LO
+desc:lodash_for_Go|generics
+go get github.com/samber/lo
+
+import "github.com/samber/lo"
+
+lo.Filter([]int{1, 2, 3, 4}, func(x int, _ int) bool { return x > 2 })
+lo.Map([]int{1, 2, 3}, func(x int, _ int) int { return x * 2 })
+lo.Find(users, func(u User) bool { return u.ID == "1" })
+lo.Uniq([]int{1, 2, 2, 3})
+lo.Chunk([]int{1, 2, 3, 4, 5}, 2)
+
+GJSON
+desc:JSON_path_queries
+go get github.com/tidwall/gjson
+
+value := gjson.Get(json, "name.first")
+value := gjson.Get(json, "friends.#.name")
+
+SJSON
+desc:JSON_modification
+go get github.com/tidwall/sjson
+
+json, _ := sjson.Set(json, "name", "John")
+
+UUID
+desc:UUID_generation
+go get github.com/google/uuid
+
+id := uuid.New()
+id := uuid.NewString()
+
+ULID
+desc:ULID_generation
+go get github.com/oklog/ulid/v2
+
+id := ulid.Make()
+
+==============================================================================
+OBSERVABILITY
+==============================================================================
+OPENTELEMETRY
+desc:observability_framework
+go get go.opentelemetry.io/otel
+
+tracer := otel.Tracer("my-service")
+ctx, span := tracer.Start(ctx, "operation")
+defer span.End()
+
+PROMETHEUS
+desc:metrics
+go get github.com/prometheus/client_golang
+
+requestsTotal := prometheus.NewCounter(prometheus.CounterOpts{
+    Name: "requests_total",
+    Help: "Total requests",
+})
+prometheus.MustRegister(requestsTotal)
+requestsTotal.Inc()
+
+http.Handle("/metrics", promhttp.Handler())
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB:Gin|Echo|Fiber|Chi|net/http
+ORM:GORM|sqlx|sqlc|ent
+CONFIG:Viper|envconfig|koanf
+LOGGING:slog|zerolog|zap
+VALIDATION:validator|ozzo-validation
+AUTH:jwt-go|casbin
+CACHE:go-cache|ristretto|go-redis
+MESSAGING:sarama|amqp091|nats
+TESTING:testify|gomock|testcontainers
+CLI:cobra|urfave/cli|bubbletea

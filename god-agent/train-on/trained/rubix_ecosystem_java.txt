@@ -1,0 +1,640 @@
+# RUBIX ECOSYSTEM: JAVA_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (excluding Spring Boot - see rubix_platform_springboot.txt)
+# PHILOSOPHY: enterprise_ready|battle_tested|extensive_ecosystem
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+QUARKUS
+desc:supersonic_subatomic_java|kubernetes_native|GraalVM_native
+site:quarkus.io
+use_for:microservices|serverless|cloud_native
++fast_startup:milliseconds
++low_memory:native_compilation
++dev_mode:live_reload
++extensions:huge_ecosystem
+
+# Setup
+mvn io.quarkus:quarkus-maven-plugin:create \
+  -DprojectGroupId=com.example \
+  -DprojectArtifactId=myapp
+
+# REST endpoint
+@Path("/hello")
+public class HelloResource {
+    @GET
+    @Produces(MediaType.TEXT_PLAIN)
+    public String hello() {
+        return "Hello";
+    }
+}
+
+# Native build
+./mvnw package -Pnative
+
+MICRONAUT
+desc:modern_JVM_framework|compile_time_DI|low_memory
+site:micronaut.io
+use_for:microservices|serverless|CLI_apps
++compile_time_DI:no_reflection
++fast_startup:instant
++GraalVM_native:first_class
++cloud_native:built_in
+
+# Setup
+mn create-app com.example.myapp
+
+# Controller
+@Controller("/hello")
+public class HelloController {
+    @Get
+    @Produces(MediaType.TEXT_PLAIN)
+    public String index() {
+        return "Hello";
+    }
+}
+
+JAKARTA_EE_10
+desc:enterprise_java_standard|formerly_Java_EE
+components:
+  JAX-RS:REST_APIs
+  JPA:persistence
+  CDI:dependency_injection
+  Bean_Validation:validation
+  JSON-B:JSON_binding
+  JSON-P:JSON_processing
+  WebSocket:real_time
+  Security:authentication
+servers:WildFly|Payara|OpenLiberty|TomEE
+
+VERT_X
+desc:reactive_toolkit|event_driven|polyglot
+site:vertx.io
+use_for:high_concurrency|real_time|microservices
++non_blocking:event_loop
++polyglot:Java|Kotlin|Groovy|JS
++lightweight:no_container
+
+Vertx vertx = Vertx.vertx();
+vertx.createHttpServer()
+    .requestHandler(req -> req.response().end("Hello"))
+    .listen(8080);
+
+JAVALIN
+desc:lightweight_web_framework|Kotlin_friendly
+site:javalin.io
+use_for:REST_APIs|simple_web_apps|prototypes
++minimal:easy_setup
++Kotlin_friendly:DSL_support
+
+Javalin app = Javalin.create().start(7000);
+app.get("/", ctx -> ctx.result("Hello"));
+
+DROPWIZARD
+desc:production_ready_REST|ops_friendly
+site:dropwizard.io
+use_for:REST_microservices
+bundles:Jersey|Jetty|Jackson|Metrics|Logback
+
+==============================================================================
+PERSISTENCE_ORM
+==============================================================================
+HIBERNATE
+desc:dominant_JPA_implementation|ORM
+site:hibernate.org
++mature:20+_years
++feature_rich:caching|lazy_loading|criteria
++JPA_compliant:portable
+
+@Entity
+@Table(name = "users")
+public class User {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    
+    @Column(nullable = false)
+    private String name;
+    
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL)
+    private List<Order> orders;
+}
+
+JOOQ
+desc:typesafe_SQL|DSL|code_generation
+site:jooq.org
+use_for:complex_queries|type_safety|SQL_control
++compile_time_checking:SQL_errors_caught_early
++fluent_API:readable_queries
+-learning_curve:different_paradigm
+
+Result<Record> result = create
+    .select(USERS.NAME, ORDERS.TOTAL)
+    .from(USERS)
+    .join(ORDERS).on(USERS.ID.eq(ORDERS.USER_ID))
+    .where(ORDERS.TOTAL.gt(100))
+    .fetch();
+
+JDBI
+desc:fluent_JDBC_wrapper|lightweight
+site:jdbi.org
+use_for:simple_DB_access|SQL_control
++simple:thin_wrapper
++flexible:SQL_first
+
+Jdbi jdbi = Jdbi.create(dataSource);
+List<User> users = jdbi.withHandle(handle ->
+    handle.createQuery("SELECT * FROM users WHERE active = :active")
+          .bind("active", true)
+          .mapToBean(User.class)
+          .list()
+);
+
+MYBATIS
+desc:SQL_mapper|XML_or_annotations
+site:mybatis.org
+use_for:complex_SQL|stored_procedures|legacy_DB
++SQL_control:write_your_own
++dynamic_SQL:conditionals
+
+EBEAN
+desc:ORM|simpler_than_Hibernate
+site:ebean.io
++query_beans:type_safe_queries
++automatic_query_tuning
+
+QUERYDSL
+desc:type_safe_query_construction
+use_with:JPA|SQL|MongoDB
+QUser user = QUser.user;
+List<User> users = queryFactory
+    .selectFrom(user)
+    .where(user.age.gt(18))
+    .fetch();
+
+==============================================================================
+DATABASE_DRIVERS_POOLS
+==============================================================================
+HIKARICP
+desc:fastest_connection_pool|default_in_Spring
+config:
+  maximumPoolSize:10
+  minimumIdle:5
+  connectionTimeout:30000
+  idleTimeout:600000
+
+HikariConfig config = new HikariConfig();
+config.setJdbcUrl("jdbc:postgresql://localhost:5432/db");
+config.setUsername("user");
+config.setPassword("pass");
+HikariDataSource ds = new HikariDataSource(config);
+
+DRIVERS
+postgresql:org.postgresql:postgresql
+mysql:com.mysql:mysql-connector-j
+mariadb:org.mariadb.jdbc:mariadb-java-client
+oracle:com.oracle.database.jdbc:ojdbc11
+mssql:com.microsoft.sqlserver:mssql-jdbc
+h2:com.h2database:h2
+sqlite:org.xerial:sqlite-jdbc
+
+FLYWAY
+desc:database_migrations|version_control
+site:flywaydb.org
+files:V1__Create_users.sql|V2__Add_email.sql
+
+Flyway flyway = Flyway.configure()
+    .dataSource(url, user, password)
+    .load();
+flyway.migrate();
+
+LIQUIBASE
+desc:database_migrations|XML_YAML_JSON_SQL
+site:liquibase.org
++rollback:built_in
++multiple_formats:flexible
+
+==============================================================================
+HTTP_CLIENTS
+==============================================================================
+JAVA_HTTP_CLIENT_11+
+desc:built_in|modern|async_support
+HttpClient client = HttpClient.newHttpClient();
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.example.com"))
+    .header("Accept", "application/json")
+    .GET()
+    .build();
+HttpResponse<String> response = client.send(request, 
+    HttpResponse.BodyHandlers.ofString());
+
+OKHTTP
+desc:efficient_HTTP|connection_pooling|interceptors
+site:square.github.io/okhttp
++interceptors:logging|auth|retry
++connection_pooling:efficient
+
+OkHttpClient client = new OkHttpClient();
+Request request = new Request.Builder()
+    .url("https://api.example.com")
+    .addHeader("Authorization", "Bearer " + token)
+    .build();
+Response response = client.newCall(request).execute();
+
+RETROFIT
+desc:type_safe_HTTP_client|annotation_based
+site:square.github.io/retrofit
+use_with:OkHttp
+
+public interface GitHubService {
+    @GET("users/{user}/repos")
+    Call<List<Repo>> listRepos(@Path("user") String user);
+    
+    @POST("users")
+    Call<User> createUser(@Body User user);
+}
+
+Retrofit retrofit = new Retrofit.Builder()
+    .baseUrl("https://api.github.com/")
+    .addConverterFactory(GsonConverterFactory.create())
+    .build();
+GitHubService service = retrofit.create(GitHubService.class);
+
+FEIGN
+desc:declarative_HTTP_client|Spring_Cloud
+interface:annotation_based
+
+@FeignClient(name = "users", url = "https://api.example.com")
+public interface UserClient {
+    @GetMapping("/users/{id}")
+    User getUser(@PathVariable Long id);
+}
+
+APACHE_HTTPCLIENT_5
+desc:mature|full_featured|Apache
+CloseableHttpClient client = HttpClients.createDefault();
+HttpGet request = new HttpGet("https://api.example.com");
+CloseableHttpResponse response = client.execute(request);
+
+==============================================================================
+JSON_PROCESSING
+==============================================================================
+JACKSON
+desc:default_JSON_library|fast|feature_rich
+ObjectMapper mapper = new ObjectMapper()
+    .registerModule(new JavaTimeModule())
+    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+// Serialize
+String json = mapper.writeValueAsString(user);
+
+// Deserialize
+User user = mapper.readValue(json, User.class);
+
+// Annotations
+@JsonProperty("user_name")
+@JsonIgnore
+@JsonFormat(pattern = "yyyy-MM-dd")
+@JsonInclude(JsonInclude.Include.NON_NULL)
+
+GSON
+desc:Google_JSON|simple_API
+Gson gson = new GsonBuilder()
+    .setPrettyPrinting()
+    .setDateFormat("yyyy-MM-dd")
+    .create();
+String json = gson.toJson(user);
+User user = gson.fromJson(json, User.class);
+
+JSON_B_JAKARTA
+desc:Jakarta_EE_standard
+Jsonb jsonb = JsonbBuilder.create();
+String json = jsonb.toJson(user);
+User user = jsonb.fromJson(json, User.class);
+
+MOSHI
+desc:modern_JSON|Kotlin_friendly|Square
+Moshi moshi = new Moshi.Builder().build();
+JsonAdapter<User> adapter = moshi.adapter(User.class);
+String json = adapter.toJson(user);
+User user = adapter.fromJson(json);
+
+==============================================================================
+REACTIVE_PROGRAMMING
+==============================================================================
+PROJECT_REACTOR
+desc:reactive_streams|Spring_WebFlux_foundation
+Flux<String> flux = Flux.just("a", "b", "c")
+    .map(String::toUpperCase)
+    .filter(s -> s.length() > 0);
+
+Mono<User> mono = userRepository.findById(id)
+    .map(this::transform)
+    .switchIfEmpty(Mono.error(new NotFoundException()));
+
+RXJAVA_3
+desc:reactive_extensions|Netflix_origin
+Observable.just(1, 2, 3)
+    .map(i -> i * 2)
+    .filter(i -> i > 2)
+    .subscribe(System.out::println);
+
+Single<User> single = userService.getUser(id);
+Completable completable = userService.deleteUser(id);
+
+MUTINY
+desc:reactive_library|Quarkus_default
+Uni<String> uni = Uni.createFrom().item("Hello")
+    .onItem().transform(String::toUpperCase);
+
+Multi<Integer> multi = Multi.createFrom().range(1, 10)
+    .select().where(i -> i % 2 == 0);
+
+==============================================================================
+MESSAGING_QUEUES
+==============================================================================
+APACHE_KAFKA_CLIENT
+desc:distributed_streaming|high_throughput
+Properties props = new Properties();
+props.put("bootstrap.servers", "localhost:9092");
+props.put("key.serializer", StringSerializer.class);
+props.put("value.serializer", StringSerializer.class);
+
+KafkaProducer<String, String> producer = new KafkaProducer<>(props);
+producer.send(new ProducerRecord<>("topic", "key", "value"));
+
+RABBITMQ_AMQP
+desc:message_broker|AMQP_protocol
+ConnectionFactory factory = new ConnectionFactory();
+factory.setHost("localhost");
+Connection connection = factory.newConnection();
+Channel channel = connection.createChannel();
+channel.basicPublish("exchange", "routingKey", null, message.getBytes());
+
+ACTIVEMQ_ARTEMIS
+desc:JMS_broker|Jakarta_Messaging
+
+==============================================================================
+CACHING
+==============================================================================
+CAFFEINE
+desc:high_performance_cache|near_optimal
+Cache<String, User> cache = Caffeine.newBuilder()
+    .maximumSize(10_000)
+    .expireAfterWrite(Duration.ofMinutes(5))
+    .build();
+
+cache.put("key", user);
+User user = cache.getIfPresent("key");
+User user = cache.get("key", k -> loadFromDb(k));
+
+EHCACHE_3
+desc:mature|JCache_compliant|tiered
+CacheManager cacheManager = CacheManagerBuilder.newCacheManagerBuilder()
+    .withCache("users", CacheConfigurationBuilder
+        .newCacheConfigurationBuilder(Long.class, User.class,
+            ResourcePoolsBuilder.heap(100)))
+    .build(true);
+
+REDIS_JEDIS
+desc:Redis_client|simple
+Jedis jedis = new Jedis("localhost");
+jedis.set("key", "value");
+String value = jedis.get("key");
+
+REDIS_LETTUCE
+desc:Redis_client|async|reactive
+RedisClient client = RedisClient.create("redis://localhost");
+StatefulRedisConnection<String, String> connection = client.connect();
+RedisCommands<String, String> commands = connection.sync();
+commands.set("key", "value");
+
+REDISSON
+desc:Redis_client|distributed_objects
+RedissonClient redisson = Redisson.create();
+RMap<String, User> map = redisson.getMap("users");
+RLock lock = redisson.getLock("myLock");
+
+==============================================================================
+TESTING
+==============================================================================
+JUNIT_5
+desc:standard_testing_framework
+@Test
+@DisplayName("Should add numbers")
+void shouldAdd() {
+    assertEquals(5, calculator.add(2, 3));
+}
+
+@ParameterizedTest
+@ValueSource(strings = {"a", "b", "c"})
+void testWithStrings(String value) { }
+
+@Nested
+class WhenEmpty { }
+
+MOCKITO
+desc:mocking_framework|most_popular
+@Mock UserRepository repository;
+@InjectMocks UserService service;
+
+when(repository.findById(1L)).thenReturn(Optional.of(user));
+verify(repository, times(1)).findById(1L);
+ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+
+ASSERTJ
+desc:fluent_assertions|readable
+assertThat(user.getName()).isEqualTo("John");
+assertThat(users).hasSize(3).extracting(User::getName).contains("John");
+assertThatThrownBy(() -> service.process(null))
+    .isInstanceOf(IllegalArgumentException.class);
+
+WIREMOCK
+desc:HTTP_mock_server|API_testing
+stubFor(get(urlEqualTo("/api/users/1"))
+    .willReturn(aResponse()
+        .withHeader("Content-Type", "application/json")
+        .withBody("{\"name\":\"John\"}")));
+
+TESTCONTAINERS
+desc:Docker_containers_for_tests|integration_testing
+@Container
+static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15");
+
+@Container
+static KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka"));
+
+ARCHUNIT
+desc:architecture_testing|dependency_rules
+@ArchTest
+static final ArchRule rule = noClasses()
+    .that().resideInAPackage("..service..")
+    .should().dependOnClassesThat().resideInAPackage("..controller..");
+
+REST_ASSURED
+desc:REST_API_testing|fluent
+given()
+    .contentType(ContentType.JSON)
+    .body(user)
+.when()
+    .post("/api/users")
+.then()
+    .statusCode(201)
+    .body("name", equalTo("John"));
+
+==============================================================================
+LOGGING
+==============================================================================
+SLF4J
+desc:logging_facade|abstraction
+private static final Logger log = LoggerFactory.getLogger(MyClass.class);
+log.info("Processing user: {}", userId);
+log.error("Error occurred", exception);
+
+LOGBACK
+desc:SLF4J_implementation|default_in_Spring
+config:logback.xml|logback-spring.xml
+features:rolling_files|async|filters
+
+LOG4J2
+desc:Apache_logging|async_performance
+config:log4j2.xml|log4j2.yaml
++async_loggers:high_performance
++lambda_support:lazy_evaluation
+
+==============================================================================
+UTILITIES
+==============================================================================
+APACHE_COMMONS
+commons-lang3:StringUtils|ObjectUtils|RandomUtils
+commons-io:FileUtils|IOUtils
+commons-collections4:CollectionUtils|MapUtils
+commons-codec:Base64|DigestUtils
+commons-text:StringEscapeUtils|similarity
+
+StringUtils.isBlank(str);
+FileUtils.readFileToString(file, StandardCharsets.UTF_8);
+DigestUtils.sha256Hex(data);
+
+GUAVA
+desc:Google_core_libraries
+collections:ImmutableList|Multimap|BiMap
+strings:Splitter|Joiner|CharMatcher
+caching:CacheBuilder
+concurrency:ListenableFuture|RateLimiter
+io:Files|Resources
+
+ImmutableList<String> list = ImmutableList.of("a", "b", "c");
+String result = Joiner.on(", ").join(list);
+List<String> parts = Splitter.on(",").trimResults().splitToList(input);
+
+LOMBOK
+desc:boilerplate_reduction|annotations
+@Data                    // Getters, setters, equals, hashCode, toString
+@Builder                 // Builder pattern
+@NoArgsConstructor
+@AllArgsConstructor
+@Slf4j                   // Logger field
+@Value                   // Immutable class
+@With                    // Wither methods
+
+MAPSTRUCT
+desc:bean_mapping|compile_time
+@Mapper
+public interface UserMapper {
+    UserMapper INSTANCE = Mappers.getMapper(UserMapper.class);
+    
+    @Mapping(source = "name", target = "fullName")
+    UserDto toDto(User user);
+}
+
+VAVR
+desc:functional_programming|immutable_collections
+Option<String> option = Option.of(value);
+Try<Integer> result = Try.of(() -> Integer.parseInt(str));
+Either<Error, User> either = userService.findUser(id);
+List<Integer> list = io.vavr.collection.List.of(1, 2, 3);
+
+==============================================================================
+SECURITY
+==============================================================================
+BOUNCY_CASTLE
+desc:cryptography_provider|extensive_algorithms
+Security.addProvider(new BouncyCastleProvider());
+
+JASYPT
+desc:simplified_encryption
+StandardPBEStringEncryptor encryptor = new StandardPBEStringEncryptor();
+encryptor.setPassword("secret");
+String encrypted = encryptor.encrypt("plaintext");
+
+JAVA_JWT
+desc:JWT_library|Auth0
+String token = JWT.create()
+    .withIssuer("auth0")
+    .withClaim("userId", userId)
+    .withExpiresAt(expiresAt)
+    .sign(Algorithm.HMAC256(secret));
+
+DecodedJWT jwt = JWT.require(Algorithm.HMAC256(secret))
+    .withIssuer("auth0")
+    .build()
+    .verify(token);
+
+NIMBUS_JOSE_JWT
+desc:JWT|JWS|JWE|comprehensive
+
+==============================================================================
+MONITORING_OBSERVABILITY
+==============================================================================
+MICROMETER
+desc:metrics_facade|vendor_neutral
+Counter counter = Metrics.counter("requests.total");
+Timer timer = Metrics.timer("requests.duration");
+Gauge.builder("queue.size", queue, Queue::size).register(registry);
+
+OPENTELEMETRY
+desc:distributed_tracing|vendor_neutral
+Tracer tracer = openTelemetry.getTracer("my-service");
+Span span = tracer.spanBuilder("operation").startSpan();
+try (Scope scope = span.makeCurrent()) {
+    // work
+} finally {
+    span.end();
+}
+
+PROMETHEUS_CLIENT
+desc:Prometheus_metrics_exposition
+Counter requests = Counter.build()
+    .name("requests_total")
+    .help("Total requests")
+    .register();
+
+==============================================================================
+BUILD_TOOLS
+==============================================================================
+MAVEN
+desc:dominant_build_tool|XML_config
+files:pom.xml
+phases:compile|test|package|install|deploy
+plugins:compiler|surefire|shade|assembly
+
+GRADLE
+desc:flexible_build_tool|Groovy_Kotlin_DSL
+files:build.gradle|build.gradle.kts
++incremental:faster_builds
++daemon:persistent_process
++flexible:programmatic
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB_API:Quarkus|Micronaut|Javalin|Vert.x
+ORM:Hibernate|jOOQ|MyBatis|JDBI
+HTTP:OkHttp|Retrofit|Java_HttpClient
+JSON:Jackson|Gson|Moshi
+REACTIVE:Reactor|RxJava|Mutiny
+CACHE:Caffeine|Ehcache|Redis
+TESTING:JUnit5|Mockito|AssertJ|Testcontainers
+LOGGING:SLF4J+Logback|Log4j2
+UTILS:Guava|Apache_Commons|Lombok

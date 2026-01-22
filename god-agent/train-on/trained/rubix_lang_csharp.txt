@@ -1,0 +1,922 @@
+# RUBIX LANGUAGE: CSHARP
+# VERSION: 12+ (.NET 8, 2024)
+# HISTORY: 2000_Microsoft_Hejlsberg→2.0_Generics_2005→3.0_LINQ_2007→5.0_Async_2012→6.0_Roslyn_2015→9.0_Records_2020→12.0_2023
+# PHILOSOPHY: modern|type_safe|enterprise_ready|cross_platform
+
+==============================================================================
+SETUP_ENVIRONMENT
+==============================================================================
+# Installation
+# Download from https://dotnet.microsoft.com/download
+dotnet --version
+
+# New project
+dotnet new console -n MyApp
+dotnet new webapi -n MyApi
+dotnet new classlib -n MyLibrary
+
+# Project structure
+MyApp/
+├── MyApp.csproj
+├── Program.cs
+├── appsettings.json
+├── Controllers/
+├── Models/
+├── Services/
+└── obj/
+
+# .csproj file
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+</Project>
+
+# Commands
+dotnet build                # Build
+dotnet run                  # Run
+dotnet test                 # Run tests
+dotnet add package Name     # Add NuGet package
+dotnet restore              # Restore packages
+dotnet publish              # Publish for deployment
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+# Value types
+int i = 42;                 # 32-bit signed
+long l = 42L;               # 64-bit signed
+short s = 42;               # 16-bit signed
+byte b = 42;                # 8-bit unsigned
+float f = 3.14f;            # 32-bit floating
+double d = 3.14;            # 64-bit floating
+decimal m = 3.14m;          # 128-bit precise
+bool flag = true;           # Boolean
+char c = 'A';               # Unicode character
+
+# Reference types
+string str = "Hello";
+object obj = new object();
+dynamic dyn = "anything";   # Runtime type checking
+
+# Nullable value types
+int? nullable = null;
+int value = nullable ?? 0;   # Null coalescing
+int value = nullable!;       # Null forgiving (trust me)
+
+# Type inference
+var number = 42;             # int
+var text = "Hello";          # string
+var list = new List<int>();  # List<int>
+
+# Constants
+const int MaxSize = 100;
+readonly int instanceConstant;  # Set once in constructor
+
+# Default values
+default(int)                 # 0
+default(string)              # null
+default(bool)                # false
+
+==============================================================================
+STRINGS
+==============================================================================
+# Creation
+string str = "Hello";
+string str = "Hello, " + "World";
+string str = $"Hello, {name}";           # Interpolation
+string str = $"Value: {value:F2}";       # Format
+string str = @"C:\path\to\file";         # Verbatim (no escapes)
+string str = """
+    Multi-line
+    raw string literal
+    """;                                  # C# 11+
+
+# Common methods
+str.Length;
+str.ToUpper();
+str.ToLower();
+str.Trim();
+str.Substring(0, 5);
+str.Replace("old", "new");
+str.Split(',');
+str.Contains("sub");
+str.StartsWith("pre");
+str.EndsWith("suf");
+str.IndexOf("sub");
+string.IsNullOrEmpty(str);
+string.IsNullOrWhiteSpace(str);
+string.Join(", ", array);
+string.Format("Hello, {0}", name);
+
+# StringBuilder (efficient concatenation)
+var sb = new StringBuilder();
+sb.Append("Hello");
+sb.AppendLine("World");
+sb.Insert(0, "Start: ");
+string result = sb.ToString();
+
+==============================================================================
+COLLECTIONS
+==============================================================================
+# Arrays
+int[] numbers = new int[5];
+int[] numbers = { 1, 2, 3, 4, 5 };
+int[] numbers = new[] { 1, 2, 3 };
+string[,] matrix = new string[3, 3];     # 2D array
+int[][] jagged = new int[3][];           # Jagged array
+
+numbers[0] = 10;
+int length = numbers.Length;
+Array.Sort(numbers);
+Array.Reverse(numbers);
+
+# List
+List<int> list = new();
+List<int> list = new() { 1, 2, 3 };
+list.Add(4);
+list.AddRange(new[] { 5, 6 });
+list.Insert(0, 0);
+list.Remove(3);
+list.RemoveAt(0);
+list.Contains(2);
+list.IndexOf(2);
+list.Count;
+list.Clear();
+list.Sort();
+list.Reverse();
+
+# Dictionary
+Dictionary<string, int> dict = new();
+dict["key"] = 42;
+dict.Add("key2", 43);
+dict.TryGetValue("key", out int value);
+dict.ContainsKey("key");
+dict.Remove("key");
+dict.Keys;
+dict.Values;
+
+# HashSet
+HashSet<int> set = new() { 1, 2, 3 };
+set.Add(4);
+set.Contains(2);
+set.Remove(2);
+set.UnionWith(otherSet);
+set.IntersectWith(otherSet);
+
+# Queue and Stack
+Queue<int> queue = new();
+queue.Enqueue(1);
+int first = queue.Dequeue();
+int peek = queue.Peek();
+
+Stack<int> stack = new();
+stack.Push(1);
+int top = stack.Pop();
+int peek = stack.Peek();
+
+# Collection expressions (C# 12)
+int[] arr = [1, 2, 3];
+List<int> list = [1, 2, 3];
+Span<int> span = [1, 2, 3];
+int[] combined = [..arr1, ..arr2];
+
+==============================================================================
+CONTROL_FLOW
+==============================================================================
+# If/else
+if (condition)
+{
+    // ...
+}
+else if (otherCondition)
+{
+    // ...
+}
+else
+{
+    // ...
+}
+
+# Ternary
+var result = condition ? "yes" : "no";
+
+# Null checks
+var value = nullable ?? defaultValue;
+nullable ??= defaultValue;              # Assign if null
+var length = str?.Length ?? 0;          # Null conditional
+
+# Switch statement
+switch (value)
+{
+    case 1:
+        // ...
+        break;
+    case 2:
+    case 3:
+        // ...
+        break;
+    default:
+        // ...
+        break;
+}
+
+# Switch expression (C# 8+)
+var result = value switch
+{
+    1 => "one",
+    2 or 3 => "two or three",
+    > 10 => "greater than ten",
+    _ => "default"
+};
+
+# Pattern matching in switch
+var message = obj switch
+{
+    int i when i > 0 => $"Positive: {i}",
+    int i => $"Non-positive: {i}",
+    string s => $"String: {s}",
+    null => "null",
+    _ => "unknown"
+};
+
+# Loops
+for (int i = 0; i < 10; i++)
+{
+    Console.WriteLine(i);
+}
+
+foreach (var item in collection)
+{
+    Console.WriteLine(item);
+}
+
+while (condition)
+{
+    // ...
+}
+
+do
+{
+    // ...
+} while (condition);
+
+==============================================================================
+PATTERN_MATCHING
+==============================================================================
+# Type patterns
+if (obj is string s)
+{
+    Console.WriteLine(s.Length);
+}
+
+if (obj is not null)
+{
+    // ...
+}
+
+# Property patterns
+if (user is { Age: > 18, Active: true })
+{
+    // Adult active user
+}
+
+# Positional patterns (with deconstruction)
+if (point is (0, 0))
+{
+    // Origin
+}
+
+# List patterns (C# 11+)
+if (numbers is [1, 2, 3])
+{
+    // Exact match
+}
+
+if (numbers is [1, .., 5])
+{
+    // Starts with 1, ends with 5
+}
+
+if (numbers is [var first, .. var middle, var last])
+{
+    // Capture parts
+}
+
+# Combined patterns
+var result = shape switch
+{
+    Circle { Radius: > 10 } c => $"Large circle: {c.Radius}",
+    Rectangle { Width: var w, Height: var h } when w == h => "Square",
+    Rectangle r => $"Rectangle: {r.Width}x{r.Height}",
+    _ => "Unknown shape"
+};
+
+==============================================================================
+METHODS
+==============================================================================
+# Basic method
+public int Add(int a, int b)
+{
+    return a + b;
+}
+
+# Expression body
+public int Add(int a, int b) => a + b;
+
+# Parameters
+void Method(
+    int required,
+    int optional = 10,
+    params int[] rest)
+{ }
+
+# Named arguments
+Method(required: 1, optional: 20);
+
+# Out parameters
+bool TryParse(string s, out int result)
+{
+    return int.TryParse(s, out result);
+}
+
+if (int.TryParse("42", out int value))
+{
+    Console.WriteLine(value);
+}
+
+// Out variable declaration
+if (int.TryParse("42", out var value))
+{
+    Console.WriteLine(value);
+}
+
+# Ref parameters
+void Swap(ref int a, ref int b)
+{
+    (a, b) = (b, a);
+}
+
+# In parameters (readonly ref)
+void Process(in LargeStruct data)
+{
+    // data cannot be modified
+}
+
+# Local functions
+int Calculate(int x)
+{
+    return AddOne(x) * 2;
+    
+    int AddOne(int n) => n + 1;
+}
+
+# Static local functions
+int Calculate(int x)
+{
+    return AddOne(x);
+    
+    static int AddOne(int n) => n + 1;
+}
+
+==============================================================================
+CLASSES
+==============================================================================
+# Basic class
+public class User
+{
+    // Fields
+    private readonly string _id;
+    
+    // Properties
+    public string Name { get; set; }
+    public string Email { get; private set; }
+    public int Age { get; init; }           # Init-only (C# 9+)
+    
+    // Auto-property with default
+    public bool Active { get; set; } = true;
+    
+    // Computed property
+    public string DisplayName => $"{Name} <{Email}>";
+    
+    // Constructor
+    public User(string name, string email)
+    {
+        _id = Guid.NewGuid().ToString();
+        Name = name;
+        Email = email;
+    }
+    
+    // Methods
+    public void UpdateEmail(string email)
+    {
+        Email = email;
+    }
+    
+    // Static members
+    public static int Count { get; private set; }
+    
+    public static User Create(string name, string email)
+    {
+        Count++;
+        return new User(name, email);
+    }
+}
+
+# Primary constructor (C# 12)
+public class User(string name, string email)
+{
+    public string Name { get; } = name;
+    public string Email { get; } = email;
+}
+
+# Inheritance
+public class Admin : User
+{
+    public List<string> Permissions { get; }
+    
+    public Admin(string name, string email, List<string> permissions)
+        : base(name, email)
+    {
+        Permissions = permissions;
+    }
+    
+    // Override
+    public override string ToString()
+    {
+        return $"Admin: {Name}";
+    }
+}
+
+# Abstract class
+public abstract class Shape
+{
+    public abstract double Area { get; }
+    
+    public virtual string Describe()
+    {
+        return $"Shape with area {Area}";
+    }
+}
+
+# Sealed class
+public sealed class FinalClass { }
+
+==============================================================================
+RECORDS
+==============================================================================
+# Record class (reference type, C# 9+)
+public record User(string Name, string Email);
+
+var user = new User("John", "john@example.com");
+var copy = user with { Name = "Jane" };          # Non-destructive mutation
+var (name, email) = user;                        # Deconstruction
+
+# Record with additional members
+public record User(string Name, string Email)
+{
+    public string DisplayName => $"{Name} <{Email}>";
+    
+    public bool IsValid()
+    {
+        return !string.IsNullOrEmpty(Name) && Email.Contains('@');
+    }
+}
+
+# Record struct (value type, C# 10+)
+public readonly record struct Point(int X, int Y);
+
+# Positional record with validation
+public record User
+{
+    public string Name { get; init; }
+    public string Email { get; init; }
+    
+    public User(string name, string email)
+    {
+        if (string.IsNullOrEmpty(name))
+            throw new ArgumentException("Name required");
+        
+        Name = name;
+        Email = email;
+    }
+}
+
+==============================================================================
+INTERFACES
+==============================================================================
+# Interface definition
+public interface IRepository<T>
+{
+    T? GetById(int id);
+    IEnumerable<T> GetAll();
+    void Add(T entity);
+    void Update(T entity);
+    void Delete(int id);
+}
+
+# Default interface methods (C# 8+)
+public interface ILogger
+{
+    void Log(string message);
+    
+    void LogError(string message)
+    {
+        Log($"ERROR: {message}");
+    }
+}
+
+# Implementation
+public class UserRepository : IRepository<User>
+{
+    public User? GetById(int id) => /* ... */;
+    public IEnumerable<User> GetAll() => /* ... */;
+    public void Add(User entity) => /* ... */;
+    public void Update(User entity) => /* ... */;
+    public void Delete(int id) => /* ... */;
+}
+
+# Explicit implementation
+public class MultiLogger : ILogger, IDisposable
+{
+    void ILogger.Log(string message) { /* ... */ }
+    void IDisposable.Dispose() { /* ... */ }
+}
+
+==============================================================================
+GENERICS
+==============================================================================
+# Generic class
+public class Repository<T> where T : class
+{
+    private readonly List<T> _items = new();
+    
+    public void Add(T item) => _items.Add(item);
+    public T? Find(Func<T, bool> predicate) => _items.FirstOrDefault(predicate);
+}
+
+# Generic method
+public T Clone<T>(T source) where T : ICloneable
+{
+    return (T)source.Clone();
+}
+
+# Constraints
+where T : class              # Reference type
+where T : struct             # Value type
+where T : new()              # Parameterless constructor
+where T : BaseClass          # Inherits from
+where T : IInterface         # Implements interface
+where T : notnull            # Non-nullable
+where T : unmanaged          # Unmanaged type
+
+# Multiple constraints
+public class Cache<TKey, TValue>
+    where TKey : notnull
+    where TValue : class, new()
+{
+    // ...
+}
+
+# Covariance and contravariance
+IEnumerable<object> objects = new List<string>();  # Covariant (out)
+Action<string> action = (object o) => { };         # Contravariant (in)
+
+==============================================================================
+LINQ
+==============================================================================
+# Query syntax
+var adults = from u in users
+             where u.Age >= 18
+             orderby u.Name
+             select u;
+
+var result = from u in users
+             join o in orders on u.Id equals o.UserId
+             group o by u.Name into g
+             select new { Name = g.Key, Total = g.Sum(x => x.Amount) };
+
+# Method syntax
+var adults = users
+    .Where(u => u.Age >= 18)
+    .OrderBy(u => u.Name)
+    .ToList();
+
+# Common LINQ methods
+users.Where(u => u.Active)
+users.Select(u => u.Name)
+users.SelectMany(u => u.Orders)
+users.OrderBy(u => u.Name)
+users.OrderByDescending(u => u.Age)
+users.ThenBy(u => u.Email)
+users.GroupBy(u => u.Department)
+users.Join(orders, u => u.Id, o => o.UserId, (u, o) => new { u, o })
+users.First()
+users.FirstOrDefault()
+users.Single()
+users.SingleOrDefault()
+users.Last()
+users.Take(10)
+users.Skip(20)
+users.Count()
+users.Sum(u => u.Age)
+users.Average(u => u.Age)
+users.Min(u => u.Age)
+users.Max(u => u.Age)
+users.Any(u => u.Active)
+users.All(u => u.Valid)
+users.Distinct()
+users.Union(otherUsers)
+users.Intersect(otherUsers)
+users.Except(otherUsers)
+users.Concat(otherUsers)
+users.Zip(other, (a, b) => new { a, b })
+users.Aggregate(0, (sum, u) => sum + u.Age)
+users.ToList()
+users.ToArray()
+users.ToDictionary(u => u.Id)
+users.ToHashSet()
+
+==============================================================================
+ASYNC_AWAIT
+==============================================================================
+# Async method
+public async Task<User> GetUserAsync(int id)
+{
+    var response = await httpClient.GetAsync($"/users/{id}");
+    var json = await response.Content.ReadAsStringAsync();
+    return JsonSerializer.Deserialize<User>(json);
+}
+
+# Async with return value
+public async Task<int> CalculateAsync()
+{
+    await Task.Delay(1000);
+    return 42;
+}
+
+# Async void (only for event handlers)
+private async void Button_Click(object sender, EventArgs e)
+{
+    await ProcessAsync();
+}
+
+# Parallel async
+var tasks = userIds.Select(id => GetUserAsync(id));
+var users = await Task.WhenAll(tasks);
+
+# First completed
+var firstResult = await Task.WhenAny(task1, task2, task3);
+
+# ConfigureAwait
+await SomeMethodAsync().ConfigureAwait(false);  # Don't capture context
+
+# Cancellation
+public async Task ProcessAsync(CancellationToken cancellationToken)
+{
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        await Task.Delay(1000, cancellationToken);
+        // Process
+    }
+}
+
+var cts = new CancellationTokenSource();
+cts.CancelAfter(TimeSpan.FromSeconds(30));
+await ProcessAsync(cts.Token);
+
+# IAsyncEnumerable (async streams)
+public async IAsyncEnumerable<int> GenerateAsync()
+{
+    for (int i = 0; i < 10; i++)
+    {
+        await Task.Delay(100);
+        yield return i;
+    }
+}
+
+await foreach (var item in GenerateAsync())
+{
+    Console.WriteLine(item);
+}
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+# Try-catch-finally
+try
+{
+    var result = RiskyOperation();
+}
+catch (ArgumentException ex) when (ex.ParamName == "id")
+{
+    // Filtered catch
+}
+catch (InvalidOperationException ex)
+{
+    Console.WriteLine(ex.Message);
+    throw;  // Re-throw preserving stack trace
+}
+catch (Exception ex)
+{
+    throw new CustomException("Wrapper", ex);  // Wrap exception
+}
+finally
+{
+    Cleanup();
+}
+
+# Custom exception
+public class UserNotFoundException : Exception
+{
+    public int UserId { get; }
+    
+    public UserNotFoundException(int userId)
+        : base($"User not found: {userId}")
+    {
+        UserId = userId;
+    }
+}
+
+# Throw expressions
+var user = GetUser() ?? throw new InvalidOperationException("User is null");
+
+==============================================================================
+DISPOSABLE_USING
+==============================================================================
+# Using statement
+using (var file = File.OpenRead("data.txt"))
+{
+    // file is disposed after block
+}
+
+# Using declaration (C# 8+)
+using var file = File.OpenRead("data.txt");
+// file is disposed at end of scope
+
+# Implementing IDisposable
+public class ResourceManager : IDisposable
+{
+    private bool _disposed;
+    private readonly Stream _stream;
+    
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+    
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        
+        if (disposing)
+        {
+            _stream?.Dispose();
+        }
+        
+        _disposed = true;
+    }
+}
+
+# IAsyncDisposable
+public class AsyncResource : IAsyncDisposable
+{
+    public async ValueTask DisposeAsync()
+    {
+        await CleanupAsync();
+    }
+}
+
+await using var resource = new AsyncResource();
+
+==============================================================================
+DELEGATES_EVENTS
+==============================================================================
+# Delegate types
+Func<int, int, int> add = (a, b) => a + b;
+Action<string> print = s => Console.WriteLine(s);
+Predicate<int> isPositive = n => n > 0;
+
+# Lambda expressions
+Func<int, int> square = x => x * x;
+Func<int, int, int> add = (x, y) => x + y;
+Action<string> print = message => Console.WriteLine(message);
+
+# Events
+public class Button
+{
+    public event EventHandler? Clicked;
+    
+    protected virtual void OnClicked()
+    {
+        Clicked?.Invoke(this, EventArgs.Empty);
+    }
+}
+
+// Subscribe
+button.Clicked += (sender, e) => Console.WriteLine("Clicked!");
+
+// Custom event args
+public class UserEventArgs : EventArgs
+{
+    public User User { get; }
+    public UserEventArgs(User user) => User = user;
+}
+
+public event EventHandler<UserEventArgs>? UserCreated;
+
+==============================================================================
+ATTRIBUTES
+==============================================================================
+# Using attributes
+[Serializable]
+[Obsolete("Use NewClass instead")]
+public class OldClass { }
+
+public class User
+{
+    [Required]
+    [StringLength(100)]
+    public string Name { get; set; }
+    
+    [EmailAddress]
+    public string Email { get; set; }
+    
+    [Range(0, 150)]
+    public int Age { get; set; }
+}
+
+# Custom attribute
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public class RouteAttribute : Attribute
+{
+    public string Path { get; }
+    public string Method { get; }
+    
+    public RouteAttribute(string path, string method = "GET")
+    {
+        Path = path;
+        Method = method;
+    }
+}
+
+[Route("/users", "GET")]
+public class UsersController { }
+
+# Reading attributes
+var attributes = typeof(UsersController).GetCustomAttributes<RouteAttribute>();
+
+==============================================================================
+MODERN_CSHARP_FEATURES
+==============================================================================
+# Top-level statements (C# 9+)
+// Program.cs - no Main method needed
+Console.WriteLine("Hello");
+await DoSomethingAsync();
+
+# File-scoped namespaces (C# 10+)
+namespace MyApp;
+
+public class User { }
+
+# Global usings (C# 10+)
+global using System;
+global using System.Collections.Generic;
+
+# Required members (C# 11+)
+public class User
+{
+    public required string Name { get; init; }
+    public required string Email { get; init; }
+}
+
+# Raw string literals (C# 11+)
+var json = """
+    {
+        "name": "John",
+        "email": "john@example.com"
+    }
+    """;
+
+# Collection expressions (C# 12)
+int[] arr = [1, 2, 3];
+List<int> list = [1, 2, 3];
+int[] combined = [..arr1, ..arr2];
+
+# Primary constructors (C# 12)
+public class UserService(IUserRepository repository, ILogger logger)
+{
+    public User GetUser(int id) => repository.Find(id);
+}
+
+# Alias any type (C# 12)
+using Point = (int X, int Y);
+Point p = (10, 20);

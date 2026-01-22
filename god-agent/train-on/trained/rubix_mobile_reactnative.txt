@@ -1,0 +1,795 @@
+# RUBIX PLATFORM: REACT_NATIVE
+# VERSION: 0.73+|New_Architecture
+# FOUNDATION: Meta|JavaScript|TypeScript
+# PHILOSOPHY: learn_once_write_anywhere|native_performance
+
+==============================================================================
+HISTORY
+==============================================================================
+2015:Facebook>open_sourced>from_internal_hackathon
+2016:v0.30>hot_reloading
+2018:v0.56>Babel_7|Android_64bit
+2019:Hermes_engine>Facebook_custom_JS_engine
+2020:v0.63>LogBox|Pressable
+2022:v0.68>Fabric_renderer_opt_in
+2023:v0.72>Symlinked_packages|Typescript_by_default
+2024:v0.73>New_Architecture_default|Bridgeless_mode
+
+NEW_ARCHITECTURE
+Fabric:new_rendering_system
+TurboModules:lazy_native_modules
+Codegen:type_safe_native_bridge
+JSI:JavaScript_Interface|direct_native_calls
+
+CORE_MAINTAINERS
+Meta:primary_maintainer
+Microsoft:Windows|macOS
+Callstack:community_tools
+Software_Mansion:Reanimated|Gesture_Handler
+Expo:tooling|SDK
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+EXPO_RECOMMENDED
+npx create-expo-app@latest my-app
+cd my-app
+npx expo start
+
+BARE_REACT_NATIVE
+npx @react-native-community/cli init MyApp
+cd MyApp
+npx react-native run-ios
+npx react-native run-android
+
+PROJECT_STRUCTURE
+my-app/
+  app/                    # Expo Router pages
+  components/
+  hooks/
+  utils/
+  constants/
+  assets/
+  app.json               # Expo config
+  package.json
+  tsconfig.json
+
+EXPO_VS_BARE
+Expo:managed|easier|OTA_updates|limited_native
+Bare:full_control|any_native_code|more_setup
+Expo_Dev_Build:best_of_both|custom_native+Expo_tools
+
+==============================================================================
+COMPONENT_PATTERNS
+==============================================================================
+CORE_COMPONENTS
+View:div_equivalent|flexbox_default
+Text:required_for_text|no_raw_strings
+Image:optimized_images
+ScrollView:scrollable_container|small_lists
+FlatList:virtualized_list|large_lists
+SectionList:grouped_virtualized
+Pressable:touchable_modern|preferred
+TextInput:input_field
+TouchableOpacity:legacy_touchable
+SafeAreaView:notch_aware
+
+BASIC_COMPONENT
+import { View, Text, StyleSheet } from 'react-native'
+
+export function Card({ title, children }) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.title}>{title}</Text>
+      {children}
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,  // Android shadow
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+})
+
+PLATFORM_SPECIFIC
+import { Platform } from 'react-native'
+
+const styles = StyleSheet.create({
+  container: {
+    paddingTop: Platform.OS === 'ios' ? 44 : 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000' },
+      android: { elevation: 4 },
+    }),
+  },
+})
+
+// File-based
+// Button.ios.tsx
+// Button.android.tsx
+import Button from './Button'  // auto-resolves
+
+==============================================================================
+STYLING_PATTERNS
+==============================================================================
+STYLESHEET_CREATE
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+})
++optimized:IDs_instead_of_objects
++validation:dev_warnings
+
+FLEXBOX_DEFAULTS
+flexDirection:'column'  // vs web 'row'
++flex:1:fill_available
++alignItems|justifyContent:same_as_web
+
+COMMON_PATTERNS
+// Fill screen
+flex: 1
+
+// Center content
+justifyContent: 'center'
+alignItems: 'center'
+
+// Row layout
+flexDirection: 'row'
+
+// Space between
+justifyContent: 'space-between'
+
+// Absolute positioning
+position: 'absolute'
+top: 0
+left: 0
+right: 0
+bottom: 0
+
+NATIVEWIND_TAILWIND
+npm install nativewind tailwindcss
+
+// Usage
+import { View, Text } from 'react-native'
+
+export function Card() {
+  return (
+    <View className="bg-white rounded-lg p-4 shadow-md">
+      <Text className="text-lg font-semibold">Title</Text>
+    </View>
+  )
+}
+
+STYLED_COMPONENTS
+import styled from 'styled-components/native'
+
+const Card = styled.View`
+  background-color: white;
+  border-radius: 8px;
+  padding: 16px;
+`
+
+const Title = styled.Text`
+  font-size: 18px;
+  font-weight: 600;
+`
+
+==============================================================================
+NAVIGATION_PATTERNS
+==============================================================================
+EXPO_ROUTER_RECOMMENDED
+npm install expo-router
+
+// app/_layout.tsx
+import { Stack } from 'expo-router'
+
+export default function Layout() {
+  return (
+    <Stack>
+      <Stack.Screen name="index" options={{ title: 'Home' }} />
+      <Stack.Screen name="profile" options={{ title: 'Profile' }} />
+    </Stack>
+  )
+}
+
+// app/index.tsx
+import { Link } from 'expo-router'
+
+export default function Home() {
+  return (
+    <View>
+      <Link href="/profile">Go to Profile</Link>
+      <Link href="/user/123">User 123</Link>
+    </View>
+  )
+}
+
+// app/user/[id].tsx
+import { useLocalSearchParams } from 'expo-router'
+
+export default function User() {
+  const { id } = useLocalSearchParams()
+  return <Text>User {id}</Text>
+}
+
+REACT_NAVIGATION
+npm install @react-navigation/native @react-navigation/native-stack
+
+// App.tsx
+import { NavigationContainer } from '@react-navigation/native'
+import { createNativeStackNavigator } from '@react-navigation/native-stack'
+
+const Stack = createNativeStackNavigator()
+
+function App() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator>
+        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="Profile" component={ProfileScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  )
+}
+
+// Navigation
+import { useNavigation } from '@react-navigation/native'
+
+function HomeScreen() {
+  const navigation = useNavigation()
+  return (
+    <Button
+      title="Go to Profile"
+      onPress={() => navigation.navigate('Profile', { userId: 123 })}
+    />
+  )
+}
+
+NAVIGATION_TYPES
+Stack:push/pop|most_common
+Tab:bottom_tabs|top_tabs
+Drawer:side_menu
+Native_Stack:native_navigation|better_perf
+
+TAB_NAVIGATION
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
+
+const Tab = createBottomTabNavigator()
+
+function App() {
+  return (
+    <Tab.Navigator>
+      <Tab.Screen 
+        name="Home" 
+        component={HomeScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Icon name="home" color={color} size={size} />
+          ),
+        }}
+      />
+      <Tab.Screen name="Settings" component={SettingsScreen} />
+    </Tab.Navigator>
+  )
+}
+
+DEEP_LINKING
+// app.json (Expo)
+{
+  "expo": {
+    "scheme": "myapp",
+    "android": {
+      "intentFilters": [{
+        "action": "VIEW",
+        "data": [{ "scheme": "myapp" }],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }]
+    }
+  }
+}
+
+// Linking
+Linking.openURL('myapp://profile/123')
+
+==============================================================================
+STATE_MANAGEMENT
+==============================================================================
+ZUSTAND_RECOMMENDED
+npm install zustand
+
+import { create } from 'zustand'
+
+interface AuthStore {
+  user: User | null
+  token: string | null
+  login: (user: User, token: string) => void
+  logout: () => void
+}
+
+const useAuthStore = create<AuthStore>((set) => ({
+  user: null,
+  token: null,
+  login: (user, token) => set({ user, token }),
+  logout: () => set({ user: null, token: null }),
+}))
+
+// Usage
+function Profile() {
+  const user = useAuthStore((state) => state.user)
+  const logout = useAuthStore((state) => state.logout)
+  
+  return (
+    <View>
+      <Text>{user?.name}</Text>
+      <Button title="Logout" onPress={logout} />
+    </View>
+  )
+}
+
+JOTAI_ATOMS
+import { atom, useAtom } from 'jotai'
+
+const countAtom = atom(0)
+const doubleAtom = atom((get) => get(countAtom) * 2)
+
+function Counter() {
+  const [count, setCount] = useAtom(countAtom)
+  return <Button title={`Count: ${count}`} onPress={() => setCount(c => c + 1)} />
+}
+
+TANSTACK_QUERY
+npm install @tanstack/react-query
+
+import { QueryClient, QueryClientProvider, useQuery, useMutation } from '@tanstack/react-query'
+
+const queryClient = new QueryClient()
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <MainApp />
+    </QueryClientProvider>
+  )
+}
+
+function UserList() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => fetch('/api/users').then(r => r.json()),
+  })
+  
+  if (isLoading) return <ActivityIndicator />
+  if (error) return <Text>Error loading</Text>
+  
+  return (
+    <FlatList
+      data={data}
+      renderItem={({ item }) => <UserCard user={item} />}
+    />
+  )
+}
+
+==============================================================================
+DATA_FETCHING
+==============================================================================
+FETCH_API
+async function fetchUsers() {
+  const response = await fetch('https://api.example.com/users', {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  })
+  if (!response.ok) throw new Error('Failed to fetch')
+  return response.json()
+}
+
+AXIOS
+import axios from 'axios'
+
+const api = axios.create({
+  baseURL: 'https://api.example.com',
+  timeout: 10000,
+})
+
+api.interceptors.request.use((config) => {
+  config.headers.Authorization = `Bearer ${getToken()}`
+  return config
+})
+
+==============================================================================
+STORAGE_PATTERNS
+==============================================================================
+ASYNC_STORAGE
+npm install @react-native-async-storage/async-storage
+
+import AsyncStorage from '@react-native-async-storage/async-storage'
+
+// Store
+await AsyncStorage.setItem('user', JSON.stringify(user))
+
+// Retrieve
+const userJson = await AsyncStorage.getItem('user')
+const user = userJson ? JSON.parse(userJson) : null
+
+// Remove
+await AsyncStorage.removeItem('user')
+
+// Multi operations
+await AsyncStorage.multiSet([['key1', 'value1'], ['key2', 'value2']])
+
+MMKV_FASTER
+npm install react-native-mmkv
+
+import { MMKV } from 'react-native-mmkv'
+
+const storage = new MMKV()
+
+storage.set('user.name', 'John')
+const name = storage.getString('user.name')
+storage.delete('user.name')
+
++10x_faster_than_AsyncStorage
++synchronous_API
++encryption_support
+
+SECURE_STORAGE
+npm install expo-secure-store
+
+import * as SecureStore from 'expo-secure-store'
+
+await SecureStore.setItemAsync('token', 'secret_token')
+const token = await SecureStore.getItemAsync('token')
+await SecureStore.deleteItemAsync('token')
+
++keychain_iOS
++keystore_Android
++use_for_sensitive_data
+
+==============================================================================
+LISTS_PERFORMANCE
+==============================================================================
+FLATLIST_OPTIMIZED
+<FlatList
+  data={items}
+  renderItem={({ item }) => <ItemCard item={item} />}
+  keyExtractor={(item) => item.id}
+  initialNumToRender={10}
+  maxToRenderPerBatch={10}
+  windowSize={5}
+  removeClippedSubviews={true}
+  getItemLayout={(data, index) => ({
+    length: ITEM_HEIGHT,
+    offset: ITEM_HEIGHT * index,
+    index,
+  })}
+  ListEmptyComponent={<EmptyState />}
+  ListHeaderComponent={<Header />}
+  ListFooterComponent={<Footer />}
+  onEndReached={loadMore}
+  onEndReachedThreshold={0.5}
+  refreshControl={
+    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+  }
+/>
+
+MEMO_ITEMS
+const ItemCard = memo(function ItemCard({ item }) {
+  return (
+    <View>
+      <Text>{item.title}</Text>
+    </View>
+  )
+})
+
+FLASHLIST_FASTER
+npm install @shopify/flash-list
+
+import { FlashList } from '@shopify/flash-list'
+
+<FlashList
+  data={items}
+  renderItem={({ item }) => <ItemCard item={item} />}
+  estimatedItemSize={100}
+/>
+
++faster_than_FlatList
++better_memory
++Shopify_maintained
+
+==============================================================================
+ANIMATIONS
+==============================================================================
+REANIMATED
+npm install react-native-reanimated
+
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated'
+
+function AnimatedBox() {
+  const offset = useSharedValue(0)
+  
+  const animatedStyles = useAnimatedStyle(() => ({
+    transform: [{ translateX: offset.value }],
+  }))
+  
+  return (
+    <View>
+      <Animated.View style={[styles.box, animatedStyles]} />
+      <Button
+        title="Move"
+        onPress={() => {
+          offset.value = withSpring(offset.value + 50)
+        }}
+      />
+    </View>
+  )
+}
+
+GESTURE_HANDLER
+npm install react-native-gesture-handler
+
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+
+function SwipeableCard() {
+  const translateX = useSharedValue(0)
+  
+  const pan = Gesture.Pan()
+    .onUpdate((event) => {
+      translateX.value = event.translationX
+    })
+    .onEnd(() => {
+      translateX.value = withSpring(0)
+    })
+  
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }))
+  
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View style={animatedStyle}>
+        <Card />
+      </Animated.View>
+    </GestureDetector>
+  )
+}
+
+LOTTIE_ANIMATIONS
+npm install lottie-react-native
+
+import LottieView from 'lottie-react-native'
+
+<LottieView
+  source={require('./animation.json')}
+  autoPlay
+  loop
+  style={{ width: 200, height: 200 }}
+/>
+
+==============================================================================
+NATIVE_MODULES
+==============================================================================
+EXPO_MODULES
+expo install expo-camera
+expo install expo-location
+expo install expo-notifications
+expo install expo-image-picker
+
+// Usage
+import * as ImagePicker from 'expo-image-picker'
+
+const result = await ImagePicker.launchImageLibraryAsync({
+  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+  allowsEditing: true,
+  quality: 1,
+})
+
+if (!result.canceled) {
+  setImage(result.assets[0].uri)
+}
+
+PERMISSIONS
+import * as Location from 'expo-location'
+
+const { status } = await Location.requestForegroundPermissionsAsync()
+if (status !== 'granted') {
+  Alert.alert('Permission denied')
+  return
+}
+
+const location = await Location.getCurrentPositionAsync({})
+
+CAMERA
+import { Camera, CameraView } from 'expo-camera'
+
+function CameraScreen() {
+  const [permission, requestPermission] = Camera.useCameraPermissions()
+  const cameraRef = useRef(null)
+  
+  if (!permission?.granted) {
+    return <Button title="Grant Permission" onPress={requestPermission} />
+  }
+  
+  const takePicture = async () => {
+    const photo = await cameraRef.current.takePictureAsync()
+    console.log(photo.uri)
+  }
+  
+  return (
+    <CameraView ref={cameraRef} style={{ flex: 1 }}>
+      <Button title="Take Photo" onPress={takePicture} />
+    </CameraView>
+  )
+}
+
+==============================================================================
+PUSH_NOTIFICATIONS
+==============================================================================
+EXPO_NOTIFICATIONS
+expo install expo-notifications expo-device
+
+import * as Notifications from 'expo-notifications'
+import * as Device from 'expo-device'
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+})
+
+async function registerForPushNotifications() {
+  if (!Device.isDevice) {
+    alert('Physical device required')
+    return
+  }
+  
+  const { status } = await Notifications.requestPermissionsAsync()
+  if (status !== 'granted') {
+    alert('Permission denied')
+    return
+  }
+  
+  const token = await Notifications.getExpoPushTokenAsync()
+  return token.data
+}
+
+// Listen for notifications
+useEffect(() => {
+  const subscription = Notifications.addNotificationReceivedListener(
+    notification => {
+      console.log(notification)
+    }
+  )
+  return () => subscription.remove()
+}, [])
+
+==============================================================================
+TESTING
+==============================================================================
+JEST_SETUP
+npm install --save-dev jest @testing-library/react-native
+
+// jest.config.js
+module.exports = {
+  preset: 'react-native',
+  setupFilesAfterEnv: ['@testing-library/react-native/extend-expect'],
+  transformIgnorePatterns: [
+    'node_modules/(?!(react-native|@react-native|expo|@expo)/)',
+  ],
+}
+
+COMPONENT_TEST
+import { render, screen, fireEvent } from '@testing-library/react-native'
+
+test('renders correctly', () => {
+  render(<Counter />)
+  
+  expect(screen.getByText('Count: 0')).toBeOnTheScreen()
+  
+  fireEvent.press(screen.getByText('Increment'))
+  
+  expect(screen.getByText('Count: 1')).toBeOnTheScreen()
+})
+
+DETOX_E2E
+npm install --save-dev detox
+
+// e2e/login.test.js
+describe('Login', () => {
+  beforeAll(async () => {
+    await device.launchApp()
+  })
+  
+  it('should login successfully', async () => {
+    await element(by.id('email-input')).typeText('test@example.com')
+    await element(by.id('password-input')).typeText('password')
+    await element(by.id('login-button')).tap()
+    
+    await expect(element(by.text('Welcome'))).toBeVisible()
+  })
+})
+
+==============================================================================
+BUILD_DEPLOY
+==============================================================================
+EXPO_BUILD
+# Development build
+npx expo run:ios
+npx expo run:android
+
+# Production build (EAS)
+npm install -g eas-cli
+eas build --platform ios
+eas build --platform android
+
+EAS_CONFIG
+// eas.json
+{
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {}
+  }
+}
+
+OTA_UPDATES
+eas update --branch production --message "Bug fix"
+
+// app.json
+{
+  "expo": {
+    "updates": {
+      "url": "https://u.expo.dev/xxx"
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    }
+  }
+}
+
+APP_STORE_SUBMIT
+eas submit --platform ios
+eas submit --platform android
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Inline_Styles           | style={{}}                       | StyleSheet.create
+No_Memo_List_Items      | re-renders_all_items             | memo()
+ScrollView_Large_List   | ScrollView_with_100+_items       | FlatList|FlashList
+Blocking_JS_Thread      | heavy_compute_on_render          | useMemo|worker
+No_Error_Boundaries     | app_crashes_on_error             | ErrorBoundary
+Sync_Storage            | AsyncStorage_in_render           | useEffect|suspend
+No_Loading_States       | blank_screen_during_fetch        | ActivityIndicator
+No_Keyboard_Handling    | keyboard_covers_input            | KeyboardAvoidingView
+Direct_Image_URLs       | uncached_remote_images           | expo-image|FastImage
+No_Safe_Area            | content_under_notch              | SafeAreaView

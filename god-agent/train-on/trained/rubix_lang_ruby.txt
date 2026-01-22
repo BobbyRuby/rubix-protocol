@@ -1,0 +1,910 @@
+# RUBIX LANGUAGE: RUBY
+# VERSION: 3.3+ (2024)
+# HISTORY: 1995_Matz→1.8_2003→1.9_Unicode_2007→2.0_2013→3.0_Ractor_2020→3.3_YJIT_2023
+# PHILOSOPHY: developer_happiness|principle_of_least_surprise|everything_is_object
+
+==============================================================================
+SETUP_ENVIRONMENT
+==============================================================================
+# Installation
+brew install ruby                    # macOS
+rbenv install 3.3.0                 # Version manager
+rvm install 3.3.0                   # Alternative
+
+# Project structure
+project/
+├── Gemfile
+├── Gemfile.lock
+├── lib/
+│   └── my_app/
+├── spec/
+├── bin/
+└── config/
+
+# Gemfile
+source 'https://rubygems.org'
+
+ruby '3.3.0'
+
+gem 'rails', '~> 7.1'
+gem 'pg'
+
+group :development, :test do
+  gem 'rspec'
+  gem 'rubocop'
+end
+
+# Commands
+bundle install           # Install gems
+bundle add gem_name      # Add gem
+bundle update           # Update gems
+bundle exec rspec       # Run with bundle context
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+# Everything is an object
+42.class          # Integer
+3.14.class        # Float
+"hello".class     # String
+true.class        # TrueClass
+nil.class         # NilClass
+[1,2,3].class     # Array
+{a: 1}.class      # Hash
+:symbol.class     # Symbol
+
+# Numbers
+integer = 42
+float = 3.14
+big = 1_000_000           # Underscore separator
+hex = 0xFF
+binary = 0b1010
+rational = 1/3r           # Rational
+complex = 1+2i            # Complex
+
+# Type checking
+value.is_a?(String)
+value.kind_of?(Numeric)
+value.instance_of?(Integer)
+value.respond_to?(:to_s)
+
+# Conversion
+"42".to_i                 # String to Integer
+42.to_s                   # Integer to String
+3.14.to_i                 # Float to Integer (truncates)
+"3.14".to_f               # String to Float
+[1,2,3].to_a              # To array
+{a: 1}.to_h               # To hash
+
+==============================================================================
+STRINGS
+==============================================================================
+# Creation
+single = 'no interpolation'
+double = "with #{variable} interpolation"
+heredoc = <<~TEXT
+  Multi-line string
+  with interpolation: #{value}
+TEXT
+
+# Common methods
+str.length                # Length
+str.size                  # Alias for length
+str.empty?                # Check empty
+str.include?('sub')       # Contains
+str.start_with?('pre')    # Starts with
+str.end_with?('suf')      # Ends with
+str.upcase                # Uppercase
+str.downcase              # Lowercase
+str.capitalize            # First char upper
+str.strip                 # Trim whitespace
+str.chomp                 # Remove trailing newline
+str.split(',')            # Split to array
+str.chars                 # Array of characters
+str.lines                 # Array of lines
+str.reverse               # Reverse
+str.gsub('old', 'new')    # Replace all
+str.sub('old', 'new')     # Replace first
+str[0]                    # First character
+str[0..4]                 # Substring (range)
+str[-1]                   # Last character
+
+# String formatting
+"Hello, %s" % name
+"Value: %d, Float: %.2f" % [42, 3.14159]
+format("Hello, %<name>s", name: "World")
+
+# Symbols (immutable, interned strings)
+:symbol
+:"symbol with spaces"
+"string".to_sym
+:symbol.to_s
+
+==============================================================================
+ARRAYS
+==============================================================================
+# Creation
+arr = [1, 2, 3]
+arr = Array.new(3, 0)     # [0, 0, 0]
+arr = Array.new(3) { |i| i * 2 }  # [0, 2, 4]
+words = %w[one two three] # ["one", "two", "three"]
+symbols = %i[one two three] # [:one, :two, :three]
+
+# Access
+arr[0]                    # First element
+arr[-1]                   # Last element
+arr[1..3]                 # Range (inclusive)
+arr[1...3]                # Range (exclusive)
+arr.first                 # First element
+arr.last                  # Last element
+arr.first(3)              # First 3 elements
+arr.sample                # Random element
+arr.sample(3)             # 3 random elements
+
+# Modification
+arr << 4                  # Append
+arr.push(4)               # Append
+arr.pop                   # Remove and return last
+arr.shift                 # Remove and return first
+arr.unshift(0)            # Add to beginning
+arr.insert(2, 'x')        # Insert at index
+arr.delete(3)             # Delete by value
+arr.delete_at(2)          # Delete by index
+arr.compact               # Remove nils
+arr.flatten               # Flatten nested arrays
+arr.uniq                  # Remove duplicates
+arr.reverse               # Reverse
+arr.sort                  # Sort
+arr.shuffle               # Randomize
+
+# Iteration
+arr.each { |x| puts x }
+arr.each_with_index { |x, i| puts "#{i}: #{x}" }
+arr.map { |x| x * 2 }     # Transform
+arr.select { |x| x > 2 }  # Filter (keep truthy)
+arr.reject { |x| x > 2 }  # Filter (keep falsy)
+arr.find { |x| x > 2 }    # Find first match
+arr.reduce(0) { |sum, x| sum + x }  # Reduce
+arr.reduce(:+)            # Sum shorthand
+arr.any? { |x| x > 2 }    # Any match?
+arr.all? { |x| x > 0 }    # All match?
+arr.none? { |x| x < 0 }   # None match?
+arr.count { |x| x > 2 }   # Count matches
+arr.group_by { |x| x % 2 } # Group by result
+
+# Destructuring
+first, *rest = arr
+first, second, *rest = arr
+*beginning, last = arr
+a, b, c = arr
+
+==============================================================================
+HASHES
+==============================================================================
+# Creation
+hash = { 'key' => 'value' }
+hash = { key: 'value' }   # Symbol keys (preferred)
+hash = Hash.new(0)        # Default value 0
+hash = Hash.new { |h, k| h[k] = [] }  # Default block
+
+# Access
+hash[:key]
+hash.fetch(:key)                   # Raises if missing
+hash.fetch(:key, 'default')        # Default value
+hash.fetch(:key) { 'computed' }    # Default block
+hash.dig(:nested, :deep, :key)     # Safe nested access
+
+# Modification
+hash[:key] = 'value'
+hash.merge(other_hash)             # Combine (returns new)
+hash.merge!(other_hash)            # Combine in place
+hash.delete(:key)                  # Remove key
+hash.transform_keys(&:to_s)        # Transform keys
+hash.transform_values(&:upcase)    # Transform values
+hash.compact                       # Remove nil values
+hash.slice(:key1, :key2)           # Select keys
+hash.except(:key1, :key2)          # Exclude keys
+
+# Iteration
+hash.each { |k, v| puts "#{k}: #{v}" }
+hash.each_key { |k| puts k }
+hash.each_value { |v| puts v }
+hash.map { |k, v| [k, v.upcase] }.to_h
+hash.select { |k, v| v > 10 }
+hash.reject { |k, v| v < 10 }
+
+# Info
+hash.keys
+hash.values
+hash.key?(:key)           # Has key?
+hash.value?('value')      # Has value?
+hash.empty?
+hash.size
+
+# Destructuring
+def method(name:, age: 0, **rest)
+  puts name, age, rest
+end
+
+method(name: 'John', age: 30, extra: 'data')
+
+==============================================================================
+CONTROL_FLOW
+==============================================================================
+# If/unless
+if condition
+  # ...
+elsif other_condition
+  # ...
+else
+  # ...
+end
+
+unless condition  # if not
+  # ...
+end
+
+# Inline/modifier form
+puts "yes" if condition
+puts "no" unless condition
+
+# Ternary
+result = condition ? 'yes' : 'no'
+
+# Case/when (pattern matching)
+case value
+when 1
+  'one'
+when 2, 3
+  'two or three'
+when 4..10
+  'four to ten'
+when String
+  'a string'
+when /pattern/
+  'matches pattern'
+else
+  'default'
+end
+
+# Case with pattern matching (Ruby 3+)
+case data
+in { name:, age: } if age >= 18
+  "Adult: #{name}"
+in { name:, age: }
+  "Minor: #{name}"
+in [first, *rest]
+  "Array starting with #{first}"
+else
+  "Unknown"
+end
+
+# Loops
+while condition
+  # ...
+end
+
+until condition  # while not
+  # ...
+end
+
+loop do
+  break if condition
+  next if skip_condition
+end
+
+# Iterators
+5.times { |i| puts i }
+1.upto(5) { |i| puts i }
+5.downto(1) { |i| puts i }
+(1..5).each { |i| puts i }
+(1...5).each { |i| puts i }  # Exclusive
+
+# Break, next, return
+arr.each do |x|
+  next if x < 0     # Skip iteration
+  break if x > 100  # Exit loop
+  return x if found # Return from method
+end
+
+==============================================================================
+METHODS
+==============================================================================
+# Definition
+def greet(name)
+  "Hello, #{name}"
+end
+
+# Default parameters
+def greet(name = 'World')
+  "Hello, #{name}"
+end
+
+# Keyword arguments
+def create_user(name:, email:, age: nil)
+  { name: name, email: email, age: age }
+end
+
+create_user(name: 'John', email: 'john@example.com')
+
+# Splat operators
+def sum(*numbers)           # Array of args
+  numbers.reduce(:+)
+end
+
+def options(**kwargs)       # Hash of kwargs
+  kwargs
+end
+
+def forward(*args, **kwargs, &block)
+  other_method(*args, **kwargs, &block)
+end
+
+# Method naming conventions
+def query?                  # Returns boolean
+  true
+end
+
+def modify!                 # Modifies in place
+  @data.upcase!
+end
+
+def convert_to_type         # Conversion
+  # ...
+end
+
+# Block parameters
+def with_block
+  yield if block_given?
+end
+
+def with_block(&block)
+  block.call if block
+end
+
+with_block { puts "Hello" }
+with_block do
+  puts "Hello"
+end
+
+# Proc and Lambda
+my_proc = Proc.new { |x| x * 2 }
+my_proc = proc { |x| x * 2 }
+my_lambda = lambda { |x| x * 2 }
+my_lambda = ->(x) { x * 2 }
+
+my_proc.call(5)
+my_lambda.call(5)
+my_lambda.(5)
+my_lambda[5]
+
+# Proc vs Lambda
+# - Lambda checks argument count, Proc doesn't
+# - return in Lambda returns from lambda
+# - return in Proc returns from enclosing method
+
+==============================================================================
+CLASSES
+==============================================================================
+# Basic class
+class User
+  # Class variable
+  @@count = 0
+  
+  # Class instance variable
+  @class_config = {}
+  
+  # Accessors
+  attr_reader :id              # Getter only
+  attr_writer :password        # Setter only
+  attr_accessor :name, :email  # Both
+  
+  # Initialize
+  def initialize(name, email)
+    @name = name
+    @email = email
+    @id = SecureRandom.uuid
+    @@count += 1
+  end
+  
+  # Instance method
+  def full_info
+    "#{@name} <#{@email}>"
+  end
+  
+  # Class method
+  def self.count
+    @@count
+  end
+  
+  # Alternative class method syntax
+  class << self
+    def create(attributes)
+      new(attributes[:name], attributes[:email])
+    end
+  end
+  
+  # Private methods
+  private
+  
+  def secret_method
+    # Only callable within class
+  end
+  
+  # Protected methods
+  protected
+  
+  def compare_with(other)
+    # Callable from same class or subclass
+  end
+end
+
+# Instantiation
+user = User.new('John', 'john@example.com')
+user.name
+user.email = 'new@example.com'
+
+# Inheritance
+class Admin < User
+  attr_accessor :permissions
+  
+  def initialize(name, email, permissions = [])
+    super(name, email)
+    @permissions = permissions
+  end
+  
+  def full_info
+    "#{super} [Admin]"
+  end
+end
+
+# Struct (simple data class)
+User = Struct.new(:name, :email) do
+  def greeting
+    "Hello, #{name}"
+  end
+end
+
+user = User.new('John', 'john@example.com')
+
+# Data class (Ruby 3.2+, immutable)
+User = Data.define(:name, :email) do
+  def greeting
+    "Hello, #{name}"
+  end
+end
+
+user = User.new(name: 'John', email: 'john@example.com')
+updated = user.with(name: 'Jane')
+
+==============================================================================
+MODULES_MIXINS
+==============================================================================
+# Module as namespace
+module MyApp
+  class User
+    # ...
+  end
+  
+  module Services
+    class UserService
+      # ...
+    end
+  end
+end
+
+MyApp::User.new
+MyApp::Services::UserService.new
+
+# Module as mixin
+module Timestampable
+  def created_at
+    @created_at ||= Time.now
+  end
+  
+  def touch
+    @updated_at = Time.now
+  end
+  
+  # Callback when included
+  def self.included(base)
+    base.extend(ClassMethods)
+  end
+  
+  module ClassMethods
+    def timestamped?
+      true
+    end
+  end
+end
+
+class Post
+  include Timestampable  # Instance methods
+end
+
+Post.timestamped?        # Class method from extend
+Post.new.created_at      # Instance method from include
+
+# Prepend (method lookup before class)
+module Logging
+  def save
+    puts "Saving..."
+    super
+    puts "Saved!"
+  end
+end
+
+class Record
+  prepend Logging
+  
+  def save
+    # actual save logic
+  end
+end
+
+# Extend (add class methods)
+module Findable
+  def find(id)
+    # ...
+  end
+end
+
+class User
+  extend Findable
+end
+
+User.find(1)
+
+==============================================================================
+BLOCKS_PROCS_LAMBDAS
+==============================================================================
+# Block
+[1, 2, 3].map { |x| x * 2 }
+[1, 2, 3].map do |x|
+  x * 2
+end
+
+# Yield
+def twice
+  yield
+  yield
+end
+
+twice { puts "Hello" }
+
+# Block with parameters
+def transform(value)
+  yield(value)
+end
+
+transform(5) { |x| x * 2 }  # => 10
+
+# Explicit block parameter
+def with_block(&block)
+  block.call(5) if block
+end
+
+# Convert block to proc
+def to_proc(&block)
+  block
+end
+
+my_proc = to_proc { |x| x * 2 }
+
+# Proc
+double = Proc.new { |x| x * 2 }
+double = proc { |x| x * 2 }
+double.call(5)      # => 10
+double.(5)          # => 10
+double[5]           # => 10
+
+# Lambda
+double = lambda { |x| x * 2 }
+double = ->(x) { x * 2 }
+double = ->(x, y) { x + y }
+
+# Symbol to proc
+[1, 2, 3].map(&:to_s)    # ["1", "2", "3"]
+['a', 'b'].map(&:upcase) # ["A", "B"]
+
+# Method reference
+def double(x)
+  x * 2
+end
+
+[1, 2, 3].map(&method(:double))
+
+==============================================================================
+ERROR_HANDLING
+==============================================================================
+# Begin/rescue
+begin
+  risky_operation
+rescue StandardError => e
+  puts "Error: #{e.message}"
+  puts e.backtrace.first(5)
+rescue SpecificError
+  # Handle specific error
+ensure
+  # Always runs
+  cleanup
+end
+
+# Inline rescue
+value = risky_operation rescue default_value
+
+# Raise exceptions
+raise "Something went wrong"
+raise ArgumentError, "Invalid argument"
+raise CustomError.new("message")
+
+# Custom exceptions
+class CustomError < StandardError
+  attr_reader :code
+  
+  def initialize(message, code: nil)
+    super(message)
+    @code = code
+  end
+end
+
+raise CustomError.new("Not found", code: 404)
+
+# Retry
+attempts = 0
+begin
+  attempts += 1
+  risky_operation
+rescue NetworkError
+  retry if attempts < 3
+  raise
+end
+
+# Throw/catch (non-error flow control)
+result = catch(:done) do
+  items.each do |item|
+    throw :done, item if item.matches?
+  end
+  nil
+end
+
+==============================================================================
+ENUMERABLE_METHODS
+==============================================================================
+# Any enumerable (Array, Hash, Range, etc.)
+collection.each { |x| ... }
+collection.map { |x| x.transform }
+collection.select { |x| x.valid? }
+collection.reject { |x| x.invalid? }
+collection.find { |x| x.matches? }
+collection.find_all { |x| x.matches? }
+collection.reduce(initial) { |acc, x| ... }
+collection.inject(:+)
+collection.sort { |a, b| a <=> b }
+collection.sort_by { |x| x.attribute }
+collection.group_by { |x| x.category }
+collection.partition { |x| x.active? }
+collection.any? { |x| x.valid? }
+collection.all? { |x| x.valid? }
+collection.none? { |x| x.invalid? }
+collection.one? { |x| x.special? }
+collection.count { |x| x.active? }
+collection.sum { |x| x.value }
+collection.min
+collection.max
+collection.minmax
+collection.min_by { |x| x.value }
+collection.max_by { |x| x.value }
+collection.first(n)
+collection.last(n)
+collection.take(n)
+collection.drop(n)
+collection.take_while { |x| x < 10 }
+collection.drop_while { |x| x < 10 }
+collection.zip(other)
+collection.flatten
+collection.compact
+collection.uniq
+collection.reverse
+collection.tally              # Count occurrences
+
+# Chaining with lazy evaluation
+(1..Float::INFINITY)
+  .lazy
+  .select { |x| x % 2 == 0 }
+  .map { |x| x * 2 }
+  .first(10)
+
+==============================================================================
+FILE_IO
+==============================================================================
+# Reading
+content = File.read('file.txt')
+lines = File.readlines('file.txt', chomp: true)
+
+File.open('file.txt', 'r') do |file|
+  file.each_line { |line| puts line }
+end
+
+# Writing
+File.write('file.txt', content)
+File.open('file.txt', 'w') do |file|
+  file.puts "Line 1"
+  file.puts "Line 2"
+end
+
+# Appending
+File.open('file.txt', 'a') do |file|
+  file.puts "New line"
+end
+
+# File info
+File.exist?('file.txt')
+File.file?('file.txt')
+File.directory?('dir')
+File.size('file.txt')
+File.mtime('file.txt')
+File.basename('/path/to/file.txt')  # "file.txt"
+File.dirname('/path/to/file.txt')   # "/path/to"
+File.extname('file.txt')            # ".txt"
+File.join('path', 'to', 'file')     # "path/to/file"
+
+# Directory
+Dir.entries('.')
+Dir.glob('**/*.rb')
+Dir.mkdir('new_dir')
+Dir.exist?('dir')
+FileUtils.mkdir_p('deep/nested/dir')
+FileUtils.rm_rf('dir')
+FileUtils.cp('src', 'dest')
+FileUtils.mv('old', 'new')
+
+==============================================================================
+METAPROGRAMMING
+==============================================================================
+# Define methods dynamically
+class User
+  %w[admin moderator member].each do |role|
+    define_method("#{role}?") do
+      @role == role
+    end
+  end
+end
+
+# Method missing
+class Proxy
+  def initialize(target)
+    @target = target
+  end
+  
+  def method_missing(method, *args, &block)
+    if @target.respond_to?(method)
+      @target.send(method, *args, &block)
+    else
+      super
+    end
+  end
+  
+  def respond_to_missing?(method, include_private = false)
+    @target.respond_to?(method) || super
+  end
+end
+
+# Class macros
+class Model
+  def self.attribute(name, type: String)
+    define_method(name) { instance_variable_get("@#{name}") }
+    define_method("#{name}=") { |v| instance_variable_set("@#{name}", v) }
+  end
+end
+
+class User < Model
+  attribute :name, type: String
+  attribute :age, type: Integer
+end
+
+# Instance eval / class eval
+class User
+  class << self
+    def configure(&block)
+      class_eval(&block)
+    end
+  end
+end
+
+User.configure do
+  attr_accessor :custom_field
+  
+  def custom_method
+    "custom"
+  end
+end
+
+==============================================================================
+TESTING_BASICS
+==============================================================================
+# RSpec
+RSpec.describe User do
+  describe '#full_name' do
+    let(:user) { User.new(first: 'John', last: 'Doe') }
+    
+    it 'combines first and last name' do
+      expect(user.full_name).to eq('John Doe')
+    end
+  end
+  
+  describe '.create' do
+    context 'with valid attributes' do
+      it 'creates a user' do
+        user = User.create(name: 'John', email: 'john@example.com')
+        expect(user).to be_persisted
+      end
+    end
+    
+    context 'with invalid attributes' do
+      it 'raises an error' do
+        expect { User.create(name: '') }.to raise_error(ValidationError)
+      end
+    end
+  end
+end
+
+# Minitest
+class UserTest < Minitest::Test
+  def setup
+    @user = User.new(name: 'John')
+  end
+  
+  def test_has_name
+    assert_equal 'John', @user.name
+  end
+  
+  def test_raises_on_invalid
+    assert_raises(ValidationError) do
+      User.create(name: '')
+    end
+  end
+end
+
+==============================================================================
+RUBY_3X_FEATURES
+==============================================================================
+# Ruby 3.0
+- Ractor (parallel execution)
+- Fiber scheduler (async)
+- One-line pattern matching: case x in pattern
+- Endless method: def square(x) = x * x
+- Hash#except
+
+# Ruby 3.1
+- Hash value omission: { x:, y: } same as { x: x, y: y }
+- Anonymous block argument: def method(&) = other(&)
+- Pin operator in pattern matching: ^variable
+
+# Ruby 3.2
+- Data class: Data.define(:name, :email)
+- Anonymous arguments forwarding: def method(*, **, &)
+- Set as built-in
+
+# Ruby 3.3
+- YJIT enabled by default
+- Prism parser (experimental)
+- Performance improvements
+
+# Pattern matching
+case response
+in { status: 200, body: }
+  process(body)
+in { status: 404 }
+  not_found
+in { status: 500..599 => status }
+  server_error(status)
+end
+
+# Numbered block parameters
+[1, 2, 3].map { _1 * 2 }
+{ a: 1, b: 2 }.map { "#{_1}: #{_2}" }
+
+# Endless method
+def square(x) = x * x
+def greet(name) = "Hello, #{name}"

@@ -1,0 +1,620 @@
+# RUBIX ECOSYSTEM: KOTLIN_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (beyond Android - see rubix_mobile_kotlin.txt)
+# PHILOSOPHY: concise|safe|interoperable|multiplatform
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+KTOR
+desc:JetBrains_async_framework|Kotlin_native
+site:ktor.io
+use_for:REST_APIs|microservices|multiplatform
++coroutines:native_async
++lightweight:modular
++multiplatform:JVM|Native|JS
++JetBrains:official
+
+// build.gradle.kts
+plugins {
+    kotlin("jvm")
+    id("io.ktor.plugin") version "2.3.7"
+    kotlin("plugin.serialization")
+}
+
+dependencies {
+    implementation("io.ktor:ktor-server-core")
+    implementation("io.ktor:ktor-server-netty")
+    implementation("io.ktor:ktor-server-content-negotiation")
+    implementation("io.ktor:ktor-serialization-kotlinx-json")
+    implementation("io.ktor:ktor-server-auth")
+    implementation("io.ktor:ktor-server-auth-jwt")
+}
+
+// Application.kt
+fun main() {
+    embeddedServer(Netty, port = 8080) {
+        configureRouting()
+        configureSerialization()
+    }.start(wait = true)
+}
+
+// Routing
+fun Application.configureRouting() {
+    routing {
+        get("/") {
+            call.respondText("Hello, World!")
+        }
+        
+        route("/users") {
+            get {
+                call.respond(userService.findAll())
+            }
+            
+            get("/{id}") {
+                val id = call.parameters["id"]?.toIntOrNull()
+                    ?: return@get call.respond(HttpStatusCode.BadRequest)
+                
+                val user = userService.findById(id)
+                    ?: return@get call.respond(HttpStatusCode.NotFound)
+                
+                call.respond(user)
+            }
+            
+            post {
+                val request = call.receive<CreateUserRequest>()
+                val user = userService.create(request)
+                call.respond(HttpStatusCode.Created, user)
+            }
+        }
+    }
+}
+
+// Serialization
+fun Application.configureSerialization() {
+    install(ContentNegotiation) {
+        json(Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        })
+    }
+}
+
+// Authentication
+fun Application.configureAuth() {
+    install(Authentication) {
+        jwt("auth-jwt") {
+            verifier(JWT.require(Algorithm.HMAC256(secret)).build())
+            validate { credential ->
+                if (credential.payload.getClaim("userId").asString() != "") {
+                    JWTPrincipal(credential.payload)
+                } else null
+            }
+        }
+    }
+    
+    routing {
+        authenticate("auth-jwt") {
+            get("/protected") {
+                val principal = call.principal<JWTPrincipal>()
+                call.respond(mapOf("userId" to principal?.payload?.getClaim("userId")))
+            }
+        }
+    }
+}
+
+KTOR_CLIENT
+desc:HTTP_client|multiplatform
+val client = HttpClient(CIO) {
+    install(ContentNegotiation) {
+        json()
+    }
+    install(Logging)
+}
+
+val user: User = client.get("https://api.example.com/users/1").body()
+client.post("https://api.example.com/users") {
+    contentType(ContentType.Application.Json)
+    setBody(CreateUserRequest(name = "John"))
+}
+
+SPRING_BOOT_KOTLIN
+desc:Spring_with_Kotlin|idiomatic
++coroutines:WebFlux_support
++DSL:bean_definition
++null_safety:integrated
+
+@RestController
+class UserController(private val userService: UserService) {
+    @GetMapping("/users/{id}")
+    suspend fun getUser(@PathVariable id: Long): User? {
+        return userService.findById(id)
+    }
+    
+    @PostMapping("/users")
+    suspend fun createUser(@RequestBody request: CreateUserRequest): User {
+        return userService.create(request)
+    }
+}
+
+// Coroutines support
+@Service
+class UserService(private val repository: UserRepository) {
+    suspend fun findById(id: Long): User? = withContext(Dispatchers.IO) {
+        repository.findById(id)
+    }
+}
+
+// Bean DSL
+fun beans() = beans {
+    bean<UserService>()
+    bean<UserRepository>()
+}
+
+HTTP4K
+desc:functional_HTTP_toolkit
+site:http4k.org
+use_for:functional_style|testing
++immutable:functional_core
++testable:in_memory_server
+
+val app: HttpHandler = routes(
+    "/users" bind GET to { Response(OK).body("users") },
+    "/users/{id}" bind GET to { req ->
+        val id = req.path("id")
+        Response(OK).body("user $id")
+    }
+)
+
+app.asServer(SunHttp(8080)).start()
+
+==============================================================================
+DATABASE
+==============================================================================
+EXPOSED
+desc:Kotlin_SQL_framework|JetBrains
+site:github.com/JetBrains/Exposed
+use_for:type_safe_SQL|DSL
++DSL:Kotlin_native
++DAO:optional_ORM
+
+// DSL style
+object Users : Table() {
+    val id = integer("id").autoIncrement()
+    val name = varchar("name", 100)
+    val email = varchar("email", 100).uniqueIndex()
+    override val primaryKey = PrimaryKey(id)
+}
+
+transaction {
+    // Create
+    Users.insert {
+        it[name] = "John"
+        it[email] = "john@example.com"
+    }
+    
+    // Read
+    val users = Users.selectAll().map {
+        User(it[Users.id], it[Users.name], it[Users.email])
+    }
+    
+    // Query
+    Users.select { Users.name like "%John%" }
+        .orderBy(Users.name)
+        .limit(10)
+}
+
+// DAO style
+class User(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<User>(Users)
+    var name by Users.name
+    var email by Users.email
+}
+
+transaction {
+    val user = User.new {
+        name = "John"
+        email = "john@example.com"
+    }
+    
+    User.find { Users.name like "%John%" }
+}
+
+KTORM
+desc:ORM_framework|lightweight
+site:ktorm.org
+
+interface Users : Table<User> {
+    val id: Column<Int>
+    val name: Column<String>
+}
+
+database.users.filter { it.name like "%John%" }.toList()
+
+SQLDELIGHT
+desc:type_safe_SQL|multiplatform
+site:sqldelight.app
+use_for:multiplatform|type_safety
++code_generation:from_SQL
++multiplatform:Android|iOS|JVM
+
+-- queries.sq
+selectAll:
+SELECT * FROM users;
+
+selectById:
+SELECT * FROM users WHERE id = ?;
+
+insert:
+INSERT INTO users (name, email) VALUES (?, ?);
+
+// Generated Kotlin
+val users = queries.selectAll().executeAsList()
+val user = queries.selectById(1).executeAsOneOrNull()
+
+JOOQ_KOTLIN
+desc:jOOQ_with_Kotlin_extensions
+ctx.selectFrom(USERS)
+    .where(USERS.NAME.like("%John%"))
+    .fetchInto<User>()
+
+R2DBC_KOTLIN
+desc:reactive_database|coroutines
+val users = databaseClient
+    .sql("SELECT * FROM users")
+    .fetch()
+    .flow<User>()
+
+==============================================================================
+SERIALIZATION
+==============================================================================
+KOTLINX_SERIALIZATION
+desc:official_serialization|multiplatform
+site:github.com/Kotlin/kotlinx.serialization
++compile_time:no_reflection
++multiplatform:JVM|JS|Native
++formats:JSON|ProtoBuf|CBOR
+
+@Serializable
+data class User(
+    val id: Int,
+    val name: String,
+    @SerialName("email_address")
+    val email: String,
+    val age: Int? = null,
+    @Transient
+    val internal: String = ""
+)
+
+val json = Json {
+    prettyPrint = true
+    ignoreUnknownKeys = true
+    encodeDefaults = false
+}
+
+val jsonString = json.encodeToString(user)
+val user = json.decodeFromString<User>(jsonString)
+
+MOSHI_KOTLIN
+desc:JSON_library|Kotlin_support
+val moshi = Moshi.Builder()
+    .addLast(KotlinJsonAdapterFactory())
+    .build()
+
+val adapter = moshi.adapter<User>()
+val json = adapter.toJson(user)
+val user = adapter.fromJson(json)
+
+JACKSON_KOTLIN
+desc:Jackson_with_Kotlin_module
+val mapper = jacksonObjectMapper()
+val json = mapper.writeValueAsString(user)
+val user = mapper.readValue<User>(json)
+
+==============================================================================
+COROUTINES_FLOW
+==============================================================================
+KOTLINX_COROUTINES
+desc:async_programming|structured_concurrency
+site:github.com/Kotlin/kotlinx.coroutines
+
+// Launch
+val job = launch {
+    delay(1000)
+    println("Done")
+}
+job.join()
+
+// Async
+val deferred = async {
+    fetchUser(1)
+}
+val user = deferred.await()
+
+// Parallel
+val (user, orders) = coroutineScope {
+    val userDeferred = async { fetchUser(id) }
+    val ordersDeferred = async { fetchOrders(id) }
+    userDeferred.await() to ordersDeferred.await()
+}
+
+// withContext
+val result = withContext(Dispatchers.IO) {
+    blockingOperation()
+}
+
+// Flow
+fun fetchUsers(): Flow<User> = flow {
+    users.forEach { emit(it) }
+}
+
+fetchUsers()
+    .filter { it.active }
+    .map { it.name }
+    .collect { println(it) }
+
+// StateFlow / SharedFlow
+private val _state = MutableStateFlow(initialState)
+val state: StateFlow<State> = _state.asStateFlow()
+
+private val _events = MutableSharedFlow<Event>()
+val events: SharedFlow<Event> = _events.asSharedFlow()
+
+DISPATCHERS
+Dispatchers.Default:CPU_intensive
+Dispatchers.IO:blocking_IO
+Dispatchers.Main:UI_thread
+Dispatchers.Unconfined:immediate
+
+==============================================================================
+DEPENDENCY_INJECTION
+==============================================================================
+KOIN
+desc:pragmatic_DI|Kotlin_native
+site:insert-koin.io
+use_for:simple_DI|Android|Ktor
++DSL:Kotlin_native
++lightweight:no_code_gen
+
+val appModule = module {
+    single { DatabaseConfig() }
+    single { Database(get()) }
+    factory { UserRepository(get()) }
+    factory { UserService(get()) }
+}
+
+// Start Koin
+startKoin {
+    modules(appModule)
+}
+
+// Inject
+class UserController : KoinComponent {
+    private val userService: UserService by inject()
+}
+
+// Ktor integration
+fun Application.main() {
+    install(Koin) {
+        modules(appModule)
+    }
+}
+
+KODEIN
+desc:DI_framework|multiplatform
+val kodein = DI {
+    bind<Database>() with singleton { Database() }
+    bind<UserRepository>() with factory { UserRepository(instance()) }
+}
+
+val userRepo: UserRepository by kodein.instance()
+
+HILT_KOTLIN
+desc:Dagger_simplified|Android
+(see rubix_mobile_kotlin.txt for Android usage)
+
+==============================================================================
+TESTING
+==============================================================================
+KOTEST
+desc:Kotlin_test_framework|expressive
+site:kotest.io
++styles:multiple_spec_styles
++assertions:powerful
++property_testing:built_in
+
+class UserServiceTest : StringSpec({
+    "should create user" {
+        val user = userService.create("John")
+        user.name shouldBe "John"
+    }
+    
+    "should throw on invalid input" {
+        shouldThrow<IllegalArgumentException> {
+            userService.create("")
+        }
+    }
+})
+
+// Behavior spec
+class UserSpec : BehaviorSpec({
+    Given("a user service") {
+        val service = UserService()
+        
+        When("creating a user") {
+            val user = service.create("John")
+            
+            Then("user should have name") {
+                user.name shouldBe "John"
+            }
+        }
+    }
+})
+
+// Property testing
+class PropertyTest : StringSpec({
+    "string length" {
+        forAll<String> { s ->
+            s.length >= 0
+        }
+    }
+})
+
+MOCKK
+desc:mocking_library|Kotlin_native
+site:mockk.io
++coroutines:coEvery|coVerify
++relaxed:automatic_stubs
+
+val userRepository = mockk<UserRepository>()
+
+every { userRepository.findById(1) } returns User(1, "John")
+coEvery { userRepository.findByIdAsync(1) } returns User(1, "John")
+
+val user = userRepository.findById(1)
+
+verify { userRepository.findById(1) }
+coVerify { userRepository.findByIdAsync(1) }
+
+// Relaxed mock
+val mock = mockk<UserRepository>(relaxed = true)
+
+// Capture
+val slot = slot<User>()
+every { userRepository.save(capture(slot)) } returns Unit
+userRepository.save(user)
+slot.captured.name shouldBe "John"
+
+STRIKT
+desc:assertion_library|fluent
+expectThat(user) {
+    get { name }.isEqualTo("John")
+    get { age }.isGreaterThan(18)
+}
+
+expectThat(users)
+    .hasSize(3)
+    .map { it.name }
+    .containsExactly("John", "Jane", "Bob")
+
+TURBINE
+desc:Flow_testing
+site:github.com/cashapp/turbine
+
+@Test
+fun testFlow() = runTest {
+    flowOf(1, 2, 3).test {
+        assertEquals(1, awaitItem())
+        assertEquals(2, awaitItem())
+        assertEquals(3, awaitItem())
+        awaitComplete()
+    }
+}
+
+==============================================================================
+MULTIPLATFORM
+==============================================================================
+KOTLIN_MULTIPLATFORM
+desc:share_code_across_platforms
+targets:JVM|Android|iOS|JS|Native|WASM
+
+// commonMain
+expect fun platformName(): String
+
+// jvmMain
+actual fun platformName(): String = "JVM"
+
+// iosMain
+actual fun platformName(): String = "iOS"
+
+// Shared business logic
+class UserRepository(private val api: UserApi) {
+    suspend fun getUser(id: Int): User {
+        return api.fetchUser(id)
+    }
+}
+
+COMPOSE_MULTIPLATFORM
+desc:Compose_for_Desktop_iOS_Web
+site:jetbrains.com/lp/compose-multiplatform
+
+@Composable
+fun App() {
+    MaterialTheme {
+        var count by remember { mutableStateOf(0) }
+        Button(onClick = { count++ }) {
+            Text("Count: $count")
+        }
+    }
+}
+
+KTOR_CLIENT_MULTIPLATFORM
+desc:HTTP_client_all_platforms
+// commonMain
+val client = HttpClient {
+    install(ContentNegotiation) {
+        json()
+    }
+}
+
+==============================================================================
+UTILITIES
+==============================================================================
+ARROW
+desc:functional_programming|typed_FP
+site:arrow-kt.io
++Either:error_handling
++Option:null_safety
++IO:effects
+
+import arrow.core.*
+
+// Either
+fun divide(a: Int, b: Int): Either<String, Int> =
+    if (b == 0) "Division by zero".left()
+    else (a / b).right()
+
+divide(10, 2).fold(
+    ifLeft = { error -> println(error) },
+    ifRight = { result -> println(result) }
+)
+
+// Option
+val option: Option<String> = Some("value")
+val none: Option<String> = None
+
+option.map { it.uppercase() }
+      .getOrElse { "default" }
+
+// Validated for accumulating errors
+val validated: ValidatedNel<String, User> = ...
+
+RESULT4K
+desc:Result_type|simple
+val result: Result<User, Error> = Success(user)
+
+result.map { it.name }
+      .recover { "Unknown" }
+      .get()
+
+KOTLINX_DATETIME
+desc:multiplatform_datetime
+val now = Clock.System.now()
+val date = LocalDate(2024, 1, 1)
+val instant = date.atStartOfDayIn(TimeZone.UTC)
+
+KOTLINX_COLLECTIONS_IMMUTABLE
+desc:immutable_collections
+val list = persistentListOf(1, 2, 3)
+val newList = list.add(4)  // Returns new list
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB:Ktor|Spring_Boot|http4k
+DATABASE:Exposed|Ktorm|SQLDelight
+SERIALIZATION:kotlinx.serialization|Moshi|Jackson
+ASYNC:kotlinx.coroutines|Flow
+DI:Koin|Kodein|Hilt
+TESTING:Kotest|MockK|Strikt|Turbine
+MULTIPLATFORM:KMP|Compose_Multiplatform
+FP:Arrow|Result4k

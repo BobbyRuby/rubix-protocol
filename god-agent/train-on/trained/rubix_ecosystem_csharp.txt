@@ -1,0 +1,781 @@
+# RUBIX ECOSYSTEM: CSHARP_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (beyond ASP.NET Core - see rubix_platform_dotnet.txt)
+# PHILOSOPHY: enterprise_ready|strongly_typed|Microsoft_ecosystem
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+MINIMAL_APIS
+desc:lightweight_APIs|.NET6+
+use_for:microservices|simple_APIs
++minimal:less_ceremony
++fast:low_overhead
+
+var builder = WebApplication.CreateBuilder(args);
+var app = builder.Build();
+
+app.MapGet("/", () => "Hello World!");
+
+app.MapGet("/users/{id}", async (int id, UserService service) =>
+{
+    var user = await service.GetAsync(id);
+    return user is not null ? Results.Ok(user) : Results.NotFound();
+});
+
+app.MapPost("/users", async (CreateUserRequest request, UserService service) =>
+{
+    var user = await service.CreateAsync(request);
+    return Results.Created($"/users/{user.Id}", user);
+});
+
+// With validation
+app.MapPost("/users", async (
+    [FromBody] CreateUserRequest request,
+    IValidator<CreateUserRequest> validator,
+    UserService service) =>
+{
+    var result = await validator.ValidateAsync(request);
+    if (!result.IsValid)
+        return Results.ValidationProblem(result.ToDictionary());
+    
+    var user = await service.CreateAsync(request);
+    return Results.Created($"/users/{user.Id}", user);
+});
+
+app.Run();
+
+CARTER
+desc:minimal_API_modules|Nancy_inspired
+dotnet add package Carter
+
+public class UsersModule : ICarterModule
+{
+    public void AddRoutes(IEndpointRouteBuilder app)
+    {
+        app.MapGet("/users/{id}", GetUser);
+        app.MapPost("/users", CreateUser);
+    }
+    
+    private async Task<IResult> GetUser(int id, UserService service)
+    {
+        var user = await service.GetAsync(id);
+        return user is not null ? Results.Ok(user) : Results.NotFound();
+    }
+}
+
+FAST_ENDPOINTS
+desc:REPR_pattern|fast
+site:fast-endpoints.com
++fast:high_performance
++REPR:Request_Endpoint_Response
+
+dotnet add package FastEndpoints
+
+public class GetUserEndpoint : Endpoint<GetUserRequest, UserResponse>
+{
+    public override void Configure()
+    {
+        Get("/users/{id}");
+        AllowAnonymous();
+    }
+    
+    public override async Task HandleAsync(GetUserRequest req, CancellationToken ct)
+    {
+        var user = await userService.GetAsync(req.Id, ct);
+        await SendAsync(user.ToResponse());
+    }
+}
+
+==============================================================================
+ORM_DATA_ACCESS
+==============================================================================
+ENTITY_FRAMEWORK_CORE
+desc:Microsoft_ORM|LINQ
+(covered in platform file, extended patterns here)
+
+// Complex queries
+var users = await context.Users
+    .Include(u => u.Orders)
+        .ThenInclude(o => o.Items)
+    .Where(u => u.Active)
+    .OrderByDescending(u => u.CreatedAt)
+    .Skip(page * pageSize)
+    .Take(pageSize)
+    .AsNoTracking()
+    .ToListAsync();
+
+// Raw SQL
+var users = await context.Users
+    .FromSqlRaw("SELECT * FROM users WHERE active = {0}", true)
+    .ToListAsync();
+
+// Compiled queries
+private static readonly Func<AppDbContext, int, Task<User?>> GetUserById =
+    EF.CompileAsyncQuery((AppDbContext ctx, int id) =>
+        ctx.Users.FirstOrDefault(u => u.Id == id));
+
+var user = await GetUserById(context, 1);
+
+// Bulk operations (EFCore.BulkExtensions)
+await context.BulkInsertAsync(users);
+await context.BulkUpdateAsync(users);
+await context.BulkDeleteAsync(users);
+
+DAPPER
+desc:micro_ORM|fast|SQL_first
+dotnet add package Dapper
+
+using Dapper;
+
+// Query
+var users = await connection.QueryAsync<User>(
+    "SELECT * FROM users WHERE active = @Active",
+    new { Active = true });
+
+// Single
+var user = await connection.QueryFirstOrDefaultAsync<User>(
+    "SELECT * FROM users WHERE id = @Id",
+    new { Id = 1 });
+
+// Insert
+await connection.ExecuteAsync(
+    "INSERT INTO users (name, email) VALUES (@Name, @Email)",
+    new { Name = "John", Email = "john@example.com" });
+
+// Multi-mapping (joins)
+var users = await connection.QueryAsync<User, Order, User>(
+    @"SELECT u.*, o.* FROM users u
+      LEFT JOIN orders o ON u.id = o.user_id
+      WHERE u.id = @Id",
+    (user, order) => { user.Orders.Add(order); return user; },
+    new { Id = 1 },
+    splitOn: "id");
+
+// Stored procedures
+var result = await connection.QueryAsync<User>(
+    "GetActiveUsers",
+    new { MinAge = 18 },
+    commandType: CommandType.StoredProcedure);
+
+NPGSQL
+desc:PostgreSQL_provider
+dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL
+
+// Or direct
+await using var conn = new NpgsqlConnection(connString);
+await conn.OpenAsync();
+await using var cmd = new NpgsqlCommand("SELECT * FROM users", conn);
+await using var reader = await cmd.ExecuteReaderAsync();
+
+MARTEN
+desc:document_DB_over_PostgreSQL
+site:martendb.io
++document_store:JSON_in_Postgres
++event_sourcing:built_in
+
+dotnet add package Marten
+
+var store = DocumentStore.For(opts =>
+{
+    opts.Connection(connectionString);
+    opts.Schema.For<User>().Index(x => x.Email);
+});
+
+await using var session = store.LightweightSession();
+
+// Store
+session.Store(new User { Name = "John", Email = "john@example.com" });
+await session.SaveChangesAsync();
+
+// Query
+var user = await session.Query<User>()
+    .Where(x => x.Email == "john@example.com")
+    .FirstOrDefaultAsync();
+
+==============================================================================
+MESSAGING
+==============================================================================
+MASSTRANSIT
+desc:distributed_messaging|abstraction
+site:masstransit.io
++brokers:RabbitMQ|Azure|Amazon|etc
++patterns:Saga|Outbox|etc
+
+dotnet add package MassTransit
+dotnet add package MassTransit.RabbitMQ
+
+// Message
+public record UserCreated(Guid UserId, string Email);
+
+// Consumer
+public class UserCreatedConsumer : IConsumer<UserCreated>
+{
+    public async Task Consume(ConsumeContext<UserCreated> context)
+    {
+        var message = context.Message;
+        // Handle message
+    }
+}
+
+// Configuration
+builder.Services.AddMassTransit(x =>
+{
+    x.AddConsumer<UserCreatedConsumer>();
+    
+    x.UsingRabbitMq((context, cfg) =>
+    {
+        cfg.Host("localhost", "/", h =>
+        {
+            h.Username("guest");
+            h.Password("guest");
+        });
+        
+        cfg.ConfigureEndpoints(context);
+    });
+});
+
+// Publish
+await publishEndpoint.Publish(new UserCreated(user.Id, user.Email));
+
+NSERVICEBUS
+desc:enterprise_service_bus
+site:particular.net
++enterprise:mature
++saga:workflow
++monitoring:ServicePulse
+
+MEDIATR
+desc:mediator_pattern|CQRS
+dotnet add package MediatR
+
+// Request
+public record GetUserQuery(int Id) : IRequest<User?>;
+
+// Handler
+public class GetUserQueryHandler : IRequestHandler<GetUserQuery, User?>
+{
+    private readonly IUserRepository _repository;
+    
+    public GetUserQueryHandler(IUserRepository repository) => _repository = repository;
+    
+    public async Task<User?> Handle(GetUserQuery request, CancellationToken ct)
+    {
+        return await _repository.GetAsync(request.Id, ct);
+    }
+}
+
+// Usage
+var user = await mediator.Send(new GetUserQuery(1));
+
+// Pipeline behavior
+public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+{
+    public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken ct)
+    {
+        _logger.LogInformation("Handling {Request}", typeof(TRequest).Name);
+        var response = await next();
+        _logger.LogInformation("Handled {Request}", typeof(TRequest).Name);
+        return response;
+    }
+}
+
+==============================================================================
+HTTP_CLIENTS
+==============================================================================
+HTTPCLIENT
+desc:built_in|factory_pattern
+
+// HttpClientFactory (recommended)
+builder.Services.AddHttpClient<UserApiClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.example.com/");
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+});
+
+public class UserApiClient
+{
+    private readonly HttpClient _client;
+    
+    public UserApiClient(HttpClient client) => _client = client;
+    
+    public async Task<User?> GetUserAsync(int id)
+    {
+        var response = await _client.GetAsync($"users/{id}");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<User>();
+    }
+    
+    public async Task<User> CreateUserAsync(CreateUserRequest request)
+    {
+        var response = await _client.PostAsJsonAsync("users", request);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<User>()!;
+    }
+}
+
+// Resilience with Polly
+builder.Services.AddHttpClient<UserApiClient>()
+    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(3, _ => TimeSpan.FromSeconds(1)))
+    .AddTransientHttpErrorPolicy(p => p.CircuitBreakerAsync(5, TimeSpan.FromSeconds(30)));
+
+REFIT
+desc:type_safe_REST_client|interface_based
+dotnet add package Refit
+dotnet add package Refit.HttpClientFactory
+
+public interface IUserApi
+{
+    [Get("/users/{id}")]
+    Task<User> GetUserAsync(int id);
+    
+    [Post("/users")]
+    Task<User> CreateUserAsync([Body] CreateUserRequest request);
+    
+    [Get("/users")]
+    Task<List<User>> SearchUsersAsync([Query] string name, [Query] int page = 1);
+    
+    [Put("/users/{id}")]
+    Task UpdateUserAsync(int id, [Body] UpdateUserRequest request);
+    
+    [Delete("/users/{id}")]
+    Task DeleteUserAsync(int id);
+}
+
+// Registration
+builder.Services.AddRefitClient<IUserApi>()
+    .ConfigureHttpClient(c => c.BaseAddress = new Uri("https://api.example.com"));
+
+// Usage
+var user = await userApi.GetUserAsync(1);
+
+FLURL
+desc:fluent_HTTP_client
+dotnet add package Flurl.Http
+
+var user = await "https://api.example.com"
+    .AppendPathSegment("users")
+    .AppendPathSegment(1)
+    .WithHeader("Authorization", $"Bearer {token}")
+    .GetJsonAsync<User>();
+
+var response = await "https://api.example.com/users"
+    .PostJsonAsync(new { Name = "John", Email = "john@example.com" })
+    .ReceiveJson<User>();
+
+==============================================================================
+VALIDATION
+==============================================================================
+FLUENTVALIDATION
+desc:fluent_validation_rules
+dotnet add package FluentValidation
+dotnet add package FluentValidation.DependencyInjectionExtensions
+
+public class CreateUserRequestValidator : AbstractValidator<CreateUserRequest>
+{
+    public CreateUserRequestValidator(IUserRepository repository)
+    {
+        RuleFor(x => x.Name)
+            .NotEmpty()
+            .MaximumLength(100);
+        
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .EmailAddress()
+            .MustAsync(async (email, ct) => !await repository.ExistsAsync(email, ct))
+            .WithMessage("Email already exists");
+        
+        RuleFor(x => x.Age)
+            .InclusiveBetween(0, 150)
+            .When(x => x.Age.HasValue);
+        
+        RuleFor(x => x.Password)
+            .NotEmpty()
+            .MinimumLength(8)
+            .Matches("[A-Z]").WithMessage("Must contain uppercase")
+            .Matches("[a-z]").WithMessage("Must contain lowercase")
+            .Matches("[0-9]").WithMessage("Must contain digit");
+    }
+}
+
+// Registration
+builder.Services.AddValidatorsFromAssemblyContaining<CreateUserRequestValidator>();
+
+// Manual validation
+var result = await validator.ValidateAsync(request);
+if (!result.IsValid)
+{
+    var errors = result.Errors.Select(e => new { e.PropertyName, e.ErrorMessage });
+}
+
+DATA_ANNOTATIONS
+desc:attribute_validation|built_in
+public class CreateUserRequest
+{
+    [Required]
+    [StringLength(100, MinimumLength = 1)]
+    public string Name { get; init; } = "";
+    
+    [Required]
+    [EmailAddress]
+    public string Email { get; init; } = "";
+    
+    [Range(0, 150)]
+    public int? Age { get; init; }
+    
+    [Required]
+    [MinLength(8)]
+    [RegularExpression(@"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$")]
+    public string Password { get; init; } = "";
+}
+
+==============================================================================
+CACHING
+==============================================================================
+MEMORYCACHE
+desc:in_process_cache|built_in
+builder.Services.AddMemoryCache();
+
+public class UserService
+{
+    private readonly IMemoryCache _cache;
+    
+    public async Task<User?> GetUserAsync(int id)
+    {
+        var key = $"user_{id}";
+        
+        if (!_cache.TryGetValue(key, out User? user))
+        {
+            user = await _repository.GetAsync(id);
+            
+            var options = new MemoryCacheEntryOptions()
+                .SetSlidingExpiration(TimeSpan.FromMinutes(5))
+                .SetAbsoluteExpiration(TimeSpan.FromHours(1));
+            
+            _cache.Set(key, user, options);
+        }
+        
+        return user;
+    }
+}
+
+DISTRIBUTED_CACHE
+desc:Redis|SQL_Server|etc
+dotnet add package Microsoft.Extensions.Caching.StackExchangeRedis
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = "localhost:6379";
+    options.InstanceName = "MyApp_";
+});
+
+public class UserService
+{
+    private readonly IDistributedCache _cache;
+    
+    public async Task<User?> GetUserAsync(int id)
+    {
+        var key = $"user_{id}";
+        var cached = await _cache.GetStringAsync(key);
+        
+        if (cached is not null)
+            return JsonSerializer.Deserialize<User>(cached);
+        
+        var user = await _repository.GetAsync(id);
+        
+        await _cache.SetStringAsync(key, JsonSerializer.Serialize(user), new DistributedCacheEntryOptions
+        {
+            SlidingExpiration = TimeSpan.FromMinutes(5)
+        });
+        
+        return user;
+    }
+}
+
+FUSION_CACHE
+desc:hybrid_cache|advanced
+dotnet add package ZiggyCreatures.FusionCache
+
+builder.Services.AddFusionCache()
+    .WithDefaultEntryOptions(new FusionCacheEntryOptions
+    {
+        Duration = TimeSpan.FromMinutes(5),
+        FactorySoftTimeout = TimeSpan.FromMilliseconds(100)
+    });
+
+var user = await cache.GetOrSetAsync(
+    $"user_{id}",
+    async ct => await repository.GetAsync(id, ct),
+    options => options.SetDuration(TimeSpan.FromMinutes(10))
+);
+
+==============================================================================
+LOGGING_OBSERVABILITY
+==============================================================================
+SERILOG
+desc:structured_logging|popular
+dotnet add package Serilog.AspNetCore
+dotnet add package Serilog.Sinks.Console
+dotnet add package Serilog.Sinks.Seq
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Debug()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+    .WriteTo.Seq("http://localhost:5341")
+    .CreateLogger();
+
+builder.Host.UseSerilog();
+
+// Structured logging
+_logger.LogInformation("User {UserId} logged in from {IpAddress}", userId, ipAddress);
+
+// Scopes
+using (_logger.BeginScope(new Dictionary<string, object> { ["RequestId"] = requestId }))
+{
+    _logger.LogInformation("Processing request");
+}
+
+OPENTELEMETRY
+desc:distributed_tracing|metrics
+dotnet add package OpenTelemetry.Extensions.Hosting
+dotnet add package OpenTelemetry.Instrumentation.AspNetCore
+dotnet add package OpenTelemetry.Exporter.Jaeger
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddEntityFrameworkCoreInstrumentation()
+        .AddJaegerExporter())
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddPrometheusExporter());
+
+==============================================================================
+RESILIENCE
+==============================================================================
+POLLY
+desc:resilience_patterns
+dotnet add package Polly
+dotnet add package Microsoft.Extensions.Http.Polly
+
+// Retry
+var retryPolicy = Policy
+    .Handle<HttpRequestException>()
+    .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+
+// Circuit breaker
+var circuitBreakerPolicy = Policy
+    .Handle<HttpRequestException>()
+    .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30));
+
+// Combined
+var policyWrap = Policy.WrapAsync(retryPolicy, circuitBreakerPolicy);
+
+var result = await policyWrap.ExecuteAsync(async () =>
+{
+    return await httpClient.GetAsync(url);
+});
+
+// With HttpClientFactory
+builder.Services.AddHttpClient<IUserApi>()
+    .AddPolicyHandler(GetRetryPolicy())
+    .AddPolicyHandler(GetCircuitBreakerPolicy());
+
+static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
+{
+    return HttpPolicyExtensions
+        .HandleTransientHttpError()
+        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+}
+
+==============================================================================
+TESTING
+==============================================================================
+XUNIT
+desc:testing_framework|popular
+dotnet add package xunit
+dotnet add package xunit.runner.visualstudio
+
+public class UserServiceTests
+{
+    [Fact]
+    public async Task GetUser_ReturnsUser_WhenExists()
+    {
+        // Arrange
+        var repository = new Mock<IUserRepository>();
+        repository.Setup(r => r.GetAsync(1, default))
+            .ReturnsAsync(new User { Id = 1, Name = "John" });
+        
+        var service = new UserService(repository.Object);
+        
+        // Act
+        var user = await service.GetUserAsync(1);
+        
+        // Assert
+        Assert.NotNull(user);
+        Assert.Equal("John", user.Name);
+    }
+    
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("test", false)]
+    [InlineData("test@example.com", true)]
+    public void IsValidEmail_ReturnsExpected(string email, bool expected)
+    {
+        var result = EmailValidator.IsValid(email);
+        Assert.Equal(expected, result);
+    }
+}
+
+NUNIT
+desc:testing_framework|alternative
+[TestFixture]
+public class UserServiceTests
+{
+    [Test]
+    public async Task GetUser_ReturnsUser()
+    {
+        // ...
+        Assert.That(user, Is.Not.Null);
+        Assert.That(user.Name, Is.EqualTo("John"));
+    }
+    
+    [TestCase("", false)]
+    [TestCase("test@example.com", true)]
+    public void IsValidEmail(string email, bool expected)
+    {
+        Assert.That(EmailValidator.IsValid(email), Is.EqualTo(expected));
+    }
+}
+
+MOOSE
+desc:mocking_framework
+dotnet add package Moq
+
+var mock = new Mock<IUserRepository>();
+
+mock.Setup(r => r.GetAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+    .ReturnsAsync(new User { Id = 1, Name = "John" });
+
+mock.Setup(r => r.ExistsAsync(It.Is<string>(e => e.Contains("@")), default))
+    .ReturnsAsync(true);
+
+mock.Verify(r => r.GetAsync(1, default), Times.Once);
+
+NSUBSTITUTE
+desc:mocking_framework|friendly_syntax
+dotnet add package NSubstitute
+
+var repository = Substitute.For<IUserRepository>();
+repository.GetAsync(1, default).Returns(new User { Id = 1 });
+
+await repository.Received(1).GetAsync(1, default);
+
+FLUENT_ASSERTIONS
+desc:fluent_assertions
+dotnet add package FluentAssertions
+
+user.Should().NotBeNull();
+user.Name.Should().Be("John");
+user.Age.Should().BeInRange(18, 65);
+users.Should().HaveCount(3);
+users.Should().Contain(u => u.Name == "John");
+action.Should().Throw<ArgumentException>()
+    .WithMessage("*invalid*");
+
+TESTCONTAINERS
+desc:Docker_for_tests
+dotnet add package Testcontainers.PostgreSql
+
+public class DatabaseTests : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
+        .WithImage("postgres:15")
+        .Build();
+    
+    public async Task InitializeAsync() => await _postgres.StartAsync();
+    public async Task DisposeAsync() => await _postgres.DisposeAsync();
+    
+    [Fact]
+    public async Task Test()
+    {
+        var connectionString = _postgres.GetConnectionString();
+        // Test with real database
+    }
+}
+
+==============================================================================
+UTILITIES
+==============================================================================
+AUTOMAPPER
+desc:object_mapping
+dotnet add package AutoMapper
+dotnet add package AutoMapper.Extensions.Microsoft.DependencyInjection
+
+public class UserProfile : Profile
+{
+    public UserProfile()
+    {
+        CreateMap<User, UserDto>();
+        CreateMap<CreateUserRequest, User>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAt, opt => opt.MapFrom(_ => DateTime.UtcNow));
+    }
+}
+
+builder.Services.AddAutoMapper(typeof(Program));
+
+// Usage
+var dto = mapper.Map<UserDto>(user);
+
+MAPPERLY
+desc:source_generated_mapping|fast
+dotnet add package Riok.Mapperly
+
+[Mapper]
+public partial class UserMapper
+{
+    public partial UserDto ToDto(User user);
+    public partial User ToEntity(CreateUserRequest request);
+}
+
+// Generated at compile time - no reflection
+
+BOGUS
+desc:fake_data_generation
+dotnet add package Bogus
+
+var faker = new Faker<User>()
+    .RuleFor(u => u.Name, f => f.Name.FullName())
+    .RuleFor(u => u.Email, f => f.Internet.Email())
+    .RuleFor(u => u.Age, f => f.Random.Int(18, 65));
+
+var user = faker.Generate();
+var users = faker.Generate(100);
+
+HUMANIZER
+desc:string_manipulation|humanization
+dotnet add package Humanizer
+
+"PascalCase".Humanize()  // "Pascal case"
+DateTime.UtcNow.AddHours(-2).Humanize()  // "2 hours ago"
+1.ToWords()  // "one"
+3.ToOrdinalWords()  // "third"
+"user".Pluralize()  // "users"
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB:MinimalAPIs|Carter|FastEndpoints
+ORM:EFCore|Dapper|Marten
+MESSAGING:MassTransit|NServiceBus|MediatR
+HTTP:HttpClient|Refit|Flurl
+VALIDATION:FluentValidation|DataAnnotations
+CACHE:MemoryCache|Redis|FusionCache
+LOGGING:Serilog|OpenTelemetry
+RESILIENCE:Polly
+TESTING:xUnit|NUnit|Moq|NSubstitute|FluentAssertions
+UTILITIES:AutoMapper|Mapperly|Bogus|Humanizer

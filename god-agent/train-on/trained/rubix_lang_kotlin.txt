@@ -1,0 +1,829 @@
+# RUBIX LANGUAGE: KOTLIN
+# VERSION: 2.0+ (2024)
+# HISTORY: 2011_JetBrains→1.0_2016→Android_Official_2017→1.3_Coroutines_2018→1.4_2020→2.0_K2_Compiler_2024
+# PHILOSOPHY: concise|safe|interoperable|multiplatform
+
+==============================================================================
+SETUP_ENVIRONMENT
+==============================================================================
+# Installation (or via IDE)
+brew install kotlin                # macOS
+sdk install kotlin                 # SDKMAN
+
+# Compile and run
+kotlinc hello.kt -include-runtime -d hello.jar
+java -jar hello.jar
+
+# REPL
+kotlinc-jvm
+
+# Gradle project (build.gradle.kts)
+plugins {
+    kotlin("jvm") version "2.0.0"
+    application
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    testImplementation(kotlin("test"))
+}
+
+application {
+    mainClass.set("MainKt")
+}
+
+# Project structure
+project/
+├── build.gradle.kts
+├── settings.gradle.kts
+├── src/
+│   ├── main/
+│   │   └── kotlin/
+│   └── test/
+│       └── kotlin/
+└── gradle/
+
+==============================================================================
+BASIC_TYPES
+==============================================================================
+# Numbers
+val int: Int = 42
+val long: Long = 42L
+val short: Short = 42
+val byte: Byte = 42
+val double: Double = 3.14
+val float: Float = 3.14f
+
+# Underscores for readability
+val million = 1_000_000
+val hexBytes = 0xFF_EC_DE_5E
+
+# Booleans
+val flag: Boolean = true
+
+# Characters
+val char: Char = 'A'
+
+# Strings
+val str: String = "Hello"
+
+# Arrays
+val intArray: IntArray = intArrayOf(1, 2, 3)
+val array: Array<String> = arrayOf("a", "b", "c")
+
+# Type inference
+val inferred = 42              // Int
+val inferredString = "Hello"   // String
+
+# Explicit conversions (no implicit widening)
+val i: Int = 42
+val l: Long = i.toLong()
+val d: Double = i.toDouble()
+val s: String = i.toString()
+
+# Nullable types
+val nullable: String? = null
+val nonNull: String = "value"
+
+# Any (root of class hierarchy)
+val any: Any = 42
+
+# Unit (void equivalent)
+fun printHello(): Unit {
+    println("Hello")
+}
+
+# Nothing (function never returns)
+fun fail(message: String): Nothing {
+    throw IllegalArgumentException(message)
+}
+
+==============================================================================
+NULL_SAFETY
+==============================================================================
+# Nullable declaration
+var name: String? = null
+
+# Safe call
+val length: Int? = name?.length
+
+# Elvis operator
+val length: Int = name?.length ?: 0
+val name: String = nullable ?: throw IllegalArgumentException()
+
+# Not-null assertion
+val length: Int = name!!.length  // Throws if null
+
+# Safe casts
+val str: String? = value as? String
+
+# Let (execute block if not null)
+name?.let {
+    println("Name is $it")
+}
+
+# Also, apply, run, with
+name?.also { println(it) }
+name?.apply { /* 'this' is name */ }
+name?.run { length }  // Returns last expression
+with(name) { length }
+
+# Platform types (Java interop)
+// String! means compiler doesn't know nullability
+val javaString: String = javaObject.getString()  // May throw NPE
+
+==============================================================================
+STRINGS
+==============================================================================
+# String templates
+val name = "John"
+val greeting = "Hello, $name"
+val complex = "Length: ${name.length}"
+
+# Raw strings
+val text = """
+    Line 1
+    Line 2
+    Line 3
+""".trimIndent()
+
+# Common operations
+str.length
+str.isEmpty()
+str.isNotEmpty()
+str.isBlank()
+str.isNotBlank()
+str.uppercase()
+str.lowercase()
+str.trim()
+str.split(",")
+str.replace("old", "new")
+str.substring(0, 5)
+str.contains("sub")
+str.startsWith("pre")
+str.endsWith("suf")
+str.toIntOrNull()
+str.toDoubleOrNull()
+str.repeat(3)
+str.reversed()
+str.take(5)
+str.drop(2)
+
+# String building
+val result = buildString {
+    append("Hello")
+    appendLine()
+    append("World")
+}
+
+==============================================================================
+COLLECTIONS
+==============================================================================
+# Immutable (read-only)
+val list: List<Int> = listOf(1, 2, 3)
+val set: Set<Int> = setOf(1, 2, 3)
+val map: Map<String, Int> = mapOf("a" to 1, "b" to 2)
+
+# Mutable
+val mutableList: MutableList<Int> = mutableListOf(1, 2, 3)
+val mutableSet: MutableSet<Int> = mutableSetOf(1, 2, 3)
+val mutableMap: MutableMap<String, Int> = mutableMapOf("a" to 1)
+
+# ArrayList, HashMap, HashSet
+val arrayList = ArrayList<Int>()
+val hashMap = HashMap<String, Int>()
+val hashSet = HashSet<Int>()
+
+# Operations
+list[0]                     // Get by index
+list.first()
+list.last()
+list.firstOrNull()
+list.lastOrNull()
+list.getOrNull(10)
+list.getOrElse(10) { 0 }
+list.size
+list.isEmpty()
+list.isNotEmpty()
+list.contains(2)
+list.indexOf(2)
+list.lastIndexOf(2)
+
+# Mutable operations
+mutableList.add(4)
+mutableList.addAll(listOf(5, 6))
+mutableList.remove(3)
+mutableList.removeAt(0)
+mutableList.clear()
+mutableList[0] = 10
+
+# Transformations
+list.map { it * 2 }
+list.mapNotNull { it.toIntOrNull() }
+list.mapIndexed { index, value -> "$index: $value" }
+list.filter { it > 2 }
+list.filterNot { it > 2 }
+list.filterNotNull()
+list.filterIsInstance<String>()
+list.flatMap { listOf(it, it * 2) }
+list.flatten()
+list.distinct()
+list.distinctBy { it.name }
+
+# Aggregation
+list.reduce { acc, i -> acc + i }
+list.fold(0) { acc, i -> acc + i }
+list.sum()
+list.average()
+list.count()
+list.count { it > 2 }
+list.maxOrNull()
+list.minOrNull()
+list.maxByOrNull { it.length }
+list.minByOrNull { it.length }
+
+# Finding
+list.find { it > 2 }
+list.findLast { it > 2 }
+list.first { it > 2 }
+list.firstOrNull { it > 2 }
+list.any { it > 2 }
+list.all { it > 0 }
+list.none { it < 0 }
+
+# Grouping
+list.groupBy { it % 2 }
+list.partition { it > 2 }
+list.chunked(3)
+list.windowed(3)
+list.associate { it to it.toString() }
+list.associateBy { it.id }
+list.associateWith { it.toString() }
+
+# Sorting
+list.sorted()
+list.sortedDescending()
+list.sortedBy { it.name }
+list.sortedByDescending { it.age }
+list.reversed()
+list.shuffled()
+
+# Conversion
+list.toList()
+list.toMutableList()
+list.toSet()
+list.toTypedArray()
+map.toList()
+
+# Sequences (lazy evaluation)
+list.asSequence()
+    .filter { it > 2 }
+    .map { it * 2 }
+    .take(5)
+    .toList()
+
+==============================================================================
+CONTROL_FLOW
+==============================================================================
+# If expression
+val max = if (a > b) a else b
+
+val result = if (condition) {
+    // ...
+    value1
+} else {
+    // ...
+    value2
+}
+
+# When expression
+val result = when (x) {
+    1 -> "one"
+    2, 3 -> "two or three"
+    in 4..10 -> "four to ten"
+    !in 11..20 -> "not in range"
+    is String -> "is string"
+    else -> "default"
+}
+
+# When without argument
+when {
+    x < 0 -> println("negative")
+    x == 0 -> println("zero")
+    else -> println("positive")
+}
+
+# When with subject
+val result = when (val response = getResponse()) {
+    is Success -> response.data
+    is Error -> throw response.exception
+}
+
+# For loop
+for (i in 1..10) { }           // 1 to 10 inclusive
+for (i in 1 until 10) { }      // 1 to 9
+for (i in 10 downTo 1) { }     // 10 to 1
+for (i in 1..10 step 2) { }    // 1, 3, 5, 7, 9
+
+for (item in list) { }
+for ((index, item) in list.withIndex()) { }
+for ((key, value) in map) { }
+
+# While
+while (condition) { }
+do { } while (condition)
+
+# Break and continue
+for (i in 1..10) {
+    if (i == 5) break
+    if (i % 2 == 0) continue
+}
+
+# Labels
+outer@ for (i in 1..10) {
+    for (j in 1..10) {
+        if (condition) break@outer
+    }
+}
+
+==============================================================================
+FUNCTIONS
+==============================================================================
+# Basic function
+fun greet(name: String): String {
+    return "Hello, $name"
+}
+
+# Single-expression function
+fun greet(name: String): String = "Hello, $name"
+fun greet(name: String) = "Hello, $name"  // Return type inferred
+
+# Default parameters
+fun greet(name: String = "World") = "Hello, $name"
+
+# Named arguments
+fun createUser(name: String, email: String, age: Int = 0) { }
+createUser(name = "John", email = "john@example.com")
+createUser(email = "john@example.com", name = "John")
+
+# Varargs
+fun sum(vararg numbers: Int): Int = numbers.sum()
+sum(1, 2, 3, 4, 5)
+sum(*intArrayOf(1, 2, 3))  // Spread operator
+
+# Infix functions
+infix fun Int.times(str: String) = str.repeat(this)
+3 times "Hello "  // "Hello Hello Hello "
+
+# Extension functions
+fun String.addExclamation() = "$this!"
+"Hello".addExclamation()  // "Hello!"
+
+fun <T> List<T>.secondOrNull(): T? = if (size >= 2) this[1] else null
+
+# Higher-order functions
+fun operate(a: Int, b: Int, operation: (Int, Int) -> Int): Int {
+    return operation(a, b)
+}
+operate(2, 3) { x, y -> x + y }
+
+# Lambda expressions
+val sum: (Int, Int) -> Int = { a, b -> a + b }
+val double: (Int) -> Int = { it * 2 }
+
+# Trailing lambda
+list.map { it * 2 }
+list.filter { it > 0 }
+
+# Function references
+fun isPositive(n: Int) = n > 0
+list.filter(::isPositive)
+list.map(Int::toString)
+list.forEach(::println)
+
+# Local functions
+fun outer() {
+    fun inner() { }
+    inner()
+}
+
+# Inline functions
+inline fun measure(block: () -> Unit) {
+    val start = System.currentTimeMillis()
+    block()
+    println("Time: ${System.currentTimeMillis() - start}ms")
+}
+
+==============================================================================
+CLASSES
+==============================================================================
+# Basic class
+class User(val name: String, val email: String) {
+    var age: Int = 0
+    
+    fun greet() = "Hello, I'm $name"
+}
+
+val user = User("John", "john@example.com")
+
+# Primary constructor with init block
+class User(name: String) {
+    val name: String
+    
+    init {
+        this.name = name.trim()
+    }
+}
+
+# Secondary constructors
+class User {
+    val name: String
+    val email: String
+    
+    constructor(name: String) {
+        this.name = name
+        this.email = ""
+    }
+    
+    constructor(name: String, email: String) {
+        this.name = name
+        this.email = email
+    }
+}
+
+# Properties
+class User {
+    var name: String = ""
+        get() = field.uppercase()
+        set(value) {
+            field = value.trim()
+        }
+    
+    val isValid: Boolean
+        get() = name.isNotEmpty()
+    
+    lateinit var email: String  // Late initialization
+    
+    val computed by lazy { expensiveOperation() }  // Lazy
+}
+
+# Inheritance
+open class Animal(val name: String) {
+    open fun sound() = "..."
+}
+
+class Dog(name: String) : Animal(name) {
+    override fun sound() = "Woof!"
+}
+
+# Abstract class
+abstract class Shape {
+    abstract val area: Double
+    abstract fun draw()
+    
+    fun describe() = "Shape with area $area"
+}
+
+# Interfaces
+interface Drawable {
+    fun draw()
+    val color: String  // Abstract property
+    fun describe() = "Drawable: $color"  // Default implementation
+}
+
+class Circle : Shape(), Drawable {
+    override val area: Double = 0.0
+    override val color: String = "red"
+    override fun draw() { }
+}
+
+# Visibility modifiers
+public     // Default, visible everywhere
+private    // Visible in file/class
+protected  // Visible in class and subclasses
+internal   // Visible in module
+
+==============================================================================
+DATA_CLASSES
+==============================================================================
+# Data class
+data class User(
+    val name: String,
+    val email: String,
+    val age: Int = 0
+)
+
+# Auto-generated: equals(), hashCode(), toString(), copy(), componentN()
+
+val user = User("John", "john@example.com", 30)
+val copy = user.copy(name = "Jane")
+
+// Destructuring
+val (name, email, age) = user
+
+// Component functions
+val name = user.component1()
+val email = user.component2()
+
+==============================================================================
+SEALED_CLASSES_INTERFACES
+==============================================================================
+# Sealed class (restricted hierarchy)
+sealed class Result<out T> {
+    data class Success<T>(val data: T) : Result<T>()
+    data class Error(val message: String) : Result<Nothing>()
+    data object Loading : Result<Nothing>()
+}
+
+# Exhaustive when
+fun handle(result: Result<String>) = when (result) {
+    is Result.Success -> "Data: ${result.data}"
+    is Result.Error -> "Error: ${result.message}"
+    Result.Loading -> "Loading..."
+}
+
+# Sealed interface
+sealed interface Operation {
+    data class Add(val value: Int) : Operation
+    data class Multiply(val value: Int) : Operation
+    data object Clear : Operation
+}
+
+==============================================================================
+OBJECT_COMPANION
+==============================================================================
+# Object declaration (singleton)
+object Database {
+    fun connect() { }
+    val connection: Connection by lazy { createConnection() }
+}
+
+Database.connect()
+
+# Object expression (anonymous object)
+val listener = object : ClickListener {
+    override fun onClick() { }
+}
+
+# Companion object
+class User private constructor(val name: String) {
+    companion object Factory {
+        fun create(name: String) = User(name)
+        const val MAX_AGE = 150
+    }
+}
+
+User.create("John")
+User.MAX_AGE
+
+# Companion object extensions
+fun User.Companion.fromJson(json: String): User { }
+User.fromJson("{...}")
+
+==============================================================================
+ENUM_CLASSES
+==============================================================================
+# Basic enum
+enum class Direction {
+    NORTH, SOUTH, EAST, WEST
+}
+
+# Enum with properties
+enum class Color(val rgb: Int) {
+    RED(0xFF0000),
+    GREEN(0x00FF00),
+    BLUE(0x0000FF);
+    
+    fun toHex() = "#${rgb.toString(16)}"
+}
+
+# Enum methods
+Color.RED.name         // "RED"
+Color.RED.ordinal      // 0
+Color.valueOf("RED")   // Color.RED
+Color.entries          // List of all values
+
+# When with enum
+when (color) {
+    Color.RED -> "red"
+    Color.GREEN -> "green"
+    Color.BLUE -> "blue"
+}
+
+==============================================================================
+VALUE_CLASSES
+==============================================================================
+# Value class (inline class)
+@JvmInline
+value class Password(private val value: String) {
+    init {
+        require(value.length >= 8) { "Password too short" }
+    }
+    
+    val length: Int get() = value.length
+}
+
+val password = Password("secret123")
+
+# Prevents type confusion
+@JvmInline
+value class UserId(val id: Long)
+
+@JvmInline
+value class OrderId(val id: Long)
+
+fun processUser(userId: UserId) { }
+// processUser(OrderId(123))  // Compile error!
+
+==============================================================================
+DELEGATION
+==============================================================================
+# Interface delegation
+interface Printer {
+    fun print(message: String)
+}
+
+class ConsolePrinter : Printer {
+    override fun print(message: String) = println(message)
+}
+
+class LoggingPrinter(private val printer: Printer) : Printer by printer {
+    override fun print(message: String) {
+        println("[LOG] $message")
+        printer.print(message)
+    }
+}
+
+# Property delegation
+class User {
+    var name: String by Delegates.observable("") { _, old, new ->
+        println("Changed from $old to $new")
+    }
+    
+    var age: Int by Delegates.vetoable(0) { _, _, new ->
+        new >= 0
+    }
+    
+    val lazyValue: String by lazy {
+        println("Computing...")
+        "Computed"
+    }
+}
+
+# Map delegation
+class User(map: Map<String, Any?>) {
+    val name: String by map
+    val age: Int by map
+}
+
+val user = User(mapOf("name" to "John", "age" to 30))
+
+==============================================================================
+GENERICS
+==============================================================================
+# Generic class
+class Box<T>(val value: T)
+
+# Generic function
+fun <T> identity(value: T): T = value
+
+# Constraints
+fun <T : Comparable<T>> sort(list: List<T>) { }
+
+# Multiple constraints
+fun <T> process(value: T) where T : Comparable<T>, T : Serializable { }
+
+# Variance
+class Producer<out T>(val value: T)      // Covariant (out)
+class Consumer<in T> { fun consume(value: T) {} }  // Contravariant (in)
+
+// out = can only return T (producer)
+// in = can only accept T (consumer)
+
+# Star projection
+fun printAll(list: List<*>) {
+    list.forEach { println(it) }
+}
+
+# Reified type parameters
+inline fun <reified T> isInstance(value: Any): Boolean {
+    return value is T
+}
+
+inline fun <reified T> parseJson(json: String): T {
+    return gson.fromJson(json, T::class.java)
+}
+
+==============================================================================
+COROUTINES_BASICS
+==============================================================================
+# Launch (fire and forget)
+val job = GlobalScope.launch {
+    delay(1000)
+    println("Done")
+}
+job.join()
+
+# Async (returns result)
+val deferred = GlobalScope.async {
+    delay(1000)
+    "Result"
+}
+val result = deferred.await()
+
+# runBlocking (bridge blocking/non-blocking)
+runBlocking {
+    launch { delay(1000) }
+    println("Waiting...")
+}
+
+# Structured concurrency
+suspend fun main() = coroutineScope {
+    launch { 
+        delay(1000)
+        println("Task 1")
+    }
+    launch {
+        delay(500)
+        println("Task 2")
+    }
+}
+
+# Suspend functions
+suspend fun fetchUser(id: Int): User {
+    delay(1000)  // Non-blocking delay
+    return User("John")
+}
+
+# Concurrent operations
+suspend fun loadData() = coroutineScope {
+    val user = async { fetchUser(1) }
+    val orders = async { fetchOrders(1) }
+    Pair(user.await(), orders.await())
+}
+
+==============================================================================
+SCOPE_FUNCTIONS
+==============================================================================
+# let - execute block with 'it', return block result
+nullable?.let { 
+    println(it) 
+}
+val length = str.let { it.length }
+
+# run - execute block with 'this', return block result
+val result = service.run {
+    connect()
+    query("SELECT * FROM users")
+}
+
+# with - like run but object as argument
+val result = with(builder) {
+    setName("John")
+    setAge(30)
+    build()
+}
+
+# apply - execute block with 'this', return receiver
+val user = User().apply {
+    name = "John"
+    email = "john@example.com"
+}
+
+# also - execute block with 'it', return receiver
+val user = User("John").also {
+    println("Created user: $it")
+}
+
+# takeIf / takeUnless
+val even = number.takeIf { it % 2 == 0 }
+val odd = number.takeUnless { it % 2 == 0 }
+
+==============================================================================
+KOTLIN_2_FEATURES
+==============================================================================
+# K2 compiler (faster, smarter)
+# Smart cast improvements
+# Stable context receivers (preview)
+
+context(Logger)
+fun User.logCreation() {
+    log("User created: $name")
+}
+
+# Data objects
+data object Singleton {
+    val value = 42
+}
+
+# Operator improvements
+# ..< range operator (until)
+for (i in 0..<10) { }
+
+# Enum entries property
+enum class Color { RED, GREEN, BLUE }
+Color.entries  // List<Color>

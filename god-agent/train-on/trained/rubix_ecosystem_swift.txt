@@ -1,0 +1,696 @@
+# RUBIX ECOSYSTEM: SWIFT_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (beyond iOS SwiftUI - see rubix_mobile_swift.txt)
+# PHILOSOPHY: safe|fast|expressive|server_side_swift
+
+==============================================================================
+WEB_FRAMEWORKS
+==============================================================================
+VAPOR
+desc:server_side_Swift|most_popular
+site:vapor.codes
+use_for:REST_APIs|web_apps|real_time
++async_await:native
++Fluent_ORM:included
++community:large
+
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/vapor/vapor.git", from: "4.0.0"),
+    .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
+    .package(url: "https://github.com/vapor/fluent-postgres-driver.git", from: "2.0.0"),
+]
+
+// main.swift
+import Vapor
+
+@main
+struct App {
+    static func main() async throws {
+        var env = try Environment.detect()
+        let app = Application(env)
+        defer { app.shutdown() }
+        
+        try configure(app)
+        try app.run()
+    }
+}
+
+// configure.swift
+func configure(_ app: Application) throws {
+    app.databases.use(.postgres(
+        hostname: "localhost",
+        username: "vapor",
+        password: "password",
+        database: "vapor"
+    ), as: .psql)
+    
+    app.migrations.add(CreateUser())
+    
+    try routes(app)
+}
+
+// routes.swift
+func routes(_ app: Application) throws {
+    app.get { req in
+        return "Hello, world!"
+    }
+    
+    app.get("users", ":id") { req -> User in
+        guard let id = req.parameters.get("id", as: UUID.self) else {
+            throw Abort(.badRequest)
+        }
+        guard let user = try await User.find(id, on: req.db) else {
+            throw Abort(.notFound)
+        }
+        return user
+    }
+    
+    app.post("users") { req -> User in
+        let create = try req.content.decode(CreateUserRequest.self)
+        let user = User(name: create.name, email: create.email)
+        try await user.save(on: req.db)
+        return user
+    }
+    
+    // Controller
+    try app.register(collection: UserController())
+}
+
+// UserController.swift
+struct UserController: RouteCollection {
+    func boot(routes: RoutesBuilder) throws {
+        let users = routes.grouped("users")
+        users.get(use: index)
+        users.post(use: create)
+        users.group(":id") { user in
+            user.get(use: show)
+            user.put(use: update)
+            user.delete(use: delete)
+        }
+    }
+    
+    func index(req: Request) async throws -> [User] {
+        try await User.query(on: req.db).all()
+    }
+    
+    func create(req: Request) async throws -> User {
+        let dto = try req.content.decode(CreateUserDTO.self)
+        let user = User(name: dto.name, email: dto.email)
+        try await user.save(on: req.db)
+        return user
+    }
+    
+    func show(req: Request) async throws -> User {
+        guard let user = try await User.find(req.parameters.get("id"), on: req.db) else {
+            throw Abort(.notFound)
+        }
+        return user
+    }
+}
+
+VAPOR_FLUENT_ORM
+desc:Vapor_database_ORM
+// Model
+final class User: Model, Content {
+    static let schema = "users"
+    
+    @ID(key: .id)
+    var id: UUID?
+    
+    @Field(key: "name")
+    var name: String
+    
+    @Field(key: "email")
+    var email: String
+    
+    @Timestamp(key: "created_at", on: .create)
+    var createdAt: Date?
+    
+    @Parent(key: "team_id")
+    var team: Team
+    
+    @Children(for: \.$user)
+    var posts: [Post]
+    
+    init() {}
+    
+    init(id: UUID? = nil, name: String, email: String) {
+        self.id = id
+        self.name = name
+        self.email = email
+    }
+}
+
+// Migration
+struct CreateUser: AsyncMigration {
+    func prepare(on database: Database) async throws {
+        try await database.schema("users")
+            .id()
+            .field("name", .string, .required)
+            .field("email", .string, .required)
+            .field("created_at", .datetime)
+            .unique(on: "email")
+            .create()
+    }
+    
+    func revert(on database: Database) async throws {
+        try await database.schema("users").delete()
+    }
+}
+
+// Queries
+let users = try await User.query(on: req.db)
+    .filter(\.$name == "John")
+    .sort(\.$createdAt, .descending)
+    .limit(10)
+    .all()
+
+let user = try await User.query(on: req.db)
+    .filter(\.$email == email)
+    .with(\.$team)
+    .with(\.$posts)
+    .first()
+
+VAPOR_AUTH
+desc:authentication_middleware
+// JWT
+import JWT
+
+app.jwt.signers.use(.hs256(key: "secret"))
+
+struct UserPayload: JWTPayload {
+    var sub: SubjectClaim
+    var exp: ExpirationClaim
+    
+    func verify(using signer: JWTSigner) throws {
+        try exp.verifyNotExpired()
+    }
+}
+
+// Protected route
+let protected = app.grouped(UserPayload.authenticator(), UserPayload.guardMiddleware())
+protected.get("me") { req -> User in
+    let payload = try req.auth.require(UserPayload.self)
+    // ...
+}
+
+// Session auth
+app.middleware.use(app.sessions.middleware)
+app.middleware.use(User.sessionAuthenticator())
+
+HUMMINGBIRD
+desc:lightweight_server_framework
+site:github.com/hummingbird-project/hummingbird
+use_for:microservices|lightweight_APIs
++modular:pick_components
++fast:performance_focused
+
+import Hummingbird
+
+let app = HBApplication()
+
+app.router.get("/") { request in
+    return "Hello, World!"
+}
+
+app.router.get("/users/:id") { request in
+    let id = request.parameters.get("id")
+    return "User \(id ?? "")"
+}
+
+try app.start()
+
+SMOKE
+desc:AWS_focused_framework|Amazon
+use_for:AWS_Lambda|serverless
+
+==============================================================================
+DATABASE
+==============================================================================
+SWIFT_NIO_POSTGRES
+desc:PostgreSQL_driver|async
+import PostgresNIO
+
+let connection = try await PostgresConnection.connect(
+    to: .init(host: "localhost", port: 5432),
+    username: "user",
+    password: "pass",
+    database: "db"
+)
+
+let rows = try await connection.query("SELECT * FROM users")
+for try await row in rows {
+    let name = row["name"].string
+}
+
+SWIFT_NIO_MYSQL
+desc:MySQL_driver|async
+
+MONGODB_SWIFT
+desc:MongoDB_driver
+import MongoDBVapor
+
+let client = try MongoClient("mongodb://localhost:27017")
+let db = client.db("myapp")
+let users = db.collection("users", withType: User.self)
+
+let user = try await users.findOne(["email": email])
+try await users.insertOne(user)
+
+REDIS_SWIFT
+desc:Redis_driver|Vapor
+import Redis
+
+app.redis.configuration = try RedisConfiguration(hostname: "localhost")
+
+// Usage
+try await req.redis.set("key", to: "value")
+let value = try await req.redis.get("key", as: String.self)
+
+==============================================================================
+HTTP_CLIENTS
+==============================================================================
+ASYNC_HTTP_CLIENT
+desc:Swift_NIO_HTTP_client
+import AsyncHTTPClient
+
+let client = HTTPClient(eventLoopGroupProvider: .singleton)
+defer { try? client.shutdown() }
+
+var request = HTTPClientRequest(url: "https://api.example.com/users")
+request.method = .GET
+request.headers.add(name: "Authorization", value: "Bearer \(token)")
+
+let response = try await client.execute(request, timeout: .seconds(30))
+let body = try await response.body.collect(upTo: 1024 * 1024)
+let users = try JSONDecoder().decode([User].self, from: body)
+
+// POST with body
+var postRequest = HTTPClientRequest(url: "https://api.example.com/users")
+postRequest.method = .POST
+postRequest.headers.add(name: "Content-Type", value: "application/json")
+postRequest.body = .bytes(try JSONEncoder().encode(newUser))
+
+URLSESSION
+desc:Foundation_HTTP|Apple
+let url = URL(string: "https://api.example.com/users")!
+var request = URLRequest(url: url)
+request.httpMethod = "GET"
+
+let (data, response) = try await URLSession.shared.data(for: request)
+let users = try JSONDecoder().decode([User].self, from: data)
+
+ALAMOFIRE
+desc:elegant_HTTP|iOS_popular
+import Alamofire
+
+AF.request("https://api.example.com/users")
+    .validate()
+    .responseDecodable(of: [User].self) { response in
+        switch response.result {
+        case .success(let users):
+            print(users)
+        case .failure(let error):
+            print(error)
+        }
+    }
+
+// Async
+let users = try await AF.request("https://api.example.com/users")
+    .serializingDecodable([User].self)
+    .value
+
+==============================================================================
+SERIALIZATION
+==============================================================================
+CODABLE
+desc:built_in_serialization|Swift_standard
+struct User: Codable {
+    let id: UUID
+    let name: String
+    let email: String
+    let createdAt: Date
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case email
+        case createdAt = "created_at"
+    }
+}
+
+// JSON
+let encoder = JSONEncoder()
+encoder.dateEncodingStrategy = .iso8601
+encoder.keyEncodingStrategy = .convertToSnakeCase
+let data = try encoder.encode(user)
+
+let decoder = JSONDecoder()
+decoder.dateDecodingStrategy = .iso8601
+decoder.keyDecodingStrategy = .convertFromSnakeCase
+let user = try decoder.decode(User.self, from: data)
+
+PROPERTY_WRAPPERS_CODABLE
+@propertyWrapper
+struct ISO8601Date: Codable {
+    var wrappedValue: Date
+    
+    init(wrappedValue: Date) {
+        self.wrappedValue = wrappedValue
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let string = try container.decode(String.self)
+        guard let date = ISO8601DateFormatter().date(from: string) else {
+            throw DecodingError.dataCorruptedError(...)
+        }
+        wrappedValue = date
+    }
+}
+
+==============================================================================
+ASYNC_CONCURRENCY
+==============================================================================
+SWIFT_CONCURRENCY
+desc:built_in_async|structured
+// async/await
+func fetchUser(id: UUID) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\(id)")!
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return try JSONDecoder().decode(User.self, from: data)
+}
+
+// Task
+Task {
+    let user = try await fetchUser(id: id)
+    print(user)
+}
+
+// Parallel
+async let user = fetchUser(id: userId)
+async let orders = fetchOrders(userId: userId)
+let (u, o) = try await (user, orders)
+
+// TaskGroup
+let users = try await withThrowingTaskGroup(of: User.self) { group in
+    for id in userIds {
+        group.addTask {
+            try await fetchUser(id: id)
+        }
+    }
+    
+    var results: [User] = []
+    for try await user in group {
+        results.append(user)
+    }
+    return results
+}
+
+// Actor
+actor UserCache {
+    private var cache: [UUID: User] = [:]
+    
+    func get(_ id: UUID) -> User? {
+        cache[id]
+    }
+    
+    func set(_ user: User) {
+        cache[user.id] = user
+    }
+}
+
+let cache = UserCache()
+await cache.set(user)
+let cached = await cache.get(id)
+
+SWIFT_NIO
+desc:event_driven_networking|Apple
+site:github.com/apple/swift-nio
+use_for:high_performance_servers|protocols
++non_blocking:event_loop
++protocols:HTTP|WebSocket|custom
+
+import NIO
+import NIOHTTP1
+
+let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+defer { try? group.syncShutdownGracefully() }
+
+let bootstrap = ServerBootstrap(group: group)
+    .serverChannelOption(ChannelOptions.backlog, value: 256)
+    .childChannelInitializer { channel in
+        channel.pipeline.addHandlers([
+            HTTPServerPipelineHandler(),
+            MyHTTPHandler()
+        ])
+    }
+
+let channel = try bootstrap.bind(host: "localhost", port: 8080).wait()
+
+ASYNC_ALGORITHMS
+desc:async_sequence_operations
+import AsyncAlgorithms
+
+// Combine async sequences
+for await (a, b) in zip(sequenceA, sequenceB) { }
+
+// Merge
+for await value in merge(stream1, stream2) { }
+
+// Debounce
+for await value in values.debounce(for: .seconds(0.5)) { }
+
+// Chunks
+for await chunk in values.chunks(ofCount: 10) { }
+
+==============================================================================
+TESTING
+==============================================================================
+XCTEST
+desc:Apple_test_framework|built_in
+import XCTest
+@testable import MyApp
+
+final class UserServiceTests: XCTestCase {
+    var sut: UserService!
+    
+    override func setUp() {
+        super.setUp()
+        sut = UserService()
+    }
+    
+    override func tearDown() {
+        sut = nil
+        super.tearDown()
+    }
+    
+    func testCreateUser() async throws {
+        let user = try await sut.create(name: "John", email: "john@example.com")
+        
+        XCTAssertEqual(user.name, "John")
+        XCTAssertEqual(user.email, "john@example.com")
+    }
+    
+    func testCreateUserThrowsOnEmptyName() async {
+        do {
+            _ = try await sut.create(name: "", email: "test@example.com")
+            XCTFail("Expected error")
+        } catch {
+            XCTAssertTrue(error is ValidationError)
+        }
+    }
+}
+
+SWIFT_TESTING
+desc:new_test_framework|Swift_5.9+
+import Testing
+
+@Test func createUser() async throws {
+    let service = UserService()
+    let user = try await service.create(name: "John", email: "john@example.com")
+    
+    #expect(user.name == "John")
+    #expect(user.email == "john@example.com")
+}
+
+@Test(arguments: ["John", "Jane", "Bob"])
+func userNameIsValid(name: String) {
+    let user = User(name: name)
+    #expect(user.isValid)
+}
+
+@Suite struct UserTests {
+    let service = UserService()
+    
+    @Test func create() async throws { }
+    @Test func delete() async throws { }
+}
+
+VAPOR_TESTING
+desc:Vapor_test_utilities
+import XCTVapor
+
+final class UserTests: XCTestCase {
+    func testGetUser() async throws {
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        
+        try configure(app)
+        
+        try app.test(.GET, "users/1") { res in
+            XCTAssertEqual(res.status, .ok)
+            let user = try res.content.decode(User.self)
+            XCTAssertEqual(user.name, "John")
+        }
+    }
+    
+    func testCreateUser() async throws {
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        
+        try configure(app)
+        
+        let dto = CreateUserDTO(name: "John", email: "john@example.com")
+        
+        try app.test(.POST, "users", beforeRequest: { req in
+            try req.content.encode(dto)
+        }) { res in
+            XCTAssertEqual(res.status, .created)
+        }
+    }
+}
+
+QUICK_NIMBLE
+desc:BDD_testing|expressive
+import Quick
+import Nimble
+
+class UserSpec: QuickSpec {
+    override func spec() {
+        describe("User") {
+            var user: User!
+            
+            beforeEach {
+                user = User(name: "John")
+            }
+            
+            it("has a name") {
+                expect(user.name).to(equal("John"))
+            }
+            
+            context("when name is empty") {
+                it("is invalid") {
+                    user = User(name: "")
+                    expect(user.isValid).to(beFalse())
+                }
+            }
+        }
+    }
+}
+
+MOCKINGBIRD
+desc:mocking_framework
+import Mockingbird
+
+let mock = mock(UserRepository.self)
+given(mock.findById(any())).willReturn(user)
+
+let service = UserService(repository: mock)
+let result = try await service.getUser(id: 1)
+
+verify(mock.findById(1)).wasCalled()
+
+==============================================================================
+UTILITIES
+==============================================================================
+SWIFT_ARGUMENT_PARSER
+desc:CLI_argument_parsing|Apple
+import ArgumentParser
+
+@main
+struct MyCommand: ParsableCommand {
+    @Argument(help: "The input file")
+    var input: String
+    
+    @Option(name: .shortAndLong, help: "Output file")
+    var output: String?
+    
+    @Flag(help: "Enable verbose output")
+    var verbose = false
+    
+    func run() throws {
+        if verbose {
+            print("Processing \(input)...")
+        }
+    }
+}
+
+SWIFT_LOG
+desc:logging_API|Apple
+import Logging
+
+let logger = Logger(label: "com.example.myapp")
+
+logger.info("Starting application")
+logger.error("Failed to connect", metadata: ["host": "\(host)"])
+logger.debug("Debug info", metadata: ["request_id": "\(requestId)"])
+
+// Custom handler
+LoggingSystem.bootstrap { label in
+    var handler = StreamLogHandler.standardOutput(label: label)
+    handler.logLevel = .debug
+    return handler
+}
+
+SWIFT_METRICS
+desc:metrics_API|Apple
+import Metrics
+
+let counter = Counter(label: "requests_total")
+counter.increment()
+
+let gauge = Gauge(label: "active_connections")
+gauge.record(42)
+
+let timer = Timer(label: "request_duration")
+timer.recordNanoseconds(duration)
+
+SWIFT_CRYPTO
+desc:cryptography|Apple
+import Crypto
+
+// Hashing
+let digest = SHA256.hash(data: data)
+
+// HMAC
+let key = SymmetricKey(size: .bits256)
+let signature = HMAC<SHA256>.authenticationCode(for: data, using: key)
+
+// Encryption
+let sealedBox = try AES.GCM.seal(data, using: key)
+let decrypted = try AES.GCM.open(sealedBox, using: key)
+
+SWIFT_COLLECTIONS
+desc:additional_collections|Apple
+import Collections
+
+let deque = Deque<Int>()
+deque.append(1)
+deque.prepend(0)
+
+let orderedSet = OrderedSet<String>()
+let orderedDict = OrderedDictionary<String, Int>()
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+WEB:Vapor|Hummingbird|Smoke
+DATABASE:Fluent|PostgresNIO|MongoDBSwift
+HTTP:AsyncHTTPClient|URLSession|Alamofire
+SERIALIZATION:Codable|JSONEncoder
+ASYNC:async/await|SwiftNIO|AsyncAlgorithms
+TESTING:XCTest|SwiftTesting|Quick/Nimble
+CLI:ArgumentParser
+LOGGING:swift-log|swift-metrics
+CRYPTO:swift-crypto

@@ -51,6 +51,7 @@ import { AutoRecall, type RecallResult, type RecalledMemory } from './memory/Aut
 import { SelfKnowledgeBootstrap } from './bootstrap/SelfKnowledgeBootstrap.js';
 import { SelfKnowledgeCompressor } from './prompts/SelfKnowledgeCompressor.js';
 import { createRuntimeContext } from './context/RuntimeContext.js';
+import { getSanitizer } from './core/OutputSanitizer.js';
 
 // ==========================================
 // Tool Input Schemas (Zod)
@@ -10105,6 +10106,9 @@ god_comms_setup mode="set" channel="email" config={
 // ==========================================
 // Main Entry
 // ==========================================
+
+// Initialize output sanitizer to prevent secret exposure in console output
+getSanitizer().wrapConsole();
 
 const server = new GodAgentMCPServer();
 

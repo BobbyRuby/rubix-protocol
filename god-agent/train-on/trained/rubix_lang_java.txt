@@ -1,0 +1,993 @@
+# RUBIX LANGUAGE: JAVA
+# VERSION: Java_21_LTS|Java_17_LTS
+# FOUNDATION: Sun_Microsystems>Oracle|OpenJDK
+# PHILOSOPHY: write_once_run_anywhere|object_oriented|backwards_compatible
+
+==============================================================================
+HISTORY
+==============================================================================
+1995:Sun_Microsystems>James_Gosling>Java_1.0
+1998:Java_2>Collections_Framework
+2004:Java_5>Generics|Annotations|Enums
+2006:Sun>open_sources_Java>OpenJDK
+2010:Oracle>acquires_Sun
+2014:Java_8>Lambdas|Streams|Optional|LTS
+2017:Java_9>Modules|JShell
+2018:Java_11>LTS|var_in_lambda|HTTP_Client
+2021:Java_17>LTS|Sealed_Classes|Pattern_Matching
+2023:Java_21>LTS|Virtual_Threads|Pattern_Matching_Switch|Record_Patterns
+
+LTS_VERSIONS
+Java_8:2014>2030+:legacy_still_common
+Java_11:2018>2026:widely_adopted
+Java_17:2021>2029:current_recommended
+Java_21:2023>2031:latest_LTS
+
+JDK_DISTRIBUTIONS
+Oracle_JDK:commercial_support
+OpenJDK:reference_implementation
+Amazon_Corretto:AWS_optimized
+Azul_Zulu:wide_platform_support
+Eclipse_Temurin:Adoptium_project
+GraalVM:native_compilation
+
+==============================================================================
+PROJECT_SETUP
+==============================================================================
+MAVEN_PROJECT
+mvn archetype:generate -DgroupId=com.example -DartifactId=myapp -DarchetypeArtifactId=maven-archetype-quickstart
+
+GRADLE_PROJECT
+gradle init --type java-application
+
+PROJECT_STRUCTURE
+myapp/
+  src/
+    main/
+      java/
+        com/example/
+          Application.java
+          model/
+          service/
+          repository/
+          controller/
+          config/
+          util/
+      resources/
+        application.properties
+  test/
+    java/
+      com/example/
+  pom.xml | build.gradle
+  README.md
+
+POM_XML_ESSENTIAL
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <groupId>com.example</groupId>
+    <artifactId>myapp</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+    
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+BUILD_GRADLE_KOTLIN
+plugins {
+    java
+    application
+}
+
+group = "com.example"
+version = "1.0.0-SNAPSHOT"
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
+
+application {
+    mainClass.set("com.example.Application")
+}
+
+==============================================================================
+MODERN_JAVA_FEATURES
+==============================================================================
+RECORDS_JAVA16+
+// Immutable data carrier - replaces boilerplate POJOs
+public record User(String name, String email, int age) {
+    // Compact constructor for validation
+    public User {
+        Objects.requireNonNull(name);
+        Objects.requireNonNull(email);
+        if (age < 0) throw new IllegalArgumentException("Age cannot be negative");
+    }
+    
+    // Additional methods allowed
+    public String displayName() {
+        return name.toUpperCase();
+    }
+}
+
+// Usage
+var user = new User("John", "john@example.com", 30);
+String name = user.name();  // accessor method
+User copy = new User(user.name(), "new@email.com", user.age());
+
+SEALED_CLASSES_JAVA17+
+// Restricted inheritance hierarchy
+public sealed interface Shape permits Circle, Rectangle, Triangle {
+    double area();
+}
+
+public final class Circle implements Shape {
+    private final double radius;
+    public Circle(double radius) { this.radius = radius; }
+    public double area() { return Math.PI * radius * radius; }
+}
+
+public final class Rectangle implements Shape {
+    private final double width, height;
+    public Rectangle(double width, double height) { 
+        this.width = width; 
+        this.height = height; 
+    }
+    public double area() { return width * height; }
+}
+
+public non-sealed class Triangle implements Shape {
+    // Can be extended further
+    public double area() { return 0; }  // simplified
+}
+
+PATTERN_MATCHING_INSTANCEOF_JAVA16+
+// Old way
+if (obj instanceof String) {
+    String s = (String) obj;
+    System.out.println(s.length());
+}
+
+// New way
+if (obj instanceof String s) {
+    System.out.println(s.length());
+}
+
+// With conditions
+if (obj instanceof String s && s.length() > 5) {
+    System.out.println(s.toUpperCase());
+}
+
+PATTERN_MATCHING_SWITCH_JAVA21+
+// Type patterns in switch
+String describe(Object obj) {
+    return switch (obj) {
+        case Integer i -> "Integer: " + i;
+        case Long l    -> "Long: " + l;
+        case Double d  -> "Double: " + d;
+        case String s  -> "String: " + s;
+        case null      -> "null";
+        default        -> "Unknown";
+    };
+}
+
+// With guards
+String categorize(Object obj) {
+    return switch (obj) {
+        case Integer i when i < 0  -> "Negative integer";
+        case Integer i when i == 0 -> "Zero";
+        case Integer i             -> "Positive integer";
+        case String s when s.isEmpty() -> "Empty string";
+        case String s              -> "String: " + s;
+        default                    -> "Other";
+    };
+}
+
+// Record patterns
+record Point(int x, int y) {}
+
+String describePoint(Object obj) {
+    return switch (obj) {
+        case Point(int x, int y) when x == 0 && y == 0 -> "Origin";
+        case Point(int x, int y) when x == 0 -> "On Y-axis";
+        case Point(int x, int y) when y == 0 -> "On X-axis";
+        case Point(int x, int y) -> "Point at (%d, %d)".formatted(x, y);
+        default -> "Not a point";
+    };
+}
+
+TEXT_BLOCKS_JAVA15+
+String json = """
+    {
+        "name": "John",
+        "email": "john@example.com",
+        "age": 30
+    }
+    """;
+
+String sql = """
+    SELECT u.name, u.email
+    FROM users u
+    WHERE u.active = true
+      AND u.age > 18
+    ORDER BY u.name
+    """;
+
+VAR_LOCAL_INFERENCE_JAVA10+
+var list = new ArrayList<String>();    // ArrayList<String>
+var map = new HashMap<String, Integer>();
+var stream = list.stream();
+
+// var in lambda parameters (Java 11)
+list.stream()
+    .map((@NotNull var s) -> s.toUpperCase())
+    .toList();
+
+!only_local_variables
+!requires_initializer
+!not_for_fields_or_parameters
+
+SWITCH_EXPRESSIONS_JAVA14+
+// Expression form - returns value
+int numDays = switch (month) {
+    case 1, 3, 5, 7, 8, 10, 12 -> 31;
+    case 4, 6, 9, 11 -> 30;
+    case 2 -> 28;
+    default -> throw new IllegalArgumentException();
+};
+
+// Block form when needed
+String result = switch (status) {
+    case ACTIVE -> {
+        log("User is active");
+        yield "Active";
+    }
+    case INACTIVE -> {
+        log("User is inactive");
+        yield "Inactive";
+    }
+    default -> "Unknown";
+};
+
+==============================================================================
+VIRTUAL_THREADS_JAVA21+
+==============================================================================
+VIRTUAL_THREADS
+// Create virtual thread
+Thread.startVirtualThread(() -> {
+    System.out.println("Running in virtual thread");
+});
+
+// Using builder
+Thread thread = Thread.ofVirtual()
+    .name("my-virtual-thread")
+    .start(() -> doWork());
+
+// ExecutorService with virtual threads
+try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+    IntStream.range(0, 10_000).forEach(i -> {
+        executor.submit(() -> {
+            Thread.sleep(Duration.ofSeconds(1));
+            return i;
+        });
+    });
+}  // Waits for all tasks
+
+STRUCTURED_CONCURRENCY_PREVIEW
+// Java 21 Preview - structured task management
+try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+    Future<User> userFuture = scope.fork(() -> fetchUser(id));
+    Future<List<Order>> ordersFuture = scope.fork(() -> fetchOrders(id));
+    
+    scope.join();           // Wait for all
+    scope.throwIfFailed();  // Propagate errors
+    
+    return new UserWithOrders(userFuture.resultNow(), ordersFuture.resultNow());
+}
+
+WHY_VIRTUAL_THREADS
++millions_of_threads:low_memory
++blocking_is_cheap:no_thread_pool_tuning
++simpler_code:vs_reactive
++existing_code_works:drop_in_replacement
+
+==============================================================================
+COLLECTIONS_PATTERNS
+==============================================================================
+COLLECTION_CREATION
+// Immutable collections (Java 9+)
+List<String> list = List.of("a", "b", "c");
+Set<String> set = Set.of("a", "b", "c");
+Map<String, Integer> map = Map.of("a", 1, "b", 2);
+Map<String, Integer> largeMap = Map.ofEntries(
+    Map.entry("a", 1),
+    Map.entry("b", 2)
+);
+
+// Mutable collections
+List<String> mutableList = new ArrayList<>(List.of("a", "b"));
+Set<String> mutableSet = new HashSet<>(Set.of("a", "b"));
+Map<String, Integer> mutableMap = new HashMap<>(Map.of("a", 1));
+
+COLLECTION_INTERFACES
+List:ordered|duplicates_allowed|ArrayList|LinkedList
+Set:no_duplicates|HashSet|TreeSet|LinkedHashSet
+Map:key_value|HashMap|TreeMap|LinkedHashMap
+Queue:FIFO|LinkedList|ArrayDeque|PriorityQueue
+Deque:double_ended|ArrayDeque|LinkedList
+
+COLLECTION_CHOICE
+ArrayList:default_list|random_access
+LinkedList:frequent_insert_remove|queue_operations
+HashSet:default_set|O(1)_operations
+TreeSet:sorted|O(log_n)_operations
+LinkedHashSet:insertion_order
+HashMap:default_map|O(1)_operations
+TreeMap:sorted_keys|O(log_n)
+LinkedHashMap:insertion_order|access_order_LRU
+ConcurrentHashMap:thread_safe_map
+CopyOnWriteArrayList:thread_safe_list|read_heavy
+
+==============================================================================
+STREAMS_API
+==============================================================================
+STREAM_CREATION
+// From collection
+List<String> list = List.of("a", "b", "c");
+Stream<String> stream = list.stream();
+
+// From values
+Stream<String> stream = Stream.of("a", "b", "c");
+
+// From array
+String[] array = {"a", "b", "c"};
+Stream<String> stream = Arrays.stream(array);
+
+// Generate/iterate
+Stream<Integer> infinite = Stream.iterate(0, n -> n + 1);
+Stream<Double> randoms = Stream.generate(Math::random);
+
+// Range
+IntStream range = IntStream.range(0, 10);      // 0-9
+IntStream rangeClosed = IntStream.rangeClosed(0, 10);  // 0-10
+
+INTERMEDIATE_OPERATIONS
+stream
+    .filter(s -> s.length() > 3)           // filter
+    .map(String::toUpperCase)              // transform
+    .flatMap(s -> Arrays.stream(s.split("")))  // flatten
+    .distinct()                            // unique
+    .sorted()                              // natural order
+    .sorted(Comparator.reverseOrder())     // custom order
+    .limit(10)                             // first n
+    .skip(5)                               // skip n
+    .peek(System.out::println)             // debug
+    .takeWhile(s -> s.length() < 5)        // take while true (Java 9)
+    .dropWhile(s -> s.length() < 5);       // drop while true (Java 9)
+
+TERMINAL_OPERATIONS
+// Collect
+List<String> list = stream.collect(Collectors.toList());
+List<String> list = stream.toList();  // Java 16+ immutable
+Set<String> set = stream.collect(Collectors.toSet());
+Map<Integer, String> map = stream.collect(
+    Collectors.toMap(String::length, Function.identity())
+);
+
+// Reduce
+Optional<String> concat = stream.reduce((a, b) -> a + b);
+int sum = intStream.reduce(0, Integer::sum);
+
+// Find
+Optional<String> first = stream.findFirst();
+Optional<String> any = stream.findAny();
+
+// Match
+boolean allMatch = stream.allMatch(s -> s.length() > 0);
+boolean anyMatch = stream.anyMatch(s -> s.startsWith("a"));
+boolean noneMatch = stream.noneMatch(String::isEmpty);
+
+// Count/forEach
+long count = stream.count();
+stream.forEach(System.out::println);
+
+COLLECTORS
+// Grouping
+Map<Integer, List<String>> byLength = stream.collect(
+    Collectors.groupingBy(String::length)
+);
+
+// Partitioning
+Map<Boolean, List<String>> partitioned = stream.collect(
+    Collectors.partitioningBy(s -> s.length() > 3)
+);
+
+// Joining
+String joined = stream.collect(Collectors.joining(", "));
+
+// Statistics
+IntSummaryStatistics stats = stream.collect(
+    Collectors.summarizingInt(String::length)
+);
+
+// Downstream collectors
+Map<Integer, Long> countByLength = stream.collect(
+    Collectors.groupingBy(String::length, Collectors.counting())
+);
+
+PARALLEL_STREAMS
+list.parallelStream()
+    .filter(s -> s.length() > 3)
+    .map(String::toUpperCase)
+    .toList();
+
+!use_for_large_datasets
+!avoid_shared_mutable_state
+!operations_must_be_stateless
+
+==============================================================================
+OPTIONAL_PATTERNS
+==============================================================================
+OPTIONAL_CREATION
+Optional<String> present = Optional.of("value");        // throws if null
+Optional<String> nullable = Optional.ofNullable(value); // handles null
+Optional<String> empty = Optional.empty();
+
+OPTIONAL_USAGE
+// Check and get
+if (optional.isPresent()) {
+    String value = optional.get();
+}
+
+// Better - ifPresent
+optional.ifPresent(value -> System.out.println(value));
+
+// ifPresentOrElse (Java 9)
+optional.ifPresentOrElse(
+    value -> System.out.println(value),
+    () -> System.out.println("Empty")
+);
+
+// Default values
+String value = optional.orElse("default");
+String value = optional.orElseGet(() -> computeDefault());
+String value = optional.orElseThrow();  // NoSuchElementException
+String value = optional.orElseThrow(() -> new CustomException());
+
+// Transform
+Optional<Integer> length = optional.map(String::length);
+Optional<String> upper = optional.map(String::toUpperCase);
+
+// FlatMap for Optional-returning functions
+Optional<String> result = optional.flatMap(this::findRelated);
+
+// Filter
+Optional<String> filtered = optional.filter(s -> s.length() > 3);
+
+// Stream (Java 9)
+Stream<String> stream = optional.stream();
+
+// Or (Java 9)
+Optional<String> result = optional.or(() -> Optional.of("fallback"));
+
+ANTI_PATTERNS
+-optional.get():without_isPresent_check
+-Optional_as_field:use_nullable
+-Optional_in_collections:use_filter
+-Optional_as_parameter:use_overloading
++Optional_for_return_types:preferred
+
+==============================================================================
+EXCEPTION_HANDLING
+==============================================================================
+EXCEPTION_HIERARCHY
+Throwable
+├── Error                    // JVM errors - don't catch
+│   ├── OutOfMemoryError
+│   └── StackOverflowError
+└── Exception
+    ├── RuntimeException     // Unchecked
+    │   ├── NullPointerException
+    │   ├── IllegalArgumentException
+    │   ├── IllegalStateException
+    │   └── IndexOutOfBoundsException
+    └── Checked Exceptions   // Must handle
+        ├── IOException
+        ├── SQLException
+        └── InterruptedException
+
+CUSTOM_EXCEPTION
+public class UserNotFoundException extends RuntimeException {
+    private final String userId;
+    
+    public UserNotFoundException(String userId) {
+        super("User not found: " + userId);
+        this.userId = userId;
+    }
+    
+    public String getUserId() {
+        return userId;
+    }
+}
+
+TRY_WITH_RESOURCES
+try (var reader = new BufferedReader(new FileReader(path));
+     var writer = new BufferedWriter(new FileWriter(output))) {
+    String line;
+    while ((line = reader.readLine()) != null) {
+        writer.write(line);
+    }
+}  // Auto-closed
+
+MULTI_CATCH
+try {
+    doSomething();
+} catch (IOException | SQLException e) {
+    log.error("Database or IO error", e);
+    throw new ServiceException("Operation failed", e);
+}
+
+==============================================================================
+FUNCTIONAL_INTERFACES
+==============================================================================
+BUILT_IN_INTERFACES
+Function<T,R>:T_to_R|apply()
+BiFunction<T,U,R>:T,U_to_R|apply()
+Consumer<T>:T_to_void|accept()
+BiConsumer<T,U>:T,U_to_void|accept()
+Supplier<T>:void_to_T|get()
+Predicate<T>:T_to_boolean|test()
+BiPredicate<T,U>:T,U_to_boolean|test()
+UnaryOperator<T>:T_to_T|extends_Function
+BinaryOperator<T>:T,T_to_T|extends_BiFunction
+
+PRIMITIVE_VARIANTS
+IntFunction<R>:int_to_R
+ToIntFunction<T>:T_to_int
+IntConsumer:int_to_void
+IntSupplier:void_to_int
+IntPredicate:int_to_boolean
+IntUnaryOperator:int_to_int
+IntBinaryOperator:int,int_to_int
+
+METHOD_REFERENCES
+// Static method
+Function<String, Integer> parse = Integer::parseInt;
+
+// Instance method of specific object
+Consumer<String> printer = System.out::println;
+
+// Instance method of parameter
+Function<String, Integer> length = String::length;
+
+// Constructor
+Supplier<ArrayList<String>> listFactory = ArrayList::new;
+Function<Integer, int[]> arrayFactory = int[]::new;
+
+CUSTOM_FUNCTIONAL_INTERFACE
+@FunctionalInterface
+public interface Validator<T> {
+    boolean validate(T value);
+    
+    default Validator<T> and(Validator<T> other) {
+        return value -> this.validate(value) && other.validate(value);
+    }
+    
+    default Validator<T> or(Validator<T> other) {
+        return value -> this.validate(value) || other.validate(value);
+    }
+}
+
+==============================================================================
+CONCURRENCY_PATTERNS
+==============================================================================
+EXECUTORSERVICE
+// Fixed thread pool
+ExecutorService executor = Executors.newFixedThreadPool(4);
+
+// Cached thread pool
+ExecutorService executor = Executors.newCachedThreadPool();
+
+// Virtual threads (Java 21)
+ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+
+// Submit tasks
+Future<String> future = executor.submit(() -> {
+    return computeResult();
+});
+
+// Get result
+String result = future.get();  // Blocking
+String result = future.get(5, TimeUnit.SECONDS);  // With timeout
+
+// Shutdown
+executor.shutdown();
+executor.awaitTermination(60, TimeUnit.SECONDS);
+
+COMPLETABLEFUTURE
+// Create
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    return fetchData();
+});
+
+// Chain operations
+CompletableFuture<Integer> result = future
+    .thenApply(String::toUpperCase)
+    .thenApply(String::length);
+
+// Combine futures
+CompletableFuture<String> combined = future1.thenCombine(future2, 
+    (result1, result2) -> result1 + result2);
+
+// All of
+CompletableFuture<Void> all = CompletableFuture.allOf(future1, future2, future3);
+
+// Any of
+CompletableFuture<Object> any = CompletableFuture.anyOf(future1, future2);
+
+// Exception handling
+future.exceptionally(ex -> "default")
+      .thenAccept(System.out::println);
+
+future.handle((result, ex) -> {
+    if (ex != null) return "default";
+    return result;
+});
+
+SYNCHRONIZATION
+// Synchronized method
+public synchronized void increment() {
+    count++;
+}
+
+// Synchronized block
+public void increment() {
+    synchronized (this) {
+        count++;
+    }
+}
+
+// ReentrantLock
+private final Lock lock = new ReentrantLock();
+
+public void increment() {
+    lock.lock();
+    try {
+        count++;
+    } finally {
+        lock.unlock();
+    }
+}
+
+// ReadWriteLock
+private final ReadWriteLock rwLock = new ReentrantReadWriteLock();
+
+public String read() {
+    rwLock.readLock().lock();
+    try {
+        return data;
+    } finally {
+        rwLock.readLock().unlock();
+    }
+}
+
+ATOMIC_CLASSES
+AtomicInteger counter = new AtomicInteger(0);
+counter.incrementAndGet();
+counter.compareAndSet(expected, newValue);
+
+AtomicReference<User> userRef = new AtomicReference<>();
+userRef.compareAndSet(oldUser, newUser);
+
+==============================================================================
+IO_PATTERNS
+==============================================================================
+NIO_FILE_OPERATIONS
+// Read entire file
+String content = Files.readString(Path.of("file.txt"));
+List<String> lines = Files.readAllLines(Path.of("file.txt"));
+byte[] bytes = Files.readAllBytes(Path.of("file.bin"));
+
+// Write file
+Files.writeString(Path.of("file.txt"), content);
+Files.write(Path.of("file.txt"), lines);
+Files.write(Path.of("file.bin"), bytes);
+
+// Stream lines (lazy)
+try (Stream<String> lines = Files.lines(Path.of("large.txt"))) {
+    lines.filter(line -> line.contains("error"))
+         .forEach(System.out::println);
+}
+
+// Copy/move/delete
+Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+Files.move(source, target);
+Files.delete(path);
+Files.deleteIfExists(path);
+
+// Create directories
+Files.createDirectory(path);
+Files.createDirectories(path);  // Creates parents
+
+// Walk directory tree
+try (Stream<Path> paths = Files.walk(startPath)) {
+    paths.filter(Files::isRegularFile)
+         .filter(p -> p.toString().endsWith(".java"))
+         .forEach(System.out::println);
+}
+
+PATH_OPERATIONS
+Path path = Path.of("dir", "subdir", "file.txt");
+Path path = Paths.get("/home/user/file.txt");
+
+path.getFileName();      // file.txt
+path.getParent();        // /home/user
+path.toAbsolutePath();
+path.normalize();        // Removes . and ..
+path.resolve("other");   // Append
+path.relativize(other);  // Relative path
+
+HTTP_CLIENT_JAVA11+
+HttpClient client = HttpClient.newBuilder()
+    .version(HttpClient.Version.HTTP_2)
+    .connectTimeout(Duration.ofSeconds(10))
+    .build();
+
+// GET request
+HttpRequest request = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.example.com/users"))
+    .header("Accept", "application/json")
+    .GET()
+    .build();
+
+HttpResponse<String> response = client.send(request, 
+    HttpResponse.BodyHandlers.ofString());
+
+// POST request
+HttpRequest postRequest = HttpRequest.newBuilder()
+    .uri(URI.create("https://api.example.com/users"))
+    .header("Content-Type", "application/json")
+    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+    .build();
+
+// Async
+client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+    .thenApply(HttpResponse::body)
+    .thenAccept(System.out::println);
+
+==============================================================================
+JSON_PROCESSING
+==============================================================================
+JACKSON
+// ObjectMapper setup
+ObjectMapper mapper = new ObjectMapper()
+    .registerModule(new JavaTimeModule())
+    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+
+// Serialize
+String json = mapper.writeValueAsString(user);
+
+// Deserialize
+User user = mapper.readValue(json, User.class);
+
+// Generic types
+List<User> users = mapper.readValue(json, 
+    new TypeReference<List<User>>() {});
+
+// Annotations
+public class User {
+    @JsonProperty("user_name")
+    private String username;
+    
+    @JsonIgnore
+    private String password;
+    
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate birthDate;
+}
+
+GSON
+Gson gson = new GsonBuilder()
+    .setPrettyPrinting()
+    .setDateFormat("yyyy-MM-dd")
+    .create();
+
+String json = gson.toJson(user);
+User user = gson.fromJson(json, User.class);
+
+==============================================================================
+TESTING_PATTERNS
+==============================================================================
+JUNIT5
+import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+class UserServiceTest {
+    private UserService service;
+    
+    @BeforeEach
+    void setUp() {
+        service = new UserService();
+    }
+    
+    @Test
+    @DisplayName("Should create user with valid data")
+    void createUser_ValidData_ReturnsUser() {
+        User user = service.create("John", "john@example.com");
+        
+        assertNotNull(user);
+        assertEquals("John", user.getName());
+        assertAll(
+            () -> assertNotNull(user.getId()),
+            () -> assertEquals("john@example.com", user.getEmail())
+        );
+    }
+    
+    @Test
+    void createUser_NullName_ThrowsException() {
+        assertThrows(IllegalArgumentException.class, 
+            () -> service.create(null, "email@example.com"));
+    }
+    
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "  "})
+    void createUser_BlankName_ThrowsException(String name) {
+        assertThrows(IllegalArgumentException.class, 
+            () -> service.create(name, "email@example.com"));
+    }
+    
+    @ParameterizedTest
+    @CsvSource({
+        "John, john@example.com, true",
+        "Jane, jane@example.com, true",
+        "'', email@example.com, false"
+    })
+    void validateUser(String name, String email, boolean expected) {
+        assertEquals(expected, service.isValid(name, email));
+    }
+}
+
+MOCKITO
+import org.mockito.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class UserServiceTest {
+    @Mock
+    private UserRepository repository;
+    
+    @InjectMocks
+    private UserService service;
+    
+    @Test
+    void findById_ExistingUser_ReturnsUser() {
+        User user = new User("1", "John");
+        when(repository.findById("1")).thenReturn(Optional.of(user));
+        
+        Optional<User> result = service.findById("1");
+        
+        assertTrue(result.isPresent());
+        assertEquals("John", result.get().getName());
+        verify(repository).findById("1");
+        verify(repository, times(1)).findById(anyString());
+        verify(repository, never()).delete(any());
+    }
+    
+    @Test
+    void save_ValidUser_CallsRepository() {
+        User user = new User(null, "John");
+        when(repository.save(any(User.class))).thenAnswer(
+            invocation -> {
+                User u = invocation.getArgument(0);
+                return new User("generated-id", u.getName());
+            }
+        );
+        
+        User saved = service.save(user);
+        
+        assertNotNull(saved.getId());
+        ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
+        verify(repository).save(captor.capture());
+        assertEquals("John", captor.getValue().getName());
+    }
+}
+
+ASSERTJ
+import static org.assertj.core.api.Assertions.*;
+
+assertThat(user.getName()).isEqualTo("John");
+assertThat(users).hasSize(3)
+                 .extracting(User::getName)
+                 .contains("John", "Jane");
+assertThatThrownBy(() -> service.findById(null))
+    .isInstanceOf(IllegalArgumentException.class)
+    .hasMessageContaining("null");
+
+==============================================================================
+BUILD_TOOLS
+==============================================================================
+MAVEN_COMMANDS
+mvn clean install              # Build and install
+mvn clean package              # Build JAR
+mvn test                       # Run tests
+mvn dependency:tree            # Show dependencies
+mvn versions:display-dependency-updates  # Check updates
+
+MAVEN_PROFILES
+<profiles>
+    <profile>
+        <id>dev</id>
+        <properties>
+            <env>development</env>
+        </properties>
+    </profile>
+    <profile>
+        <id>prod</id>
+        <properties>
+            <env>production</env>
+        </properties>
+    </profile>
+</profiles>
+
+mvn clean package -Pprod
+
+GRADLE_COMMANDS
+./gradlew build                # Build
+./gradlew test                 # Test
+./gradlew bootRun              # Run Spring Boot
+./gradlew dependencies         # Show dependencies
+
+==============================================================================
+COMMON_SMELLS
+==============================================================================
+SMELL                    | DETECTION                        | FIX
+------------------------|----------------------------------|------------------
+Raw_Types               | List_without_<T>                 | use_generics
+Optional.get()          | without_isPresent                | orElse|orElseThrow
+Null_Returns            | return_null                      | return_Optional
+String_Concatenation    | +_in_loop                        | StringBuilder
+Checked_Exceptions      | excessive_throws                 | wrap_in_runtime
+Mutable_Collections     | returning_internal_list          | defensive_copy
+Date_Instead_LocalDate  | java.util.Date                   | java.time_API
+Thread_Instead_Executor | new_Thread()                     | ExecutorService
+Sync_On_String          | synchronized(string)             | private_lock_object
+Empty_Catch             | catch(e){}                       | log_or_rethrow
