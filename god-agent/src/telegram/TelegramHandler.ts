@@ -1,5 +1,6 @@
 import TelegramBotAPI from 'node-telegram-bot-api';
 import { existsSync, mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { resolve, normalize } from 'path';
 import { TelegramMessage, TaskRequest } from './types.js';
 import type { TaskExecutor } from '../codex/TaskExecutor.js';
@@ -55,6 +56,9 @@ export class TelegramHandler {
 
   /** Tracks which chats have explicitly set their project via /setproject */
   private explicitlySetProjects: Set<number> = new Set();
+
+  /** Pending project path creations - maps short ID to full path (Telegram callback_data limit: 64 bytes) */
+  private pendingPathCreations: Map<string, string> = new Map();
 
   /** Per-chat dual confirmation state for dangerous project paths */
   private dangerConfirmation: Map<number, {
@@ -327,6 +331,12 @@ export class TelegramHandler {
       await this.confirmDeletion(msg, bot);
     } else if (text === '/cancel') {
       await this.handleCancelCommand(msg, bot);
+    } else if (text.startsWith('/task-review')) {
+      await this.handleTaskReviewCommand(msg, bot);
+    } else if (text.startsWith('/task-fix')) {
+      await this.handleTaskFixCommand(msg, bot);
+    } else if (text.startsWith('/task-build')) {
+      await this.handleTaskBuildCommand(msg, bot);
     } else if (text.startsWith('/task')) {
       await this.handleTaskCommand(msg, bot);
     } else if (text.startsWith('/status')) {
@@ -345,6 +355,8 @@ export class TelegramHandler {
       await this.handleRestartCommand(chatId, bot);
     } else if (text.startsWith('/setproject') || text.startsWith('/project')) {
       await this.handleSetProjectCommand(msg, bot);
+    } else if (text.startsWith('/deviationmode') || text.startsWith('/setdeviationmode')) {
+      await this.handleDeviationModeCommand(msg, bot);
     } else if (text === '/whereami') {
       await this.handleWhereAmICommand(chatId, bot);
     } else if (text === '/exit') {
@@ -419,18 +431,28 @@ export class TelegramHandler {
       await this.handleTaskAction(taskId, chatId, bot);
     }
 
-    // Handle project creation cancellation
-    if (data === 'cancel_create_project') {
-      await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
-      await bot.sendMessage(chatId, '❌ Project creation cancelled.');
+    // Handle project creation confirmation (using short ID lookup for Telegram 64-byte limit)
+    if (data.startsWith('mkproj:')) {
+      const shortId = data.replace('mkproj:', '');
+      const projectPath = this.pendingPathCreations.get(shortId);
+
+      if (!projectPath) {
+        await bot.answerCallbackQuery(query.id, { text: 'Request expired. Try again.' });
+        return;
+      }
+
+      this.pendingPathCreations.delete(shortId);
+      await bot.answerCallbackQuery(query.id, { text: 'Creating...' });
+      await this.createAndSetProject(chatId, projectPath, bot);
       return;
     }
 
-    // Handle project creation confirmation
-    if (data.startsWith('create_project:')) {
-      const projectPath = data.replace('create_project:', '');
-      await bot.answerCallbackQuery(query.id, { text: 'Creating...' });
-      await this.createAndSetProject(chatId, projectPath, bot);
+    // Handle project creation cancellation (with short ID)
+    if (data.startsWith('mkproj_no:')) {
+      const shortId = data.replace('mkproj_no:', '');
+      this.pendingPathCreations.delete(shortId);
+      await bot.answerCallbackQuery(query.id, { text: 'Cancelled' });
+      await bot.sendMessage(chatId, '❌ Project creation cancelled.');
       return;
     }
 
@@ -566,12 +588,16 @@ All messages require an active mode. Use:
 
 *Immediate Execution*
 • /task <desc> - Run task now (no planning)
+• /task-build <desc> - Full development cycle
+• /task-review <scope> - Review code (analysis only)
+• /task-fix - Fix issues from review
 • /status - Check running task progress
 
 *Project Directory*
 • /setproject <path> - Set working directory
 • /project - Show current project
 • /whereami - Show working context
+• /deviationmode <mode> - Set plan deviation mode
 
 *Path Permissions*
 • /paths - Show allowed paths
@@ -693,7 +719,7 @@ All messages require an active mode. Use:
       ];
 
       // Base iteration budget
-      let iterationBudget = 10;
+      let iterationBudget = 20;
 
       // Check for queued messages before processing
       if (this.messageQueue.length > 0) {
@@ -764,8 +790,8 @@ All messages require an active mode. Use:
 
       await bot.sendMessage(chatId, `📂 Resuming: "${targetSession.taskDescription}"...`);
 
-      // Extract codebase from the session's task description or use configured project path
-      const codebase = this.extractCodebase(targetSession.taskDescription, chatId);
+      // Use session's stored codebase if available, otherwise extract from description
+      const codebase = targetSession.codebase || this.extractCodebase(targetSession.taskDescription, chatId);
 
       this.planningSession = await PlanningSession.load(this.engine, targetSession.id, {
         taskDescription: targetSession.taskDescription,
@@ -1605,11 +1631,18 @@ All messages require an active mode. Use:
 
     // If path doesn't exist, offer to create it
     if (!existsSync(resolvedPath)) {
-      // Ask user if they want to create the directory
+      // Generate short 8-char ID for callback_data (Telegram limit: 64 bytes)
+      // "mkproj:" prefix = 7 chars, so 8-char ID = 15 chars total, well under 64
+      const shortId = randomUUID().substring(0, 8);
+      this.pendingPathCreations.set(shortId, resolvedPath);
+
+      // Auto-cleanup after 5 minutes to prevent memory leaks
+      setTimeout(() => this.pendingPathCreations.delete(shortId), 5 * 60 * 1000);
+
       const keyboard = {
         inline_keyboard: [[
-          { text: '✅ Yes, create it', callback_data: `create_project:${resolvedPath}` },
-          { text: '❌ Cancel', callback_data: 'cancel_create_project' }
+          { text: '✅ Yes, create it', callback_data: `mkproj:${shortId}` },
+          { text: '❌ Cancel', callback_data: `mkproj_no:${shortId}` }
         ]]
       };
 
@@ -1760,6 +1793,69 @@ All messages require an active mode. Use:
   }
 
   /**
+   * Handle /deviationmode or /setdeviationmode command - set plan deviation mode
+   * Usage:
+   *   /deviationmode strict   - Always escalate deviations (default)
+   *   /deviationmode smart    - Escalate major deviations only
+   *   /deviationmode autonomous - Never escalate, trust architect
+   *   /deviationmode          - Show current mode
+   */
+  private async handleDeviationModeCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+
+    // Parse the mode argument
+    const match = text.match(/^\/(setdeviationmode|deviationmode)\s*(.*)$/i);
+    const modeArg = match?.[2]?.trim()?.toLowerCase() || '';
+
+    // If no mode provided, show current setting
+    if (!modeArg) {
+      const currentMode = this.taskExecutor?.getPlanDeviationMode() || 'strict';
+      await bot.sendMessage(chatId,
+        `🔍 *Plan Deviation Mode*\n\n` +
+        `**Current:** \`${currentMode}\`\n\n` +
+        `**Modes:**\n` +
+        `• \`strict\` - Always escalate deviations\n` +
+        `• \`smart\` - Escalate major deviations only\n` +
+        `• \`autonomous\` - Trust architect decisions\n\n` +
+        `Use \`/deviationmode <mode>\` to change.`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Validate mode
+    const validModes = ['strict', 'smart', 'autonomous'];
+    if (!validModes.includes(modeArg)) {
+      await bot.sendMessage(chatId,
+        `❌ Invalid mode: \`${modeArg}\`\n\n` +
+        `Valid modes: \`strict\`, \`smart\`, \`autonomous\``,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Set the mode
+    const mode = modeArg as 'strict' | 'smart' | 'autonomous';
+    if (this.taskExecutor) {
+      this.taskExecutor.setPlanDeviationMode(mode);
+    }
+
+    const modeDescriptions: Record<string, string> = {
+      'strict': 'All plan deviations will be escalated to you for approval',
+      'smart': 'Only major deviations will be escalated (minor ones allowed)',
+      'autonomous': 'Architect decisions are trusted without escalation'
+    };
+
+    await bot.sendMessage(chatId,
+      `✅ *Plan Deviation Mode Updated*\n\n` +
+      `**Mode:** \`${mode}\`\n` +
+      `**Behavior:** ${modeDescriptions[mode]}`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  /**
    * Persist project path to memory for recovery after restart
    */
   private async persistProjectPath(chatId: number, projectPath: string): Promise<void> {
@@ -1811,6 +1907,7 @@ All messages require an active mode. Use:
           // Verify path still exists before restoring
           if (existsSync(projectPath)) {
             this.projectPaths.set(chatId, projectPath);
+            this.explicitlySetProjects.add(chatId);
             restored++;
             console.log(`[TelegramHandler] Restored project path for chat ${chatId}: ${projectPath}`);
           } else {
@@ -1830,6 +1927,127 @@ All messages require an active mode. Use:
   // ===========================================================================
   // TASK HANDLERS
   // ===========================================================================
+
+  /**
+   * Handle /task-review command - review-only workflow
+   */
+  private async handleTaskReviewCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+    const description = text.replace('/task-review', '').trim();
+
+    if (!description) {
+      await bot.sendMessage(chatId,
+        'Please provide files or scope to review.\n\n' +
+        'Examples:\n' +
+        '• `/task-review src/core/MemoryEngine.ts`\n' +
+        '• `/task-review git changes`\n' +
+        '• `/task-review glob:src/**/*.ts --security`\n' +
+        '• `/task-review src/ --performance`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    // Validate project is explicitly set
+    const validationError = this.validateProjectForWork(chatId);
+    if (validationError) {
+      await this.safeSendMarkdown(bot, chatId, validationError);
+      return;
+    }
+
+    if (!this.taskExecutor) {
+      await bot.sendMessage(chatId, 'TaskExecutor not configured. Please set up RUBIX first.');
+      return;
+    }
+
+    await bot.sendMessage(chatId, `🔍 Starting review: ${description.substring(0, 100)}${description.length > 100 ? '...' : ''}`);
+
+    try {
+      const projectPath = this.getProjectPath(chatId);
+      const result = await this.taskExecutor.executeReviewOnly(description, projectPath);
+
+      // Send full report
+      await this.safeSendMarkdown(bot, chatId,
+        `**Review Complete**\n\n` +
+        `Review ID: \`${result.id}\`\n` +
+        `Files reviewed: ${result.scope.length}\n` +
+        `Issues found: ${result.tokenized.issues.length}\n\n` +
+        `${result.fullReport}`
+      );
+
+      // Send follow-up instructions
+      await bot.sendMessage(chatId,
+        `Use \`/task-fix\` to selectively fix issues from this review.`,
+        { parse_mode: 'Markdown' }
+      );
+
+    } catch (error) {
+      console.error('[TelegramHandler] Review failed:', error);
+      await bot.sendMessage(chatId, `Review failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Handle /task-fix command - interactive fix workflow
+   */
+  private async handleTaskFixCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+
+    // Validate project is explicitly set
+    const validationError = this.validateProjectForWork(chatId);
+    if (validationError) {
+      await this.safeSendMarkdown(bot, chatId, validationError);
+      return;
+    }
+
+    if (!this.taskExecutor) {
+      await bot.sendMessage(chatId, 'TaskExecutor not configured. Please set up RUBIX first.');
+      return;
+    }
+
+    if (!this.comms) {
+      await bot.sendMessage(chatId, 'CommunicationManager not configured. Cannot run interactive fix workflow.');
+      return;
+    }
+
+    await bot.sendMessage(chatId, '🔧 Starting interactive fix workflow...');
+
+    try {
+      const result = await this.taskExecutor.executeInteractiveFix(this.comms);
+
+      await bot.sendMessage(chatId,
+        `${result.success ? '✅' : '❌'} Fix workflow ${result.success ? 'completed' : 'failed'}!\n\n${result.summary}`
+      );
+
+      if (result.filesModified.length > 0) {
+        await bot.sendMessage(chatId,
+          `Modified files:\n${result.filesModified.map(f => `• ${f}`).join('\n')}`
+        );
+      }
+
+    } catch (error) {
+      console.error('[TelegramHandler] Fix workflow failed:', error);
+      await bot.sendMessage(chatId, `Fix workflow failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Handle /task-build command - full development cycle
+   */
+  private async handleTaskBuildCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+    const taskDescription = text.replace('/task-build', '').trim();
+
+    if (!taskDescription) {
+      await bot.sendMessage(chatId, 'Please provide a task description after /task-build');
+      return;
+    }
+
+    // Delegate to existing task handler (this is the default /task behavior)
+    await this.handleTaskCommand(msg, bot);
+  }
 
   private async handleTaskCommand(msg: TelegramMessage, bot: TelegramBotAPI): Promise<void> {
     const chatId = msg.chat.id;

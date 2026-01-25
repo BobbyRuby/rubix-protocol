@@ -25,7 +25,8 @@ import { CausalDebugger, type CausalChain } from './CausalDebugger.js';
 import { CollaborativePartner } from './CollaborativePartner.js';
 import { WorkingMemoryManager } from './WorkingMemoryManager.js';
 import type { NotificationService } from '../notification/NotificationService.js';
-import type { CodeReviewer } from '../review/CodeReviewer.js';
+import { CodeReviewer } from '../review/CodeReviewer.js';
+import { ReviewReportGenerator, type ReviewRequest } from '../review/index.js';
 import { DeepWorkManager, type DeepWorkSession, type DeepWorkOptions, type FocusLevel } from '../deepwork/index.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
 import type { EscalationResponse } from '../communication/types.js';
@@ -1526,16 +1527,228 @@ export class TaskExecutor {
   }
 
   /**
-   * Execute review subtask
+   * Execute review subtask - performs actual code review using CodeReviewer
    */
   private async executeReview(
-    _subtask: Subtask
-  ): Promise<{ success: boolean; output?: string; error?: string }> {
-    // Code review - would analyze changes and check quality
-    return {
-      success: true,
-      output: 'Code review complete. No issues found.'
-    };
+    subtask: Subtask
+  ): Promise<{ success: boolean; output?: string; error?: string; issues?: unknown[] }> {
+    try {
+      // Get or create code reviewer
+      const reviewer = this.getOrCreateCodeReviewer();
+      if (!reviewer) {
+        return {
+          success: false,
+          error: 'CodeReviewer not available - missing MemoryEngine or project root'
+        };
+      }
+
+      // Get files to review from subtask context
+      const files = await this.getFilesToReview(subtask);
+
+      if (files.length === 0) {
+        return {
+          success: true,
+          output: 'No files to review. Specify files explicitly or ensure recent git changes exist.'
+        };
+      }
+
+      console.log(`[TaskExecutor] Reviewing ${files.length} files: ${files.slice(0, 5).join(', ')}${files.length > 5 ? '...' : ''}`);
+
+      // Determine review type based on subtask description
+      const isSecurityReview = /security|vulnerab|owasp|cwe/i.test(subtask.description);
+      const isQuickReview = /quick|fast|brief/i.test(subtask.description);
+
+      // Create review request
+      const reviewRequest: ReviewRequest = {
+        id: randomUUID(),
+        files,
+        type: isSecurityReview ? 'security' : isQuickReview ? 'quick' : 'full',
+        description: subtask.description
+      };
+
+      // Execute the review
+      const result = await reviewer.review(reviewRequest);
+
+      // Generate markdown report suitable for display
+      const projectRoot = this.currentTask?.codebase || process.cwd();
+      const generator = new ReviewReportGenerator(projectRoot);
+      const report = generator.generateMarkdown(result, {
+        format: 'markdown',
+        includeSourceSnippets: false,
+        groupByCategory: true
+      });
+
+      // Determine success based on approval
+      const success = result.approval.approved;
+      const criticalCount = result.summary.bySeverity.critical || 0;
+      const highCount = result.summary.bySeverity.high || 0;
+
+      // Build output summary
+      let output = `**Code Review Complete**\n\n`;
+      output += `**Status:** ${result.status.toUpperCase()}\n`;
+      output += `**Score:** ${result.summary.score}/100\n`;
+      output += `**Files Reviewed:** ${result.summary.totalFiles}\n`;
+      output += `**Issues Found:** ${result.summary.totalIssues}`;
+
+      if (criticalCount > 0 || highCount > 0) {
+        output += ` (${criticalCount} critical, ${highCount} high)`;
+      }
+      output += `\n\n`;
+
+      if (!result.approval.approved) {
+        output += `**Action Required:** ${result.approval.reason}\n\n`;
+      }
+
+      // Append abbreviated report (truncate for Telegram)
+      if (report.length > 3000) {
+        output += report.substring(0, 3000) + '\n\n...(truncated)';
+      } else {
+        output += report;
+      }
+
+      return {
+        success,
+        output,
+        issues: result.issues.length > 0 ? result.issues : undefined
+      };
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[TaskExecutor] Review failed:', message);
+      return {
+        success: false,
+        error: `Code review failed: ${message}`
+      };
+    }
+  }
+
+  /**
+   * Get or lazily create a CodeReviewer instance
+   */
+  private getOrCreateCodeReviewer(): CodeReviewer | null {
+    // Return existing reviewer if already set
+    if (this.codeReviewer) {
+      return this.codeReviewer;
+    }
+
+    // Create a new reviewer if we have the necessary components
+    const projectRoot = this.currentTask?.codebase || process.cwd();
+
+    try {
+      this.codeReviewer = new CodeReviewer(
+        this.engine,
+        projectRoot,
+        { parallel: true, maxParallelFiles: 5 },
+        this.capabilities
+      );
+      return this.codeReviewer;
+    } catch (error) {
+      console.error('[TaskExecutor] Failed to create CodeReviewer:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get files to review based on subtask description and context
+   */
+  private async getFilesToReview(subtask: Subtask): Promise<string[]> {
+    const projectRoot = this.currentTask?.codebase || process.cwd();
+
+    // Option 1: Extract explicitly mentioned file paths from description
+    const mentionedFiles = this.extractFilePaths(subtask.description);
+    if (mentionedFiles.length > 0) {
+      console.log(`[TaskExecutor] Found ${mentionedFiles.length} explicitly mentioned files`);
+      return mentionedFiles;
+    }
+
+    // Option 2: Get recently modified files from git
+    try {
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      // Try to get files from recent commits
+      const { stdout } = await execAsync('git diff --name-only HEAD~5 HEAD', {
+        cwd: projectRoot,
+        timeout: 10000
+      });
+
+      const gitFiles = stdout
+        .trim()
+        .split('\n')
+        .filter(f => f && /\.(ts|js|tsx|jsx|py|java|go|rs|rb|php|cs)$/i.test(f));
+
+      if (gitFiles.length > 0) {
+        console.log(`[TaskExecutor] Found ${gitFiles.length} files from git history`);
+        return gitFiles.slice(0, 50); // Limit to 50 files
+      }
+
+      // Try staged files
+      const { stdout: stagedStdout } = await execAsync('git diff --name-only --cached', {
+        cwd: projectRoot,
+        timeout: 10000
+      });
+
+      const stagedFiles = stagedStdout
+        .trim()
+        .split('\n')
+        .filter(f => f && /\.(ts|js|tsx|jsx|py|java|go|rs|rb|php|cs)$/i.test(f));
+
+      if (stagedFiles.length > 0) {
+        console.log(`[TaskExecutor] Found ${stagedFiles.length} staged files`);
+        return stagedFiles;
+      }
+
+    } catch {
+      // Git not available or not a git repo - continue to fallback
+    }
+
+    // Option 3: Find source files using glob (limited scope)
+    try {
+      const { glob } = await import('glob');
+      const files = await glob('src/**/*.{ts,js,tsx,jsx}', {
+        cwd: projectRoot,
+        ignore: ['**/node_modules/**', '**/dist/**', '**/build/**', '**/*.d.ts', '**/*.test.*', '**/*.spec.*']
+      });
+
+      if (files.length > 0) {
+        console.log(`[TaskExecutor] Found ${files.length} source files via glob`);
+        return files.slice(0, 50); // Limit to 50 files
+      }
+    } catch {
+      // Glob failed - return empty
+    }
+
+    return [];
+  }
+
+  /**
+   * Extract file paths from text (description)
+   */
+  private extractFilePaths(text: string): string[] {
+    const files: string[] = [];
+
+    // Match common file path patterns
+    // Patterns: src/foo/bar.ts, ./path/to/file.js, path/file.tsx, etc.
+    const patterns = [
+      // Explicit paths with extensions
+      /(?:^|\s|[`"'])([a-zA-Z0-9_\-./\\]+\.(ts|tsx|js|jsx|py|java|go|rs|rb|php|cs|vue|svelte))(?:\s|[`"']|$|:)/gi,
+      // src/ or lib/ prefixed paths
+      /(?:src|lib|app|pages|components)\/[a-zA-Z0-9_\-./]+\.(ts|tsx|js|jsx)/gi
+    ];
+
+    for (const pattern of patterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const filePath = match[1] || match[0];
+        const cleaned = filePath.replace(/^[`"']+|[`"']+$/g, '').trim();
+        if (cleaned && !files.includes(cleaned)) {
+          files.push(cleaned);
+        }
+      }
+    }
+
+    return files;
   }
 
   /**
@@ -2435,6 +2648,29 @@ Summary: ${result.summary}`;
   }
 
   /**
+   * Set plan deviation mode for the PhasedExecutor.
+   * Controls how architect design deviations from approved plans are handled.
+   *
+   * @param mode - 'strict' (always escalate), 'smart' (major only), 'autonomous' (never escalate)
+   */
+  setPlanDeviationMode(mode: 'strict' | 'smart' | 'autonomous'): void {
+    if (this.phasedExecutor) {
+      this.phasedExecutor.setPlanDeviationMode(mode);
+    }
+    console.log(`[TaskExecutor] Plan deviation mode set to: ${mode}`);
+  }
+
+  /**
+   * Get current plan deviation mode.
+   */
+  getPlanDeviationMode(): 'strict' | 'smart' | 'autonomous' {
+    if (this.phasedExecutor) {
+      return this.phasedExecutor.getPlanDeviationMode();
+    }
+    return 'strict';  // Default
+  }
+
+  /**
    * Execute task using PhasedExecutor (6-phase tokenized flow)
    *
    * Phases:
@@ -2458,7 +2694,8 @@ Summary: ${result.summary}`;
       if (!this.phasedExecutor) {
         this.phasedExecutor = new PhasedExecutor(task.codebase, false, this.engine, this.communications);
       } else {
-        // Ensure engine and comms are always wired up
+        // Ensure engine, comms, and codebase are always wired up
+        this.phasedExecutor.setCodebasePath(task.codebase);  // Critical: update codebase for each task
         this.phasedExecutor.setMemoryEngine(this.engine);
         if (this.communications) {
           this.phasedExecutor.setCommunicationManager(this.communications);
@@ -2629,6 +2866,462 @@ Summary: ${result.summary}`;
       filesModified,
       testsWritten,
       duration: Date.now() - startTime,
+      decisions: [],
+      assumptions: []
+    };
+  }
+
+  // ==========================================
+  // TASK TYPE SYSTEM - REVIEW & FIX
+  // ==========================================
+
+  /**
+   * Execute review-only workflow
+   * NO code generation - analysis only
+   */
+  async executeReviewOnly(description: string, projectRoot: string): Promise<import('./types.js').ReviewOutput> {
+    const { randomUUID } = await import('crypto');
+
+    this.log('start', `Starting review-only workflow: ${description}`);
+
+    // Parse flags from description
+    const flags = this.parseReviewFlags(description);
+    const cleanDesc = description.replace(/--\w+/g, '').trim();
+
+    // Get files to review
+    const files = await this.getFilesToReviewFromDescription(cleanDesc, projectRoot);
+
+    if (files.length === 0) {
+      throw new Error('No files found to review. Specify file paths, git changes, or a glob pattern.');
+    }
+
+    this.log('progress', `Reviewing ${files.length} file(s)`);
+
+    // Get or create code reviewer
+    const reviewer = this.getOrCreateCodeReviewer();
+    if (!reviewer) {
+      throw new Error('CodeReviewer not available - missing MemoryEngine or project root');
+    }
+
+    // Determine review type based on flags
+    let reviewType: 'quick' | 'full' | 'security' = 'full';
+    if (flags.has('security')) {
+      reviewType = 'security';
+    }
+
+    // Run CodeReviewer
+    const result = await reviewer.review({
+      id: randomUUID(),
+      files,
+      type: reviewType,
+      description: cleanDesc
+    });
+
+    // Generate outputs
+    const reviewId = randomUUID().slice(0, 8);
+    const timestamp = new Date();
+
+    // Generate full report
+    const generator = new ReviewReportGenerator(projectRoot);
+    const fullReport = generator.generateMarkdown(result, {
+      format: 'markdown',
+      groupByCategory: true
+    });
+
+    // Tokenize for /task-fix
+    const tokenized = this.tokenizeReviewResult(result, reviewId, timestamp, files);
+
+    // Store in memory for /task-fix
+    await this.engine.store(JSON.stringify(tokenized), {
+      tags: ['codex-review', `review:${reviewId}`, 'task-type:review'],
+      importance: 0.8
+    });
+
+    this.log('complete', `Review complete: ${tokenized.issues.length} issues found`);
+
+    return {
+      id: reviewId,
+      timestamp,
+      scope: files,
+      fullReport,
+      tokenized
+    };
+  }
+
+  /**
+   * Parse review flags from description
+   */
+  private parseReviewFlags(description: string): Set<string> {
+    const flags = new Set<string>();
+    const flagMatches = description.match(/--(\w+)/g);
+
+    if (flagMatches) {
+      flagMatches.forEach(flag => {
+        flags.add(flag.replace('--', ''));
+      });
+    }
+
+    return flags;
+  }
+
+  /**
+   * Get files to review from description
+   */
+  private async getFilesToReviewFromDescription(description: string, projectRoot: string): Promise<string[]> {
+    const { glob } = await import('glob');
+    const { execSync } = await import('child_process');
+    const path = await import('path');
+    const fs = await import('fs');
+
+    // Check for git changes
+    if (description.includes('git changes') || description.includes('uncommitted')) {
+      try {
+        const output = execSync('git diff --name-only HEAD', {
+          cwd: projectRoot,
+          encoding: 'utf-8'
+        });
+        const files = output.split('\n').filter(f => f.trim());
+        return files.map(f => path.join(projectRoot, f));
+      } catch (error) {
+        this.log('progress', 'No git changes found, falling back to file pattern');
+      }
+    }
+
+    // Check for explicit file paths
+    const filePattern = /(?:^|\s)([\w\/\\.-]+\.(ts|js|tsx|jsx|py|java|go|rs|c|cpp|h|hpp))/gi;
+    const matches = description.match(filePattern);
+
+    if (matches) {
+      const files: string[] = [];
+      for (const match of matches) {
+        const filePath = match.trim();
+        const fullPath = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
+
+        if (fs.existsSync(fullPath)) {
+          files.push(fullPath);
+        }
+      }
+
+      if (files.length > 0) {
+        return files;
+      }
+    }
+
+    // Check for glob pattern
+    const globPattern = description.match(/(?:glob|pattern):\s*([^\s]+)/i);
+    if (globPattern) {
+      const pattern = globPattern[1];
+      const files = await glob(pattern, { cwd: projectRoot, absolute: true });
+      return files.filter(f => !f.includes('node_modules') && !f.includes('.git'));
+    }
+
+    // Default: review all source files in project (limit to 50)
+    const defaultPattern = '**/*.{ts,tsx,js,jsx}';
+    const files = await glob(defaultPattern, {
+      cwd: projectRoot,
+      absolute: true,
+      ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**']
+    });
+
+    return files.slice(0, 50);
+  }
+
+  /**
+   * Tokenize review result for storage and /task-fix
+   */
+  private tokenizeReviewResult(
+    result: import('../review/types.js').ReviewResult,
+    reviewId: string,
+    timestamp: Date,
+    scope: string[]
+  ): import('./types.js').TokenizedReview {
+    const issues: import('./types.js').ReviewIssue[] = [];
+
+    // Convert review issues to our tokenized format
+    for (const issue of result.issues) {
+      // Map severity (ReviewSeverity includes 'info' which we don't use)
+      const severity = issue.severity === 'info' ? 'low' : issue.severity;
+
+      issues.push({
+        id: `${severity.toUpperCase().slice(0, 3)}-${issues.length.toString().padStart(3, '0')}`,
+        severity: severity as import('./types.js').IssueSeverity,
+        category: this.categorizeIssue(issue),
+        file: issue.file,
+        line: issue.line || 0,
+        title: issue.title,
+        description: issue.description,
+        suggestedFix: issue.fix?.description
+      });
+    }
+
+    // Estimate effort based on issue count and severity
+    const criticalCount = issues.filter(i => i.severity === 'critical').length;
+    const highCount = issues.filter(i => i.severity === 'high').length;
+
+    let estimatedEffort: import('./types.js').EffortEstimate = 'low';
+    if (criticalCount > 3 || highCount > 10) {
+      estimatedEffort = 'high';
+    } else if (criticalCount > 0 || highCount > 5) {
+      estimatedEffort = 'medium';
+    }
+
+    // Extract affected files
+    const affectedFiles = Array.from(new Set(issues.map(i => i.file)));
+
+    // Generate summary
+    const summary = `Review of ${scope.length} file(s) found ${issues.length} issue(s): ` +
+      `${criticalCount} critical, ${highCount} high, ` +
+      `${issues.filter(i => i.severity === 'medium').length} medium, ` +
+      `${issues.filter(i => i.severity === 'low').length} low.`;
+
+    return {
+      id: reviewId,
+      timestamp,
+      scope,
+      summary,
+      issues,
+      affectedFiles,
+      estimatedEffort
+    };
+  }
+
+  /**
+   * Categorize a review issue into our simplified categories
+   */
+  private categorizeIssue(issue: import('../review/types.js').ReviewIssue): import('./types.js').IssueCategory {
+    // Map ReviewCategory to IssueCategory
+    const category = issue.category;
+
+    if (category === 'security') return 'security';
+    if (category === 'performance') return 'performance';
+    if (category === 'style' || category === 'documentation') return 'style';
+
+    return 'logic';
+  }
+
+  /**
+   * Execute interactive fix workflow
+   * Consumes review context and fixes selected issues
+   */
+  async executeInteractiveFix(comms: CommunicationManager): Promise<TaskResult> {
+    if (!comms) {
+      throw new Error('CommunicationManager required for interactive fix workflow');
+    }
+
+    this.log('start', 'Starting interactive fix workflow');
+
+    // 1. List recent reviews
+    const reviews = await this.engine.query('', {
+      topK: 10,
+      filters: { tags: ['codex-review'] }
+    });
+
+    if (reviews.length === 0) {
+      throw new Error('No reviews found. Run /task-review first to generate a review.');
+    }
+
+    // 2. Ask user to select review
+    const reviewList = reviews.map((r, i) => {
+      const data = JSON.parse(r.entry.content) as import('./types.js').TokenizedReview;
+      const criticalCount = data.issues.filter(issue => issue.severity === 'critical').length;
+      const highCount = data.issues.filter(issue => issue.severity === 'high').length;
+
+      return {
+        label: `${i + 1}`,
+        description: `[${data.id}] ${data.timestamp.toString().slice(0, 10)} - ${data.issues.length} issues (${criticalCount} critical, ${highCount} high) - ${data.affectedFiles.slice(0, 3).join(', ')}${data.affectedFiles.length > 3 ? '...' : ''}`
+      };
+    });
+
+    const reviewSelection: import('./types.js').Escalation = {
+      id: randomUUID(),
+      taskId: 'task-fix',
+      type: 'decision',
+      title: 'Select Review',
+      context: `Which review should I use for fixes?\n\nRecent reviews:\n${reviewList.map((r, i) => `${i + 1}. ${r.description}`).join('\n')}`,
+      options: reviewList,
+      blocking: true,
+      createdAt: new Date()
+    };
+
+    const selection = await comms.escalate(reviewSelection);
+
+    if (!selection || !selection.selectedOption) {
+      throw new Error('No review selected');
+    }
+
+    // 3. Load selected review (selectedOption is 1-indexed from options list)
+    const selectedIndex = parseInt(selection.selectedOption) - 1;
+    const selectedReview = JSON.parse(reviews[selectedIndex].entry.content) as import('./types.js').TokenizedReview;
+    this.log('progress', `Selected review: ${selectedReview.id}`);
+
+    // 4. Present issues for selection
+    const issueSelection = await this.presentIssuesForSelection(selectedReview, comms);
+
+    // 5. Execute fixes for selected issues
+    return await this.executeSelectedFixes(selectedReview, issueSelection);
+  }
+
+  /**
+   * Present issues to user for selection
+   */
+  private async presentIssuesForSelection(
+    review: import('./types.js').TokenizedReview,
+    comms: CommunicationManager
+  ): Promise<string[]> {
+    // Group by severity
+    const bySeverity = {
+      critical: review.issues.filter(i => i.severity === 'critical'),
+      high: review.issues.filter(i => i.severity === 'high'),
+      medium: review.issues.filter(i => i.severity === 'medium'),
+      low: review.issues.filter(i => i.severity === 'low')
+    };
+
+    // Build message
+    let message = `Review ${review.id} has ${review.issues.length} issues.\n\nWhich should I fix?\n\n`;
+
+    if (bySeverity.critical.length > 0) {
+      message += `**Critical (${bySeverity.critical.length}):**\n`;
+      bySeverity.critical.forEach(issue => {
+        message += `☑️ ${issue.id}: ${issue.title} (${issue.file}:${issue.line})\n`;
+      });
+      message += '\n';
+    }
+
+    if (bySeverity.high.length > 0) {
+      message += `**High (${bySeverity.high.length}):**\n`;
+      bySeverity.high.forEach(issue => {
+        message += `☑️ ${issue.id}: ${issue.title} (${issue.file}:${issue.line})\n`;
+      });
+      message += '\n';
+    }
+
+    if (bySeverity.medium.length > 0) {
+      message += `**Medium (${bySeverity.medium.length}):** [will show if selected]\n\n`;
+    }
+
+    if (bySeverity.low.length > 0) {
+      message += `**Low (${bySeverity.low.length}):** [will show if selected]\n\n`;
+    }
+
+    // Pre-select critical and high
+    const preselected = [...bySeverity.critical, ...bySeverity.high].map(i => i.id);
+    message += `\nPre-selected: ${preselected.length} issues (all critical + high)`;
+
+    // Ask for confirmation
+    const confirmEscalation: import('./types.js').Escalation = {
+      id: randomUUID(),
+      taskId: 'task-fix',
+      type: 'decision',
+      title: 'Confirm Issue Selection',
+      context: message,
+      options: [
+        { label: 'Fix selected', description: `Fix ${preselected.length} critical/high issues` },
+        { label: 'Fix all', description: `Fix all ${review.issues.length} issues` },
+        { label: 'Cancel', description: 'Cancel fix workflow' }
+      ],
+      blocking: true,
+      createdAt: new Date()
+    };
+
+    const response = await comms.escalate(confirmEscalation);
+
+    if (!response || !response.selectedOption) {
+      throw new Error('No option selected');
+    }
+
+    const choice = parseInt(response.selectedOption);
+
+    if (choice === 3) {
+      throw new Error('Fix workflow cancelled by user');
+    }
+
+    if (choice === 2) {
+      return review.issues.map(i => i.id);
+    }
+
+    return preselected;
+  }
+
+  /**
+   * Execute fixes for selected issues
+   */
+  private async executeSelectedFixes(
+    review: import('./types.js').TokenizedReview,
+    issueIds: string[]
+  ): Promise<TaskResult> {
+    const startTime = Date.now();
+    const selectedIssues = review.issues.filter(i => issueIds.includes(i.id));
+
+    this.log('start', `Fixing ${selectedIssues.length} selected issues`);
+
+    const filesModified: string[] = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    // Group issues by file for efficient fixing
+    const byFile = new Map<string, typeof selectedIssues>();
+    for (const issue of selectedIssues) {
+      if (!byFile.has(issue.file)) {
+        byFile.set(issue.file, []);
+      }
+      byFile.get(issue.file)!.push(issue);
+    }
+
+    // Fix each file's issues
+    for (const [file, issues] of byFile) {
+      this.log('progress', `Fixing ${issues.length} issue(s) in ${file}`);
+
+      try {
+        // Build context for this file's fixes
+        const fixContext = issues.map(i =>
+          `Issue ${i.id} (${i.severity}): ${i.title}\n` +
+          `Location: ${file}:${i.line}\n` +
+          `Description: ${i.description}\n` +
+          (i.suggestedFix ? `Suggested: ${i.suggestedFix}\n` : '')
+        ).join('\n---\n');
+
+        // Execute fix using phased executor
+        const fixTask: CodexTask = {
+          id: randomUUID(),
+          description: `Fix ${issues.length} issue(s) in ${file}`,
+          specification: `TARGETED FIX CONTEXT:\n${fixContext}\n\nFix ONLY the specific issues listed above. Do not refactor or modify other code.`,
+          codebase: this.currentTask?.codebase || process.cwd(),
+          status: TaskStatus.PENDING,
+          subtasks: [],
+          decisions: [],
+          assumptions: [],
+          createdAt: new Date()
+        };
+
+        if (this.phasedExecutor) {
+          const result = await this.phasedExecutor.execute(fixTask);
+
+          if (result.success) {
+            filesModified.push(file);
+            successCount += issues.length;
+            this.log('success', `Fixed ${issues.length} issue(s) in ${file}`);
+          } else {
+            failCount += issues.length;
+            this.log('failure', `Failed to fix issues in ${file}: ${result.error}`);
+          }
+        }
+
+      } catch (error) {
+        failCount += issues.length;
+        this.log('failure', `Error fixing ${file}: ${(error as Error).message}`);
+      }
+    }
+
+    const duration = Date.now() - startTime;
+
+    return {
+      success: successCount > 0,
+      summary: `Fixed ${successCount}/${selectedIssues.length} issues across ${filesModified.length} file(s). ${failCount} failed.`,
+      subtasksCompleted: successCount,
+      subtasksFailed: failCount,
+      filesModified,
+      testsWritten: 0,
+      duration,
       decisions: [],
       assumptions: []
     };

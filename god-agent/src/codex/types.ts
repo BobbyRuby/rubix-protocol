@@ -463,3 +463,65 @@ export interface PartnerAssessmentResult {
   /** Challenge context if challenging */
   challengeContext?: ChallengeContext;
 }
+
+// ==========================================
+// TASK TYPE SYSTEM
+// ==========================================
+
+/**
+ * Task type for specialized workflows
+ */
+export type TaskType = 'build' | 'review' | 'fix';
+
+/**
+ * Issue severity levels
+ */
+export type IssueSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+/**
+ * Issue categories
+ */
+export type IssueCategory = 'security' | 'performance' | 'style' | 'logic';
+
+/**
+ * Effort estimation
+ */
+export type EffortEstimate = 'low' | 'medium' | 'high';
+
+/**
+ * Single issue found during review
+ */
+export interface ReviewIssue {
+  id: string;
+  severity: IssueSeverity;
+  category: IssueCategory;
+  file: string;
+  line: number;
+  title: string;
+  description: string;
+  suggestedFix?: string;
+}
+
+/**
+ * Tokenized review summary for /task-fix
+ */
+export interface TokenizedReview {
+  id: string;
+  timestamp: Date;
+  scope: string[];
+  summary: string;
+  issues: ReviewIssue[];
+  affectedFiles: string[];
+  estimatedEffort: EffortEstimate;
+}
+
+/**
+ * Review output with full report and tokenized summary
+ */
+export interface ReviewOutput {
+  id: string;
+  timestamp: Date;
+  scope: string[];
+  fullReport: string;
+  tokenized: TokenizedReview;
+}
