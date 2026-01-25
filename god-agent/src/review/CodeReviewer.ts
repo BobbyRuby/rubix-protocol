@@ -8,11 +8,17 @@
  * - Logic review
  * - Test coverage analysis
  * - Summary generation
+ * - EventEmitter progress tracking
+ * - Parallel file processing
+ * - Rich statistics
+ * - Stop/Resume capability
+ * - Review history
  */
 
 import { randomUUID } from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { EventEmitter } from 'events';
 
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import type { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js';
@@ -33,147 +39,673 @@ import {
   type TestCoverageResult,
   type ReviewSeverity,
   type ReviewCategory,
+  type ReviewProgress,
+  type ReviewPhase,
+  type ReviewStatistics,
+  type ExtendedReviewConfig,
   DEFAULT_REVIEW_CONFIG
 } from './types.js';
 import { JS_SECURITY_PATTERNS, getPatternsForExtension, isFalsePositive } from './SecurityPatterns.js';
 
 /**
- * CodeReviewer - Automated code review engine
+ * Single file review result for parallel processing
  */
-export class CodeReviewer {
+interface SingleFileResult {
+  file: string;
+  issues: ReviewIssue[];
+  securityFindings: SecurityFinding[];
+  styleIssues: StyleIssue[];
+  fileResult: FileReviewResult;
+  codeLines: number;
+  commentLines: number;
+}
+
+/**
+ * CodeReviewer - Automated code review engine
+ *
+ * Extends EventEmitter for progress tracking.
+ * Emits: review:start, review:progress, review:issue, review:file:complete, review:complete, review:error, review:stopped
+ */
+export class CodeReviewer extends EventEmitter {
   private engine: MemoryEngine;
   private capabilities: CapabilitiesManager | undefined;
   private _playwright: PlaywrightManager | undefined;
   private verifier: VerificationService | undefined;
   private projectRoot: string;
-  private config: ReviewConfig;
+  private config: ExtendedReviewConfig;
+
+  // State tracking for stop/resume
+  private isReviewing: boolean = false;
+  private stopRequested: boolean = false;
+  private currentReviewId: string | null = null;
+
+  // Review history
+  private reviewHistory: ReviewResult[] = [];
+  private maxHistorySize: number = 10;
+
+  // Progress tracking
+  private reviewStartTime: number = 0;
+  private phaseTimings: Map<ReviewPhase, number> = new Map();
 
   constructor(
     engine: MemoryEngine,
     projectRoot: string,
-    config: Partial<ReviewConfig> = {},
+    config: Partial<ExtendedReviewConfig> = {},
     capabilities?: CapabilitiesManager,
     playwright?: PlaywrightManager,
     verifier?: VerificationService
   ) {
+    super();
     this.engine = engine;
     this.projectRoot = projectRoot;
-    this.config = { ...DEFAULT_REVIEW_CONFIG, ...config };
+    this.config = {
+      ...DEFAULT_REVIEW_CONFIG,
+      maxParallelFiles: 5,
+      fileTimeout: 30000,
+      parallel: true,
+      ...config
+    };
     this.capabilities = capabilities;
     this._playwright = playwright;
     this.verifier = verifier;
   }
 
   /**
-   * Perform a code review
+   * Perform a code review with progress tracking and parallel processing
    */
   async review(request: ReviewRequest): Promise<ReviewResult> {
-    const startTime = Date.now();
-    const config = { ...this.config, ...request.config };
+    // Prevent concurrent reviews
+    if (this.isReviewing) {
+      const error = new Error('A review is already in progress. Stop it first or wait for completion.');
+      this.emit('review:error', error);
+      throw error;
+    }
+
+    this.isReviewing = true;
+    this.stopRequested = false;
+    this.currentReviewId = request.id;
+    this.reviewStartTime = Date.now();
+    this.phaseTimings.clear();
+
+    const config: ExtendedReviewConfig = { ...this.config, ...request.config };
+
+    try {
+      // Emit start event
+      this.emit('review:start', request);
+      this.emitProgress('initializing', 0, request.files.length, 0, 0);
+
+      const issues: ReviewIssue[] = [];
+      const securityFindings: SecurityFinding[] = [];
+      const styleIssues: StyleIssue[] = [];
+      const fileResults: FileReviewResult[] = [];
+      const suggestedFixes: SuggestedFix[] = [];
+      const notes: string[] = [];
+      let totalCodeLines = 0;
+      let totalCommentLines = 0;
+
+      // Process files (parallel or sequential based on config)
+      const useParallel = config.parallel !== false && request.files.length > 1;
+      const phaseStartTime = Date.now();
+
+      if (useParallel) {
+        const results = await this.reviewFilesParallel(request.files, config, request.diff);
+        for (const result of results) {
+          if (this.stopRequested) break;
+          issues.push(...result.issues);
+          securityFindings.push(...result.securityFindings);
+          styleIssues.push(...result.styleIssues);
+          fileResults.push(result.fileResult);
+          totalCodeLines += result.codeLines;
+          totalCommentLines += result.commentLines;
+        }
+      } else {
+        // Sequential processing with progress updates
+        let filesProcessed = 0;
+        for (const file of request.files) {
+          if (this.stopRequested) {
+            notes.push('Review stopped by user request');
+            break;
+          }
+
+          const result = await this.reviewSingleFile(file, config, request.diff);
+          issues.push(...result.issues);
+          securityFindings.push(...result.securityFindings);
+          styleIssues.push(...result.styleIssues);
+          fileResults.push(result.fileResult);
+          totalCodeLines += result.codeLines;
+          totalCommentLines += result.commentLines;
+
+          // Emit file complete
+          const fileIssues = result.issues;
+          this.emit('review:file:complete', file, fileIssues);
+
+          filesProcessed++;
+          this.emitProgress('security', filesProcessed, request.files.length, issues.length, filesProcessed);
+        }
+      }
+
+      this.phaseTimings.set('security', Date.now() - phaseStartTime);
+
+      // Check if stopped
+      if (this.stopRequested) {
+        const partialResult = this.createPartialResult(request, issues, securityFindings, styleIssues, fileResults, notes, suggestedFixes);
+        this.emit('review:stopped', 'User requested stop');
+        this.addToHistory(partialResult);
+        return partialResult;
+      }
+
+      // Test coverage check
+      let testCoverage: TestCoverageResult | undefined;
+      if (config.tests && this.verifier) {
+        this.emitProgress('tests', fileResults.length, request.files.length, issues.length, fileResults.length);
+        const testStartTime = Date.now();
+        testCoverage = await this.checkTestCoverage();
+        this.phaseTimings.set('tests', Date.now() - testStartTime);
+      }
+
+      // Generate suggested fixes
+      this.emitProgress('generating', fileResults.length, request.files.length, issues.length, fileResults.length);
+      const genStartTime = Date.now();
+      for (const issue of issues) {
+        const fix = await this.generateFix(issue);
+        if (fix) {
+          suggestedFixes.push(fix);
+          issue.fix = fix;
+        }
+      }
+      this.phaseTimings.set('generating', Date.now() - genStartTime);
+
+      // Generate summary with rich statistics
+      const summary = this.generateSummary(issues, securityFindings, styleIssues, fileResults);
+
+      // Generate statistics
+      const statistics = this.calculateStatistics(
+        issues,
+        fileResults,
+        totalCodeLines,
+        totalCommentLines,
+        Date.now() - this.reviewStartTime
+      );
+
+      // Determine approval status
+      const approval = this.determineApproval(issues, securityFindings, config);
+
+      // Store review in memory
+      await this.storeReviewResult(request, summary, issues);
+
+      // Build result
+      const result: ReviewResult & { statistics?: ReviewStatistics } = {
+        requestId: request.id,
+        status: approval.approved ? 'approved' : 'changes_requested',
+        summary,
+        issues,
+        security: securityFindings,
+        style: styleIssues,
+        tests: testCoverage,
+        filesReviewed: fileResults,
+        duration: Date.now() - this.reviewStartTime,
+        notes,
+        approval,
+        suggestedFixes,
+        statistics
+      };
+
+      // Emit complete and add to history
+      this.emitProgress('complete', fileResults.length, request.files.length, issues.length, fileResults.length);
+      this.emit('review:complete', result);
+      this.addToHistory(result);
+
+      return result;
+
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emit('review:error', err);
+      throw err;
+    } finally {
+      this.isReviewing = false;
+      this.currentReviewId = null;
+    }
+  }
+
+  /**
+   * Review files in parallel batches
+   */
+  private async reviewFilesParallel(
+    files: string[],
+    config: ExtendedReviewConfig,
+    diff?: string
+  ): Promise<SingleFileResult[]> {
+    const concurrency = config.maxParallelFiles || 5;
+    const results: SingleFileResult[] = [];
+    let filesProcessed = 0;
+
+    for (let i = 0; i < files.length; i += concurrency) {
+      if (this.stopRequested) break;
+
+      const batch = files.slice(i, i + concurrency);
+      const batchPromises = batch.map(async (file) => {
+        try {
+          const result = await this.withTimeout(
+            this.reviewSingleFile(file, config, diff),
+            config.fileTimeout || 30000,
+            `Timeout reviewing ${file}`
+          );
+          return result;
+        } catch (error) {
+          // Return empty result for failed files
+          return {
+            file,
+            issues: [],
+            securityFindings: [],
+            styleIssues: [],
+            fileResult: {
+              file,
+              issueCount: 0,
+              highestSeverity: null,
+              isSensitive: false,
+              linesAdded: 0,
+              linesRemoved: 0
+            },
+            codeLines: 0,
+            commentLines: 0
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      // Emit progress and file complete events for batch
+      for (const result of batchResults) {
+        filesProcessed++;
+        this.emit('review:file:complete', result.file, result.issues);
+        this.emitProgress(
+          'security',
+          filesProcessed,
+          files.length,
+          results.reduce((sum, r) => sum + r.issues.length, 0),
+          filesProcessed
+        );
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Review a single file
+   */
+  private async reviewSingleFile(
+    file: string,
+    config: ExtendedReviewConfig,
+    diff?: string
+  ): Promise<SingleFileResult> {
+    const absolutePath = path.isAbsolute(file)
+      ? file
+      : path.join(this.projectRoot, file);
 
     const issues: ReviewIssue[] = [];
     const securityFindings: SecurityFinding[] = [];
     const styleIssues: StyleIssue[] = [];
-    const fileResults: FileReviewResult[] = [];
-    const suggestedFixes: SuggestedFix[] = [];
-    const notes: string[] = [];
+    let codeLines = 0;
+    let commentLines = 0;
 
-    // Process each file
-    for (const file of request.files) {
-      const absolutePath = path.isAbsolute(file)
-        ? file
-        : path.join(this.projectRoot, file);
+    try {
+      const content = await fs.readFile(absolutePath, 'utf-8');
+      const ext = path.extname(file);
 
-      try {
-        const content = await fs.readFile(absolutePath, 'utf-8');
-        const ext = path.extname(file);
+      // Count lines
+      const lineStats = this.countCodeLines(content, ext);
+      codeLines = lineStats.code;
+      commentLines = lineStats.comments;
 
-        // Check if this is a sensitive file
-        const isSensitive = this.isSensitiveFile(file, config);
-        if (isSensitive) {
-          notes.push(`Sensitive file flagged for review: ${file}`);
+      // Check if this is a sensitive file
+      const isSensitive = this.isSensitiveFile(file, config);
+
+      // Security scanning
+      if (config.security) {
+        const findings = await this.scanSecurity(file, content, ext);
+        securityFindings.push(...findings);
+
+        for (const finding of findings) {
+          const issue = this.securityFindingToIssue(finding);
+          issues.push(issue);
+          this.emit('review:issue', issue, file);
         }
+      }
 
-        // Security scanning
-        if (config.security) {
-          const findings = await this.scanSecurity(file, content, ext);
-          securityFindings.push(...findings);
+      // Style/lint checking
+      if (config.style && this.capabilities) {
+        const styleResults = await this.checkStyle(file);
+        styleIssues.push(...styleResults);
 
-          // Convert security findings to issues
-          for (const finding of findings) {
-            issues.push(this.securityFindingToIssue(finding));
-          }
+        for (const style of styleResults) {
+          const issue = this.styleIssueToReviewIssue(style);
+          issues.push(issue);
+          this.emit('review:issue', issue, file);
         }
+      }
 
-        // Style/lint checking
-        if (config.style && this.capabilities) {
-          const styleResults = await this.checkStyle(file);
-          styleIssues.push(...styleResults);
-
-          // Convert style issues to general issues
-          for (const style of styleResults) {
-            issues.push(this.styleIssueToReviewIssue(style));
-          }
+      // Logic review (type checking)
+      if (config.logic && this.capabilities) {
+        const logicIssues = await this.checkLogic(file);
+        for (const issue of logicIssues) {
+          issues.push(issue);
+          this.emit('review:issue', issue, file);
         }
+      }
 
-        // Logic review (type checking)
-        if (config.logic && this.capabilities) {
-          const logicIssues = await this.checkLogic(file);
-          issues.push(...logicIssues);
-        }
-
-        // Calculate file metrics
-        fileResults.push({
+      return {
+        file,
+        issues,
+        securityFindings,
+        styleIssues,
+        fileResult: {
           file,
-          issueCount: issues.filter(i => i.file === file).length,
-          highestSeverity: this.getHighestSeverity(issues.filter(i => i.file === file)),
+          issueCount: issues.length,
+          highestSeverity: this.getHighestSeverity(issues),
           isSensitive,
-          linesAdded: this.estimateLinesChanged(request.diff, file, 'add'),
-          linesRemoved: this.estimateLinesChanged(request.diff, file, 'remove')
-        });
-      } catch (error) {
-        notes.push(`Failed to review ${file}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          linesAdded: this.estimateLinesChanged(diff, file, 'add'),
+          linesRemoved: this.estimateLinesChanged(diff, file, 'remove')
+        },
+        codeLines,
+        commentLines
+      };
+    } catch (error) {
+      // Return empty result with error noted
+      return {
+        file,
+        issues: [],
+        securityFindings: [],
+        styleIssues: [],
+        fileResult: {
+          file,
+          issueCount: 0,
+          highestSeverity: null,
+          isSensitive: false,
+          linesAdded: 0,
+          linesRemoved: 0
+        },
+        codeLines: 0,
+        commentLines: 0
+      };
+    }
+  }
+
+  /**
+   * Emit progress event
+   */
+  private emitProgress(
+    phase: ReviewPhase,
+    filesProcessed: number,
+    totalFiles: number,
+    issuesFound: number,
+    currentStep: number
+  ): void {
+    const elapsedTime = Date.now() - this.reviewStartTime;
+    const percentage = totalFiles > 0 ? Math.round((filesProcessed / totalFiles) * 100) : 0;
+
+    // Estimate remaining time based on elapsed time and progress
+    let estimatedTimeRemaining: number | undefined;
+    if (filesProcessed > 0 && filesProcessed < totalFiles) {
+      const avgTimePerFile = elapsedTime / filesProcessed;
+      estimatedTimeRemaining = Math.round(avgTimePerFile * (totalFiles - filesProcessed));
+    }
+
+    const progress: ReviewProgress = {
+      phase,
+      totalSteps: totalFiles + 2, // files + tests + fixes
+      currentStep,
+      percentage,
+      filesProcessed,
+      totalFiles,
+      issuesFound,
+      elapsedTime,
+      estimatedTimeRemaining
+    };
+
+    this.emit('review:progress', progress);
+  }
+
+  /**
+   * Timeout wrapper for async operations
+   */
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    message: string
+  ): Promise<T> {
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), ms);
+    });
+
+    try {
+      const result = await Promise.race([promise, timeoutPromise]);
+      clearTimeout(timeoutId!);
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId!);
+      throw error;
+    }
+  }
+
+  /**
+   * Count code and comment lines
+   */
+  private countCodeLines(content: string, ext: string): { code: number; comments: number } {
+    const lines = content.split('\n');
+    let code = 0;
+    let comments = 0;
+    let inBlockComment = false;
+
+    const singleLineComment = ext.match(/\.(js|ts|tsx|jsx|java|c|cpp|cs|go|rs|swift)$/)
+      ? '//'
+      : ext.match(/\.(py|rb|sh|bash|yaml|yml)$/)
+        ? '#'
+        : null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (!trimmed) continue; // Skip empty lines
+
+      // Block comment handling (/* ... */)
+      if (trimmed.startsWith('/*')) {
+        inBlockComment = true;
+        comments++;
+        if (trimmed.endsWith('*/')) inBlockComment = false;
+        continue;
       }
+
+      if (inBlockComment) {
+        comments++;
+        if (trimmed.endsWith('*/')) inBlockComment = false;
+        continue;
+      }
+
+      // Single line comment
+      if (singleLineComment && trimmed.startsWith(singleLineComment)) {
+        comments++;
+        continue;
+      }
+
+      code++;
     }
 
-    // Test coverage check
-    let testCoverage: TestCoverageResult | undefined;
-    if (config.tests && this.verifier) {
-      testCoverage = await this.checkTestCoverage();
-    }
+    return { code, comments };
+  }
 
-    // Generate suggested fixes
+  /**
+   * Calculate rich statistics from review results
+   */
+  private calculateStatistics(
+    issues: ReviewIssue[],
+    fileResults: FileReviewResult[],
+    totalCodeLines: number,
+    totalCommentLines: number,
+    executionTime: number
+  ): ReviewStatistics {
+    const issuesByCategory: Record<ReviewCategory, number> = {
+      security: 0,
+      performance: 0,
+      logic: 0,
+      style: 0,
+      maintainability: 0,
+      documentation: 0,
+      testing: 0,
+      accessibility: 0,
+      compatibility: 0
+    };
+
+    const issuesBySeverity: Record<ReviewSeverity, number> = {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      info: 0
+    };
+
+    const issueTitles: Record<string, number> = {};
+
     for (const issue of issues) {
-      const fix = await this.generateFix(issue);
-      if (fix) {
-        suggestedFixes.push(fix);
-        issue.fix = fix;
+      issuesByCategory[issue.category]++;
+      issuesBySeverity[issue.severity]++;
+      issueTitles[issue.title] = (issueTitles[issue.title] || 0) + 1;
+    }
+
+    // Find most common issue type
+    let mostCommonIssueType: string | undefined;
+    let maxCount = 0;
+    for (const [title, count] of Object.entries(issueTitles)) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommonIssueType = title;
       }
     }
 
-    // Generate summary
+    const filesWithIssues = fileResults.filter(f => f.issueCount > 0).length;
+
+    // Convert phase timings to record
+    const timeByPhase: Record<ReviewPhase, number> = {
+      initializing: this.phaseTimings.get('initializing') || 0,
+      security: this.phaseTimings.get('security') || 0,
+      style: this.phaseTimings.get('style') || 0,
+      logic: this.phaseTimings.get('logic') || 0,
+      tests: this.phaseTimings.get('tests') || 0,
+      generating: this.phaseTimings.get('generating') || 0,
+      complete: 0
+    };
+
+    return {
+      filesScanned: fileResults.length,
+      filesWithIssues,
+      totalIssues: issues.length,
+      issuesByCategory,
+      issuesBySeverity,
+      averageIssuesPerFile: fileResults.length > 0 ? issues.length / fileResults.length : 0,
+      mostCommonIssueType,
+      totalCodeLines,
+      totalCommentLines,
+      codeToCommentRatio: totalCommentLines > 0 ? totalCodeLines / totalCommentLines : totalCodeLines,
+      executionTime,
+      timeByPhase
+    };
+  }
+
+  /**
+   * Create a partial result when review is stopped
+   */
+  private createPartialResult(
+    request: ReviewRequest,
+    issues: ReviewIssue[],
+    securityFindings: SecurityFinding[],
+    styleIssues: StyleIssue[],
+    fileResults: FileReviewResult[],
+    notes: string[],
+    suggestedFixes: SuggestedFix[]
+  ): ReviewResult {
+    notes.push('Review was stopped before completion');
     const summary = this.generateSummary(issues, securityFindings, styleIssues, fileResults);
-
-    // Determine approval status
-    const approval = this.determineApproval(issues, securityFindings, config);
-
-    // Store review in memory
-    await this.storeReviewResult(request, summary, issues);
 
     return {
       requestId: request.id,
-      status: approval.approved ? 'approved' : 'changes_requested',
+      status: 'pending',
       summary,
       issues,
       security: securityFindings,
       style: styleIssues,
-      tests: testCoverage,
       filesReviewed: fileResults,
-      duration: Date.now() - startTime,
+      duration: Date.now() - this.reviewStartTime,
       notes,
-      approval,
+      approval: {
+        approved: false,
+        reason: 'Review incomplete - stopped before completion',
+        requiresHumanReview: true
+      },
       suggestedFixes
     };
+  }
+
+  /**
+   * Add result to history
+   */
+  private addToHistory(result: ReviewResult): void {
+    this.reviewHistory.unshift(result);
+    if (this.reviewHistory.length > this.maxHistorySize) {
+      this.reviewHistory.pop();
+    }
+  }
+
+  // ===========================================================================
+  // Stop/Resume and Status Methods
+  // ===========================================================================
+
+  /**
+   * Stop the current review
+   */
+  stopReview(): void {
+    if (this.isReviewing) {
+      this.stopRequested = true;
+    }
+  }
+
+  /**
+   * Check if a review is in progress
+   */
+  isReviewInProgress(): boolean {
+    return this.isReviewing;
+  }
+
+  /**
+   * Get current review ID
+   */
+  getCurrentReviewId(): string | null {
+    return this.currentReviewId;
+  }
+
+  /**
+   * Get review history
+   */
+  getReviewHistory(): ReviewResult[] {
+    return [...this.reviewHistory];
+  }
+
+  /**
+   * Clear review history
+   */
+  clearHistory(): void {
+    this.reviewHistory = [];
+  }
+
+  /**
+   * Set maximum history size
+   */
+  setMaxHistorySize(size: number): void {
+    this.maxHistorySize = size;
+    while (this.reviewHistory.length > this.maxHistorySize) {
+      this.reviewHistory.pop();
+    }
   }
 
   /**
@@ -913,7 +1445,7 @@ Low: ${summary.bySeverity.low}`;
   /**
    * Update configuration
    */
-  setConfig(config: Partial<ReviewConfig>): void {
+  setConfig(config: Partial<ExtendedReviewConfig>): void {
     this.config = { ...this.config, ...config };
   }
 
@@ -935,7 +1467,7 @@ Low: ${summary.bySeverity.low}`;
   /**
    * Get current configuration
    */
-  getConfig(): ReviewConfig {
+  getConfig(): ExtendedReviewConfig {
     return { ...this.config };
   }
 

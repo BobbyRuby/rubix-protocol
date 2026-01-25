@@ -485,3 +485,145 @@ export interface SecurityPattern {
   /** False positive indicators */
   falsePositiveIndicators?: RegExp[];
 }
+
+// =============================================================================
+// Progress Tracking Types
+// =============================================================================
+
+/**
+ * Review progress information for real-time tracking
+ */
+export interface ReviewProgress {
+  /** Current phase of review */
+  phase: ReviewPhase;
+  /** Total steps in review process */
+  totalSteps: number;
+  /** Current step number */
+  currentStep: number;
+  /** Completion percentage (0-100) */
+  percentage: number;
+  /** Current file being reviewed */
+  currentFile?: string;
+  /** Number of files processed */
+  filesProcessed: number;
+  /** Total files to process */
+  totalFiles: number;
+  /** Issues found so far */
+  issuesFound: number;
+  /** Elapsed time in milliseconds */
+  elapsedTime: number;
+  /** Estimated time remaining in milliseconds */
+  estimatedTimeRemaining?: number;
+}
+
+/**
+ * Review phases
+ */
+export type ReviewPhase =
+  | 'initializing'
+  | 'security'
+  | 'style'
+  | 'logic'
+  | 'tests'
+  | 'generating'
+  | 'complete';
+
+/**
+ * Typed event emitter interface for CodeReviewer
+ */
+export interface ReviewerEvents {
+  'review:start': (request: ReviewRequest) => void;
+  'review:progress': (progress: ReviewProgress) => void;
+  'review:issue': (issue: ReviewIssue, file: string) => void;
+  'review:file:complete': (file: string, issues: ReviewIssue[]) => void;
+  'review:complete': (result: ReviewResult) => void;
+  'review:error': (error: Error) => void;
+  'review:stopped': (reason: string) => void;
+}
+
+// =============================================================================
+// Statistics Types
+// =============================================================================
+
+/**
+ * Rich statistics from a review
+ */
+export interface ReviewStatistics {
+  /** Total files scanned */
+  filesScanned: number;
+  /** Files with at least one issue */
+  filesWithIssues: number;
+  /** Total issues found */
+  totalIssues: number;
+  /** Issues grouped by category */
+  issuesByCategory: Record<ReviewCategory, number>;
+  /** Issues grouped by severity */
+  issuesBySeverity: Record<ReviewSeverity, number>;
+  /** Average issues per file */
+  averageIssuesPerFile: number;
+  /** Most common issue type */
+  mostCommonIssueType?: string;
+  /** Total lines of code scanned */
+  totalCodeLines: number;
+  /** Total comment lines */
+  totalCommentLines: number;
+  /** Code to comment ratio */
+  codeToCommentRatio: number;
+  /** Average cyclomatic complexity (if available) */
+  averageComplexity?: number;
+  /** Maximum complexity found */
+  maxComplexity?: number;
+  /** Total execution time in ms */
+  executionTime: number;
+  /** Time breakdown by phase */
+  timeByPhase?: Record<ReviewPhase, number>;
+}
+
+// =============================================================================
+// Report Types
+// =============================================================================
+
+/**
+ * Report generation options
+ */
+export interface ReportOptions {
+  /** Output format */
+  format: ReportFormat;
+  /** Output file path (if saving to disk) */
+  outputPath?: string;
+  /** Include source code snippets */
+  includeSourceSnippets?: boolean;
+  /** Group issues by category */
+  groupByCategory?: boolean;
+  /** Group issues by file */
+  groupByFile?: boolean;
+  /** Include statistics charts (HTML only) */
+  includeCharts?: boolean;
+  /** Include fix suggestions */
+  includeFixes?: boolean;
+  /** Custom report title */
+  title?: string;
+  /** Custom CSS styles (HTML only) */
+  customStyles?: string;
+}
+
+/**
+ * Report format types
+ */
+export type ReportFormat = 'html' | 'json' | 'markdown';
+
+/**
+ * Extended review config with parallel processing options
+ */
+export interface ExtendedReviewConfig extends ReviewConfig {
+  /** Maximum parallel file processing (default: 5) */
+  maxParallelFiles?: number;
+  /** File processing timeout in ms (default: 30000) */
+  fileTimeout?: number;
+  /** Enable parallel processing */
+  parallel?: boolean;
+  /** Report format to generate */
+  reportFormat?: ReportFormat;
+  /** Report output path */
+  reportOutputPath?: string;
+}
