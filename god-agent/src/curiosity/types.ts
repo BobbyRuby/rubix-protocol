@@ -47,6 +47,10 @@ export interface CuriosityProbe {
   successRate?: number;
   relatedPatterns?: string[];
   context?: Record<string, unknown>;
+
+  // Web exploration (optional)
+  webConfig?: WebExplorationConfig;
+  explorationMethod?: ExplorationMethod;
 }
 
 /**
@@ -63,6 +67,12 @@ export interface ExplorationResult {
   storedFacts: string[];
   confidence: number;
   durationMs: number;
+
+  // Web exploration results (optional)
+  screenshots?: string[];            // Paths to screenshot files
+  visitedUrls?: string[];
+  pageContents?: ExtractedPageContent[];
+  explorationMethod?: ExplorationMethod;
 }
 
 /**
@@ -135,4 +145,43 @@ export function calculatePriority(probe: Omit<CuriosityProbe, 'id' | 'createdAt'
   const urgencyBoost = (1 - probe.confidence) * 0.2;
 
   return Math.min(1.0, baseWeight + noveltyBoost + urgencyBoost);
+}
+
+/**
+ * Web exploration configuration for curiosity probes
+ */
+export interface WebExplorationConfig {
+  urls?: string[];              // Direct URLs to visit
+  searchQuery?: string;         // Google search query
+  selectors?: string[];         // CSS selectors to extract
+  maxPages?: number;            // Limit pages visited (default: 3)
+  captureScreenshots?: boolean; // Default: true
+}
+
+/**
+ * Exploration method for a probe
+ */
+export type ExplorationMethod = 'text' | 'web' | 'hybrid';
+
+/**
+ * Content extracted from a web page
+ */
+export interface ExtractedPageContent {
+  url: string;
+  title: string;
+  text: string;
+  extractedAt: Date;
+}
+
+/**
+ * Result of web exploration
+ */
+export interface WebExplorationResult {
+  success: boolean;
+  screenshots: string[];         // Paths to screenshot files
+  visitedUrls: string[];
+  pageContents: ExtractedPageContent[];
+  searchQuery?: string;
+  error?: string;
+  durationMs: number;
 }
