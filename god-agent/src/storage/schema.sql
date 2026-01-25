@@ -197,3 +197,26 @@ CREATE TABLE IF NOT EXISTS event_queue (
 CREATE INDEX IF NOT EXISTS idx_event_name ON event_queue(event);
 CREATE INDEX IF NOT EXISTS idx_event_consumed ON event_queue(consumed);
 CREATE INDEX IF NOT EXISTS idx_event_fired ON event_queue(fired_at);
+
+-- ==========================================
+-- MEMRL TABLES (Q-value Learning)
+-- ==========================================
+
+-- Index for Q-value queries (on memory_entries)
+CREATE INDEX IF NOT EXISTS idx_memory_q_value ON memory_entries(q_value DESC);
+
+-- MemRL query tracking for feedback
+CREATE TABLE IF NOT EXISTS memrl_queries (
+    id TEXT PRIMARY KEY,
+    query_text TEXT NOT NULL,
+    entry_ids TEXT NOT NULL,      -- JSON array of entry IDs returned
+    similarities TEXT NOT NULL,   -- JSON array of similarity scores
+    q_values TEXT NOT NULL,       -- JSON array of Q-values at query time
+    delta_used REAL NOT NULL,     -- Phase A threshold used
+    lambda_used REAL NOT NULL,    -- Exploration/exploitation balance used
+    has_feedback INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memrl_queries_created ON memrl_queries(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memrl_queries_feedback ON memrl_queries(has_feedback);

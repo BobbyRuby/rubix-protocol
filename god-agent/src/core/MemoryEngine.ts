@@ -18,6 +18,7 @@ import { CausalMemory } from '../causal/CausalMemory.js';
 import { PatternMatcher } from '../pattern/PatternMatcher.js';
 import { ShadowSearch } from '../adversarial/ShadowSearch.js';
 import { SonaEngine } from '../learning/SonaEngine.js';
+import { MemRLEngine } from '../learning/memrl/index.js';
 import { EnhancementLayer } from '../gnn/EnhancementLayer.js';
 import { TinyDancer } from '../routing/TinyDancer.js';
 import { getDefaultConfig, validateConfig, mergeConfig } from './config.js';
@@ -122,6 +123,7 @@ export class MemoryEngine {
   private patterns: PatternMatcher;
   private shadowSearch: ShadowSearch;
   private sona: SonaEngine;
+  private memrl: MemRLEngine;
   private gnn: EnhancementLayer;
   private router: TinyDancer;
   private embeddingQueue!: EmbeddingQueue;
@@ -207,6 +209,14 @@ export class MemoryEngine {
       criticalDriftThreshold: 0.5
     });
 
+    // MemRL: Entry-level Q-value learning (complements Sona pattern-level learning)
+    this.memrl = new MemRLEngine(this.storage, this.vectorDb, {
+      delta: 0.3,   // Phase A similarity threshold
+      lambda: 0.3,  // Exploration/exploitation balance (0=pure similarity, 1=pure Q-value)
+      alpha: 0.1,   // EMA learning rate
+      enabled: true
+    });
+
     this.gnn = new EnhancementLayer(this.storage, this.causal, {
       inputDim: 768,
       outputDim: 1024,
@@ -235,11 +245,57 @@ export class MemoryEngine {
     await this.vectorDb.initialize();
     await this.causal.initialize();
     this.sona.initialize();
+    this.memrl.initialize();
 
     // Start periodic flush (every 30 seconds)
     this.embeddingQueue.startPeriodicFlush(30000);
 
+    // CRITICAL: Recover any pending embeddings from previous sessions
+    // that were stored in SQLite but never got their embeddings generated
+    await this.recoverPendingEmbeddings();
+
     this.initialized = true;
+  }
+
+  /**
+   * Recover pending embeddings from previous sessions
+   *
+   * On startup, entries may exist in SQLite with pending_embedding=1
+   * if the process ended before flush(). This re-queues them for embedding.
+   */
+  private async recoverPendingEmbeddings(): Promise<void> {
+    const pending = this.storage.getPendingEntries();
+    if (pending.length === 0) {
+      return;
+    }
+
+    console.log(`[MemoryEngine] Recovering ${pending.length} pending embeddings from previous session...`);
+
+    // Re-queue all pending entries
+    for (const entry of pending) {
+      this.embeddingQueue.queue(entry.id, entry.content, entry.label);
+    }
+
+    // Flush immediately to generate embeddings
+    const result = await this.embeddingQueue.flush();
+
+    if (result.processed > 0) {
+      // Clear pending flags for successfully embedded entries
+      const successIds = pending
+        .filter(e => !result.failed.includes(e.id))
+        .map(e => e.id);
+
+      if (successIds.length > 0) {
+        this.storage.clearPendingEmbedding(successIds);
+      }
+
+      await this.vectorDb.save();
+      console.log(`[MemoryEngine] Recovered ${result.processed} embeddings (${result.failed.length} failed)`);
+    }
+
+    if (result.failed.length > 0) {
+      console.warn(`[MemoryEngine] Failed to recover embeddings for: ${result.failed.join(', ')}`);
+    }
   }
 
   // ==========================================
@@ -454,11 +510,21 @@ export class MemoryEngine {
     // Generate query embedding
     const { embedding } = await this.embeddings.embed(text);
 
-    // Search vector index - fetch more if we have tag filters to compensate for filtering
-    // Tagged entries may be scattered throughout the similarity rankings, so search deeper
-    const searchLimit = tagCandidates ? 5000 : topK * 2;
+    // Search vector index - fetch more candidates for MemRL Phase A/B ranking
+    // MemRL needs more candidates to effectively apply Q-value re-ranking
+    const searchLimit = tagCandidates ? 5000 : Math.max(topK * 5, 50);
     const vectorResults = this.vectorDb.search(embedding, searchLimit);
 
+    // ============================================
+    // MemRL TWO-PHASE RETRIEVAL (if enabled)
+    // ============================================
+    if (this.memrl.isEnabled()) {
+      return this.queryWithMemRL(text, vectorResults, tagCandidates, options, topK, minScore);
+    }
+
+    // ============================================
+    // LEGACY: Simple similarity-based retrieval
+    // ============================================
     const results: QueryResult[] = [];
 
     for (const vr of vectorResults) {
@@ -495,10 +561,211 @@ export class MemoryEngine {
       if (results.length >= topK) break;
     }
 
+    // FALLBACK: If tag filtering is specified but vector search returned too few results,
+    // entries may exist by tags but have no embeddings (pending_embedding=1).
+    // Fall back to SQLite-only retrieval for those entries.
+    if (tagCandidates && results.length < topK) {
+      const foundIds = new Set(results.map(r => r.entry.id));
+      const missingIds = [...tagCandidates].filter(id => !foundIds.has(id));
+
+      if (missingIds.length > 0) {
+        console.log(`[MemoryEngine] Falling back to SQLite for ${missingIds.length} entries without embeddings`);
+
+        for (const id of missingIds.slice(0, topK - results.length)) {
+          const entry = this.storage.getEntry(id);
+          if (!entry) continue;
+
+          // Apply remaining filters
+          if (options.filters && !this.matchesFiltersExcludingTags(entry, options.filters)) {
+            continue;
+          }
+
+          // Get L-Score if requested
+          let lScore: number | undefined;
+          if (options.includeProvenance) {
+            lScore = entry.provenance.lScore ?? this.provenance.calculateAndStoreLScore(id);
+          }
+
+          results.push({
+            entry,
+            score: 0.5, // Default score for tag-only matches
+            matchType: 'tag-only' as const,
+            lScore
+          });
+        }
+
+        if (results.length > topK) {
+          results.length = topK;
+        }
+      }
+    }
+
     // OPTIMIZED: Cache the results for future queries
     this.queryCache.set(text, options, results);
 
     return results;
+  }
+
+  /**
+   * MemRL-enhanced query with two-phase retrieval
+   *
+   * Phase A: Filter by similarity threshold (delta)
+   * Phase B: Re-rank using composite score = (1-lambda)*similarity + lambda*Q-value
+   */
+  private async queryWithMemRL(
+    text: string,
+    vectorResults: Array<{ label: number; score: number; distance: number }>,
+    tagCandidates: Set<string> | null,
+    options: QueryOptions,
+    topK: number,
+    minScore: number
+  ): Promise<QueryResult[]> {
+    // Apply tag and metadata filtering BEFORE MemRL ranking
+    const filteredResults: Array<{ label: number; score: number; entryId: string }> = [];
+
+    for (const vr of vectorResults) {
+      if (vr.score < minScore) continue;
+
+      const entryId = this.storage.getEntryIdByLabel(vr.label);
+      if (!entryId) continue;
+
+      // Tag filtering
+      if (tagCandidates && !tagCandidates.has(entryId)) continue;
+
+      // Metadata filtering
+      if (options.filters) {
+        const entry = this.storage.getEntry(entryId);
+        if (!entry || !this.matchesFiltersExcludingTags(entry, options.filters)) continue;
+      }
+
+      filteredResults.push({ label: vr.label, score: vr.score, entryId });
+    }
+
+    // FALLBACK: If no vector results but tag candidates exist,
+    // entries may have tags but no embeddings yet. Fall back to SQLite.
+    if (filteredResults.length === 0 && tagCandidates && tagCandidates.size > 0) {
+      console.log(`[MemoryEngine] MemRL: No vector results, falling back to SQLite for ${tagCandidates.size} tag candidates`);
+      return this.fallbackToSQLiteForTags(tagCandidates, options, topK);
+    }
+
+    if (filteredResults.length === 0) {
+      return [];
+    }
+
+    // Use MemRL for Phase A + Phase B ranking
+    const memrlResult = this.memrl.processVectorResults(
+      text,
+      filteredResults.map(r => ({ label: r.label, score: r.score })),
+      topK
+    );
+
+    // Store the query ID for potential feedback (accessible via getLastMemRLQueryId)
+    this._lastMemRLQueryId = memrlResult.queryId;
+
+    // Convert MemRL results to QueryResult format
+    const results: QueryResult[] = [];
+    for (const mr of memrlResult.results) {
+      const entry = this.storage.getEntry(mr.entryId);
+      if (!entry) continue;
+
+      let lScore: number | undefined;
+      if (options.includeProvenance) {
+        lScore = entry.provenance.lScore ?? this.provenance.calculateAndStoreLScore(mr.entryId);
+      }
+
+      results.push({
+        entry,
+        score: mr.compositeScore, // Use MemRL composite score
+        matchType: 'vector',
+        lScore
+      });
+    }
+
+    // FALLBACK: If tag filtering but results < topK, some entries may lack embeddings
+    if (tagCandidates && results.length < topK) {
+      const foundIds = new Set(results.map(r => r.entry.id));
+      const missingIds = [...tagCandidates].filter(id => !foundIds.has(id));
+
+      if (missingIds.length > 0) {
+        console.log(`[MemoryEngine] MemRL: Supplementing with ${missingIds.length} SQLite-only entries`);
+
+        for (const id of missingIds.slice(0, topK - results.length)) {
+          const entry = this.storage.getEntry(id);
+          if (!entry) continue;
+
+          if (options.filters && !this.matchesFiltersExcludingTags(entry, options.filters)) {
+            continue;
+          }
+
+          let lScore: number | undefined;
+          if (options.includeProvenance) {
+            lScore = entry.provenance.lScore ?? this.provenance.calculateAndStoreLScore(id);
+          }
+
+          results.push({
+            entry,
+            score: 0.5,
+            matchType: 'tag-only' as const,
+            lScore
+          });
+        }
+      }
+    }
+
+    // Cache the results
+    this.queryCache.set(text, options, results);
+
+    return results;
+  }
+
+  /**
+   * Helper: Fall back to SQLite-only retrieval for tag candidates without embeddings
+   */
+  private fallbackToSQLiteForTags(
+    tagCandidates: Set<string>,
+    options: QueryOptions,
+    topK: number
+  ): QueryResult[] {
+    const results: QueryResult[] = [];
+
+    for (const id of tagCandidates) {
+      const entry = this.storage.getEntry(id);
+      if (!entry) continue;
+
+      if (options.filters && !this.matchesFiltersExcludingTags(entry, options.filters)) {
+        continue;
+      }
+
+      let lScore: number | undefined;
+      if (options.includeProvenance) {
+        lScore = entry.provenance.lScore ?? this.provenance.calculateAndStoreLScore(id);
+      }
+
+      results.push({
+        entry,
+        score: 0.5, // Default score for SQLite-only matches
+        matchType: 'tag-only' as const,
+        lScore
+      });
+
+      if (results.length >= topK) break;
+    }
+
+    // Cache the results
+    this.queryCache.set('', options, results);
+
+    return results;
+  }
+
+  // Track last MemRL query ID for feedback
+  private _lastMemRLQueryId: string | null = null;
+
+  /**
+   * Get the query ID from the last MemRL-enhanced query
+   * Use this with provideMemRLFeedback() to update Q-values
+   */
+  getLastMemRLQueryId(): string | null {
+    return this._lastMemRLQueryId;
   }
 
   /**
@@ -693,6 +960,107 @@ export class MemoryEngine {
       pruned: pruneResult.pruned,
       boosted: boostResult.boosted
     };
+  }
+
+  // ==========================================
+  // MEMRL Q-VALUE LEARNING
+  // ==========================================
+
+  /**
+   * Provide feedback for a MemRL query to update Q-values
+   *
+   * Uses EMA update: Q_new = Q_old + alpha * (reward - Q_old)
+   * This updates the Q-values for entries returned in the query.
+   */
+  async provideMemRLFeedback(
+    queryId: string,
+    reward: number,
+    entryRewards?: Map<string, number>
+  ): Promise<{ success: boolean; entriesUpdated: number; avgQChange: number; message: string }> {
+    await this.ensureInitialized();
+    return this.memrl.provideFeedback({
+      queryId,
+      globalReward: reward,
+      entryRewards
+    });
+  }
+
+  /**
+   * Provide combined feedback for both MemRL (Q-values) and Sona (pattern weights)
+   *
+   * Call this after evaluating query results to update both learning systems.
+   */
+  async provideCombinedFeedback(
+    queryId: string | null,
+    trajectoryId: string | null,
+    quality: number,
+    route?: string
+  ): Promise<{
+    memrl: { entriesUpdated: number; avgQChange: number } | null;
+    sona: { weightsUpdated: number; driftScore: number; driftStatus: string } | null;
+  }> {
+    await this.ensureInitialized();
+
+    let memrlResult = null;
+    let sonaResult = null;
+
+    // Update MemRL Q-values if queryId provided
+    if (queryId) {
+      const result = await this.memrl.provideFeedback({
+        queryId,
+        globalReward: quality
+      });
+      if (result.success) {
+        memrlResult = {
+          entriesUpdated: result.entriesUpdated,
+          avgQChange: result.avgQChange
+        };
+      }
+    }
+
+    // Update Sona pattern weights if trajectoryId provided
+    if (trajectoryId) {
+      const result = await this.sona.provideFeedback(trajectoryId, quality, route);
+      if (result.success) {
+        sonaResult = {
+          weightsUpdated: result.weightsUpdated,
+          driftScore: result.driftScore,
+          driftStatus: result.driftStatus
+        };
+      }
+    }
+
+    return { memrl: memrlResult, sona: sonaResult };
+  }
+
+  /**
+   * Get MemRL statistics
+   */
+  getMemRLStats(): {
+    totalEntries: number;
+    entriesWithQUpdates: number;
+    avgQValue: number;
+    qValueDistribution: { low: number; medium: number; high: number };
+    totalQueries: number;
+    queriesWithFeedback: number;
+    feedbackRate: number;
+    config: { delta: number; lambda: number; alpha: number; enabled: boolean };
+  } {
+    return this.memrl.getStats();
+  }
+
+  /**
+   * Get the MemRL engine for direct access
+   */
+  getMemRLEngine(): MemRLEngine {
+    return this.memrl;
+  }
+
+  /**
+   * Update MemRL configuration
+   */
+  updateMemRLConfig(updates: { delta?: number; lambda?: number; alpha?: number; enabled?: boolean }): void {
+    this.memrl.updateConfig(updates);
   }
 
   // ==========================================
@@ -1176,6 +1544,41 @@ export class MemoryEngine {
     if (!this.initialized) {
       await this.initialize();
     }
+  }
+
+  /**
+   * Flush all pending embeddings immediately
+   *
+   * Call this proactively before session save or at critical checkpoints
+   * to ensure embeddings are persisted and entries become searchable.
+   *
+   * @returns Number of successfully processed embeddings
+   */
+  async flushPendingEmbeddings(): Promise<number> {
+    await this.ensureInitialized();
+
+    if (this.embeddingQueue.pendingCount === 0) {
+      return 0;
+    }
+
+    console.log(`[MemoryEngine] Flushing ${this.embeddingQueue.pendingCount} pending embeddings...`);
+    const result = await this.embeddingQueue.flush();
+
+    if (result.processed > 0) {
+      // Clear pending flags for successfully embedded entries
+      // Note: We can't easily get the IDs here since they're already removed from queue
+      // The clearPendingEmbedding happens in store() after threshold flush
+      await this.vectorDb.save();
+    }
+
+    return result.processed;
+  }
+
+  /**
+   * Get count of pending embeddings
+   */
+  getPendingEmbeddingCount(): number {
+    return this.embeddingQueue.pendingCount;
   }
 
   /**

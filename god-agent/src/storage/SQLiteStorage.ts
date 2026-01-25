@@ -70,6 +70,41 @@ export class SQLiteStorage {
     this.migrateTable('memory_entries', [
       { name: 'pending_embedding', type: 'INTEGER DEFAULT 0' }
     ]);
+
+    // Migrate memory_entries for MemRL Q-value learning
+    this.migrateTable('memory_entries', [
+      { name: 'q_value', type: 'REAL DEFAULT 0.5' },
+      { name: 'q_update_count', type: 'INTEGER DEFAULT 0' },
+      { name: 'last_q_update', type: 'TEXT' }
+    ]);
+
+    // Create any missing tables (for databases created before these tables were added)
+    this.createMissingTables();
+  }
+
+  /**
+   * Create tables that were added after initial database creation.
+   * Uses CREATE TABLE IF NOT EXISTS to be safe for new databases.
+   */
+  private createMissingTables(): void {
+    // memrl_queries table (added for MemRL learning feedback tracking)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS memrl_queries (
+        id TEXT PRIMARY KEY,
+        query_text TEXT NOT NULL,
+        entry_ids TEXT NOT NULL,
+        similarities TEXT NOT NULL,
+        q_values TEXT NOT NULL,
+        delta_used REAL NOT NULL,
+        lambda_used REAL NOT NULL,
+        has_feedback INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    // Create indexes if they don't exist (safe to run multiple times)
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memrl_queries_created ON memrl_queries(created_at DESC)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memrl_queries_feedback ON memrl_queries(has_feedback)`);
   }
 
   /**
@@ -305,6 +340,214 @@ export class SQLiteStorage {
 
   updateLScore(entryId: string, lScore: number): void {
     this.db.prepare('UPDATE provenance SET l_score = ? WHERE entry_id = ?').run(lScore, entryId);
+  }
+
+  // ==========================================
+  // MEMRL Q-VALUE OPERATIONS
+  // ==========================================
+
+  /**
+   * Get Q-value for a memory entry
+   */
+  getQValue(entryId: string): number {
+    const row = this.db.prepare('SELECT q_value FROM memory_entries WHERE id = ?').get(entryId) as { q_value: number } | undefined;
+    return row?.q_value ?? 0.5; // Default neutral Q-value
+  }
+
+  /**
+   * Get Q-values for multiple entries in batch
+   */
+  getQValuesBatch(entryIds: string[]): Map<string, number> {
+    if (entryIds.length === 0) return new Map();
+
+    const placeholders = entryIds.map(() => '?').join(',');
+    const rows = this.db.prepare(`
+      SELECT id, q_value FROM memory_entries WHERE id IN (${placeholders})
+    `).all(...entryIds) as Array<{ id: string; q_value: number | null }>;
+
+    const result = new Map<string, number>();
+    for (const row of rows) {
+      result.set(row.id, row.q_value ?? 0.5);
+    }
+    // Fill in defaults for missing entries
+    for (const id of entryIds) {
+      if (!result.has(id)) {
+        result.set(id, 0.5);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Update Q-value for a memory entry using EMA
+   * Q_new = Q_old + alpha * (reward - Q_old)
+   */
+  updateQValue(entryId: string, reward: number, alpha: number = 0.1): { oldQ: number; newQ: number } {
+    const now = new Date().toISOString();
+    const oldQ = this.getQValue(entryId);
+
+    // EMA update with bounds
+    let newQ = oldQ + alpha * (reward - oldQ);
+    newQ = Math.max(0.1, Math.min(1.0, newQ)); // Clamp to [0.1, 1.0]
+
+    this.db.prepare(`
+      UPDATE memory_entries
+      SET q_value = ?, q_update_count = q_update_count + 1, last_q_update = ?
+      WHERE id = ?
+    `).run(newQ, now, entryId);
+
+    return { oldQ, newQ };
+  }
+
+  /**
+   * Batch update Q-values for multiple entries
+   */
+  updateQValuesBatch(updates: Array<{ entryId: string; reward: number }>, alpha: number = 0.1): number {
+    const now = new Date().toISOString();
+    let updated = 0;
+
+    const transaction = this.db.transaction(() => {
+      for (const { entryId, reward } of updates) {
+        const oldQ = this.getQValue(entryId);
+        let newQ = oldQ + alpha * (reward - oldQ);
+        newQ = Math.max(0.1, Math.min(1.0, newQ));
+
+        const result = this.db.prepare(`
+          UPDATE memory_entries
+          SET q_value = ?, q_update_count = q_update_count + 1, last_q_update = ?
+          WHERE id = ?
+        `).run(newQ, now, entryId);
+
+        if (result.changes > 0) updated++;
+      }
+    });
+
+    transaction();
+    return updated;
+  }
+
+  /**
+   * Get MemRL Q-value statistics
+   */
+  getQValueStats(): {
+    totalEntries: number;
+    entriesWithUpdates: number;
+    avgQValue: number;
+    distribution: { low: number; medium: number; high: number };
+  } {
+    const stats = this.db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN q_update_count > 0 THEN 1 ELSE 0 END) as with_updates,
+        AVG(q_value) as avg_q,
+        SUM(CASE WHEN q_value < 0.4 THEN 1 ELSE 0 END) as low,
+        SUM(CASE WHEN q_value >= 0.4 AND q_value < 0.7 THEN 1 ELSE 0 END) as medium,
+        SUM(CASE WHEN q_value >= 0.7 THEN 1 ELSE 0 END) as high
+      FROM memory_entries
+    `).get() as { total: number; with_updates: number; avg_q: number; low: number; medium: number; high: number };
+
+    return {
+      totalEntries: stats.total,
+      entriesWithUpdates: stats.with_updates ?? 0,
+      avgQValue: stats.avg_q ?? 0.5,
+      distribution: {
+        low: stats.low ?? 0,
+        medium: stats.medium ?? 0,
+        high: stats.high ?? 0
+      }
+    };
+  }
+
+  // ==========================================
+  // MEMRL QUERY TRACKING
+  // ==========================================
+
+  /**
+   * Store a MemRL query for feedback tracking
+   */
+  storeMemRLQuery(
+    id: string,
+    queryText: string,
+    entryIds: string[],
+    similarities: number[],
+    qValues: number[],
+    delta: number,
+    lambda: number
+  ): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO memrl_queries (id, query_text, entry_ids, similarities, q_values, delta_used, lambda_used, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      queryText,
+      JSON.stringify(entryIds),
+      JSON.stringify(similarities),
+      JSON.stringify(qValues),
+      delta,
+      lambda,
+      now
+    );
+  }
+
+  /**
+   * Get a stored MemRL query
+   */
+  getMemRLQuery(id: string): {
+    queryText: string;
+    entryIds: string[];
+    similarities: number[];
+    qValues: number[];
+    delta: number;
+    lambda: number;
+    hasFeedback: boolean;
+  } | null {
+    const row = this.db.prepare(`
+      SELECT query_text, entry_ids, similarities, q_values, delta_used, lambda_used, has_feedback
+      FROM memrl_queries WHERE id = ?
+    `).get(id) as {
+      query_text: string;
+      entry_ids: string;
+      similarities: string;
+      q_values: string;
+      delta_used: number;
+      lambda_used: number;
+      has_feedback: number;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      queryText: row.query_text,
+      entryIds: JSON.parse(row.entry_ids),
+      similarities: JSON.parse(row.similarities),
+      qValues: JSON.parse(row.q_values),
+      delta: row.delta_used,
+      lambda: row.lambda_used,
+      hasFeedback: row.has_feedback === 1
+    };
+  }
+
+  /**
+   * Mark a MemRL query as having received feedback
+   */
+  markMemRLQueryFeedback(id: string): void {
+    this.db.prepare('UPDATE memrl_queries SET has_feedback = 1 WHERE id = ?').run(id);
+  }
+
+  /**
+   * Get MemRL query statistics
+   */
+  getMemRLQueryStats(): { totalQueries: number; queriesWithFeedback: number } {
+    const stats = this.db.prepare(`
+      SELECT COUNT(*) as total, SUM(has_feedback) as with_feedback
+      FROM memrl_queries
+    `).get() as { total: number; with_feedback: number };
+
+    return {
+      totalQueries: stats.total,
+      queriesWithFeedback: stats.with_feedback ?? 0
+    };
   }
 
   // ==========================================
