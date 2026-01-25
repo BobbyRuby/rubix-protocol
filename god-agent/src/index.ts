@@ -192,6 +192,15 @@ export { TaskDecomposer } from './codex/TaskDecomposer.js';
 export { SelfHealer } from './codex/SelfHealer.js';
 export { EscalationGate, type Situation, type SituationType } from './codex/EscalationGate.js';
 export { TaskStatus as CodexTaskStatus, SubtaskStatus, DEFAULT_RUBIX_CONFIG } from './codex/types.js';
+
+// Engineer Provider exports (Provider-agnostic code generation)
+export {
+  ClaudeEngineerProvider,
+  OllamaEngineerProvider,
+  FallbackEngineerProvider,
+  createEngineerProvider
+} from './codex/EngineerProvider.js';
+export type { EngineerFn, EngineerProvider } from './codex/EngineerProvider.js';
 export type {
   SubtaskType,
   CodexTask,
@@ -241,6 +250,16 @@ export {
   type CausalChain,
   type DebugInsight
 } from './codex/CausalDebugger.js';
+
+// Plan Deviation Detection (Strict Mode Design Approval)
+export {
+  detectPlanDeviations,
+  formatDeviationReport,
+  type DeviationType,
+  type DeviationSeverity,
+  type PlanDeviation,
+  type DeviationReport
+} from './codex/PlanDeviationDetector.js';
 
 // Capabilities exports (Stage 4 - Advanced Coding Capabilities)
 export {
@@ -445,3 +464,24 @@ export type {
   GuardianStats,
   SecurityPattern
 } from './guardian/index.js';
+
+// Memory Distillation exports (Proactive Lesson Extraction)
+export {
+  MemoryDistillationService,
+  DEFAULT_DISTILLATION_CONFIG
+} from './distillation/index.js';
+
+export type {
+  DistillationConfig,
+  DistilledInsight,
+  DistillationResult,
+  DistillationStats,
+  DistillationType,
+  InsightQuery,
+  InsightQueryResult,
+  MemoryInput,
+  MemoryCluster,
+  FailureFixChain,
+  DistillationRun,
+  ManualDistillationOptions
+} from './distillation/index.js';

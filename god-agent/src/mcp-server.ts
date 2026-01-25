@@ -58,6 +58,8 @@ import { AgentCardGenerator } from './discovery/index.js';
 import type { AgentCard } from './discovery/index.js';
 import { PostExecGuardian } from './guardian/index.js';
 import type { AuditResult, AuditContext } from './guardian/index.js';
+import { MemoryDistillationService } from './distillation/index.js';
+import type { DistillationConfig, DistillationStats, DistillationType, ManualDistillationOptions } from './distillation/index.js';
 
 // ==========================================
 // Tool Input Schemas (Zod)
@@ -136,7 +138,8 @@ const CheckpointInputSchema = z.object({
 const LearnInputSchema = z.object({
   trajectoryId: z.string().describe('Trajectory ID from a previous queryWithLearning call'),
   quality: z.number().min(0).max(1).describe('Quality score 0-1 (0 = useless, 1 = perfect)'),
-  route: z.string().optional().describe('Optional reasoning route categorization')
+  route: z.string().optional().describe('Optional reasoning route categorization'),
+  memrlQueryId: z.string().optional().describe('MemRL query ID (auto-uses last query if omitted)')
 });
 
 const PrunePatternsInputSchema = z.object({
@@ -337,6 +340,12 @@ const CodexDecisionInputSchema = z.object({
   decisionId: z.string().describe('ID of the decision to answer'),
   answer: z.string().describe('Your decision'),
   optionIndex: z.number().optional().describe('Index of selected option (if applicable)')
+});
+
+const CodexEstimateInputSchema = z.object({
+  description: z.string().describe('Task description'),
+  specification: z.string().optional().describe('Detailed specification'),
+  codebase: z.string().describe('Path to codebase'),
 });
 
 // ==========================================
@@ -1003,13 +1012,15 @@ const TOOLS: Tool[] = [
     description: `Provide feedback for a query trajectory to improve future retrieval.
 
     This is the main learning entry point. Call this after evaluating how useful
-    query results were. The system will update weights to improve similar queries.
+    query results were. The system updates BOTH:
+    - MemRL Q-values (entry-level utility scores)
+    - Sona pattern weights (pattern-level learning)
 
     How it works:
     1. Use god_query to search - results include a trajectoryId
     2. Evaluate how useful the results were
     3. Call god_learn with trajectoryId and quality score
-    4. System updates weights using EWC++ regularization
+    4. System updates Q-values (EMA) and pattern weights (EWC++)
 
     Quality scores:
     - 0.0: Completely useless results
@@ -1020,20 +1031,20 @@ const TOOLS: Tool[] = [
       properties: {
         trajectoryId: { type: 'string', description: 'Trajectory ID from previous query' },
         quality: { type: 'number', minimum: 0, maximum: 1, description: 'Quality score 0-1' },
-        route: { type: 'string', description: 'Optional reasoning route' }
+        route: { type: 'string', description: 'Optional reasoning route' },
+        memrlQueryId: { type: 'string', description: 'MemRL query ID (auto-uses last query if omitted)' }
       },
       required: ['trajectoryId', 'quality']
     }
   },
   {
     name: 'god_learning_stats',
-    description: `Get Sona learning engine statistics.
+    description: `Get combined learning statistics (MemRL + Sona).
 
     Shows:
-    - Total trajectories created
-    - Trajectories with feedback
-    - Tracked patterns and weights
-    - Current drift score
+    - MemRL: Q-value distribution, avg Q, entries with updates
+    - Sona: Trajectories, feedback rate, pattern weights
+    - Current drift score and health status
     - Pruning/boosting candidates`,
     inputSchema: {
       type: 'object',
@@ -1862,6 +1873,31 @@ const TOOLS: Tool[] = [
       required: []
     }
   },
+  {
+    name: 'god_codex_estimate',
+    description: `Estimate token usage and cost for a CODEX task.
+
+    Analyzes the codebase and task to predict:
+    - Token usage per phase (context scout, architect, engineer, validator)
+    - Estimated Claude API cost
+    - Complexity assessment
+
+    Does NOT make any API calls - pure estimation based on:
+    - Codebase file count and size
+    - Task complexity heuristics
+    - Phase-specific overhead
+
+    Use before god_codex_do to preview costs.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string', description: 'Task description' },
+        specification: { type: 'string', description: 'Detailed specification' },
+        codebase: { type: 'string', description: 'Path to codebase' }
+      },
+      required: ['description', 'codebase']
+    }
+  },
 
   // ==========================================
   // Collaborative Partner Tools
@@ -2662,6 +2698,25 @@ const TOOLS: Tool[] = [
     }
   },
 
+  // Ollama Status
+  {
+    name: 'god_ollama_status',
+    description: `Check Ollama cloud API status and configuration.
+
+    Shows:
+    - Whether Ollama is configured as the engineer provider
+    - Endpoint URL and model name
+    - API key presence
+    - Availability status (connectivity test)
+
+    Use this to verify Ollama integration before running multi-component tasks.`,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+
   // ==========================================================================
   // Code Review Tools
   // ==========================================================================
@@ -3406,13 +3461,56 @@ const TOOLS: Tool[] = [
     description: `Manually trigger exploration of a curiosity probe.
 
     Executes the top-priority probe or a specific probe by ID.
-    Uses up to 100K tokens from the exploration budget.`,
+    Uses up to 100K tokens from the exploration budget.
+
+    NEW: Auto-detects when web browsing would help (docs, tutorials, best practices).
+    When triggered, a VISIBLE browser will open so you can watch RUBIX explore.`,
     inputSchema: {
       type: 'object',
       properties: {
         probeId: {
           type: 'string',
           description: 'Specific probe ID to explore (optional, otherwise picks top priority)'
+        }
+      }
+    }
+  },
+  {
+    name: 'god_curiosity_web_explore',
+    description: `Explore the web with a visible browser for curiosity-driven research.
+
+    Opens a VISIBLE browser window so you can watch RUBIX:
+    - Search Google and click through results
+    - Visit specific URLs directly
+    - Extract content from pages
+    - Capture screenshots along the way
+
+    Use this for direct control over web exploration, or let god_curiosity_explore
+    auto-detect when web browsing would help.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        searchQuery: {
+          type: 'string',
+          description: 'Google search query to explore'
+        },
+        urls: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Direct URLs to visit'
+        },
+        maxPages: {
+          type: 'number',
+          description: 'Maximum pages to visit (default: 3)'
+        },
+        selectors: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'CSS selectors to extract content from'
+        },
+        storeAsProbe: {
+          type: 'boolean',
+          description: 'Store findings as a resolved curiosity probe (default: true)'
         }
       }
     }
@@ -3791,6 +3889,177 @@ const TOOLS: Tool[] = [
       },
       required: ['files']
     }
+  },
+
+  // =========================================================================
+  // Memory Distillation Tools (Proactive Lesson Extraction)
+  // =========================================================================
+  {
+    name: 'god_distill',
+    description: `Manually trigger memory distillation.
+
+    Proactively extracts lessons from stored memories:
+    - Success patterns: "When facing X, approach Y works because Z"
+    - Failure→fix chains: "Error X is caused by Y, fix with Z"
+    - Cross-domain insights: Transferable principles across contexts
+
+    Options:
+    - types: Which extraction types to run (default: success_pattern, failure_fix)
+    - lookbackDays: How far back to look (default: 7)
+    - maxTokens: Token budget for this run (default: 100000)
+    - force: Run even if recent run exists
+    - dryRun: Preview without storing insights
+
+    Normally runs weekly on Sundays. Use this for manual triggering.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        types: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['success_pattern', 'failure_fix', 'cross_domain', 'contradiction', 'consolidation']
+          },
+          description: 'Distillation types to run (default: success_pattern, failure_fix)'
+        },
+        lookbackDays: {
+          type: 'number',
+          description: 'Days to look back (default: 7)'
+        },
+        maxTokens: {
+          type: 'number',
+          description: 'Max tokens for this run (default: 100000)'
+        },
+        force: {
+          type: 'boolean',
+          description: 'Force run even if recent run exists'
+        },
+        dryRun: {
+          type: 'boolean',
+          description: 'Preview without storing insights'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'god_distillation_stats',
+    description: `Get memory distillation statistics.
+
+    Shows:
+    - Total distillation runs and insights extracted
+    - Insights breakdown by type (success_pattern, failure_fix, etc.)
+    - Average confidence score
+    - Total and average tokens used
+    - Last run timestamp and result
+    - Top insights (most referenced)
+    - Pending memories since last run
+
+    Use to monitor the distillation system effectiveness.`,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'god_distillation_config',
+    description: `Configure memory distillation settings.
+
+    Options:
+    - enabled: Enable/disable distillation (default: true)
+    - schedule: Cron pattern (default: "0 3 * * 0" = Sunday 3am)
+    - maxTokensPerRun: Token budget per run (default: 100000)
+    - minConfidence: Threshold for storing insights (default: 0.7)
+    - lookbackDays: How far back to look (default: 7)
+    - types: Which distillation types to run
+    - startScheduler: Start the scheduled distillation daemon
+    - stopScheduler: Stop the scheduled distillation daemon
+
+    Returns current configuration and scheduling status.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        enabled: {
+          type: 'boolean',
+          description: 'Enable/disable distillation'
+        },
+        schedule: {
+          type: 'string',
+          description: 'Cron pattern for scheduled runs'
+        },
+        maxTokensPerRun: {
+          type: 'number',
+          description: 'Max tokens per run'
+        },
+        minConfidence: {
+          type: 'number',
+          description: 'Minimum confidence to store insights (0-1)'
+        },
+        lookbackDays: {
+          type: 'number',
+          description: 'Days to look back for memories'
+        },
+        types: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['success_pattern', 'failure_fix', 'cross_domain', 'contradiction', 'consolidation']
+          },
+          description: 'Distillation types to enable'
+        },
+        startScheduler: {
+          type: 'boolean',
+          description: 'Start the scheduled distillation daemon'
+        },
+        stopScheduler: {
+          type: 'boolean',
+          description: 'Stop the scheduled distillation daemon'
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'god_distillation_query',
+    description: `Query for distilled insights.
+
+    Searches stored insights by semantic similarity.
+    Returns:
+    - Matching insights with similarity scores
+    - Applicable lessons for your context
+    - Relevant patterns
+    - Caveats to be aware of
+
+    Use when starting a new task to leverage past learnings.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query for insights'
+        },
+        topK: {
+          type: 'number',
+          description: 'Number of results (default: 10)'
+        },
+        type: {
+          type: 'string',
+          enum: ['success_pattern', 'failure_fix', 'cross_domain', 'contradiction', 'consolidation'],
+          description: 'Filter by insight type'
+        },
+        minConfidence: {
+          type: 'number',
+          description: 'Minimum confidence (default: 0.5)'
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter by tags'
+        }
+      },
+      required: ['query']
+    }
   }
 ];
 
@@ -3855,6 +4124,8 @@ class GodAgentMCPServer {
   private agentCard: AgentCard | null = null;
   // Post-execution guardian
   private postExecGuardian: PostExecGuardian | null = null;
+  // Memory distillation service
+  private distillationService: MemoryDistillationService | null = null;
 
   constructor() {
     this.dataDir = process.env.GOD_AGENT_DATA_DIR || './data';
@@ -4075,6 +4346,23 @@ class GodAgentMCPServer {
     return this.postExecGuardian;
   }
 
+  private async getDistillationService(): Promise<MemoryDistillationService> {
+    if (!this.distillationService) {
+      const engine = await this.getEngine();
+      const llmConfig = getCodexLLMConfig();
+      this.distillationService = new MemoryDistillationService(
+        engine,
+        undefined, // sona (optional)
+        llmConfig.apiKey || '',
+        { model: llmConfig.model }
+      );
+
+      // Start scheduled distillation (weekly Sunday 3am by default)
+      this.distillationService.startScheduled();
+    }
+    return this.distillationService;
+  }
+
   private setupHandlers(): void {
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -4204,6 +4492,8 @@ class GodAgentMCPServer {
             return await this.handleCodexLogs(args);
           case 'god_codex_wait':
             return await this.handleCodexWait(args);
+          case 'god_codex_estimate':
+            return await this.handleCodexEstimate(args);
 
           // Collaborative Partner Tools
           case 'god_partner_config':
@@ -4318,6 +4608,10 @@ class GodAgentMCPServer {
           case 'god_capabilities_status':
             return await this.handleCapabilitiesStatus();
 
+          // Ollama Status
+          case 'god_ollama_status':
+            return await this.handleOllamaStatus();
+
           // Code Review
           case 'god_review':
             return await this.handleReview(args);
@@ -4389,6 +4683,8 @@ class GodAgentMCPServer {
             return await this.handleCuriosityList(args);
           case 'god_curiosity_explore':
             return await this.handleCuriosityExplore(args);
+          case 'god_curiosity_web_explore':
+            return await this.handleCuriosityWebExplore(args);
           case 'god_budget_status':
             return await this.handleBudgetStatus();
           case 'god_budget_history':
@@ -4429,6 +4725,16 @@ class GodAgentMCPServer {
           // Guardian Tool (Post-Execution Audit)
           case 'god_guardian_audit':
             return await this.handleGuardianAudit(args);
+
+          // Memory Distillation Tools
+          case 'god_distill':
+            return await this.handleDistill(args);
+          case 'god_distillation_stats':
+            return await this.handleDistillationStats();
+          case 'god_distillation_config':
+            return await this.handleDistillationConfig(args);
+          case 'god_distillation_query':
+            return await this.handleDistillationQuery(args);
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -4982,37 +5288,53 @@ class GodAgentMCPServer {
     const input = LearnInputSchema.parse(args);
     const engine = await this.getEngine();
 
-    const result = await engine.provideFeedback(
+    // Get memrlQueryId - use provided, or fall back to last query ID
+    const memrlQueryId = input.memrlQueryId ?? engine.getLastMemRLQueryId();
+
+    // Use combined feedback to update both MemRL Q-values and Sona pattern weights
+    const result = await engine.provideCombinedFeedback(
+      memrlQueryId,
       input.trajectoryId,
       input.quality,
       input.route
     );
 
     // Determine drift interpretation
-    let driftInterpretation: string;
-    switch (result.driftStatus) {
-      case 'critical':
-        driftInterpretation = 'CRITICAL - Weights rolled back to checkpoint';
-        break;
-      case 'alert':
-        driftInterpretation = 'ALERT - Drift approaching threshold, checkpoint created';
-        break;
-      default:
-        driftInterpretation = 'OK - Weights updated successfully';
+    let driftInterpretation = 'N/A';
+    if (result.sona) {
+      switch (result.sona.driftStatus) {
+        case 'critical':
+          driftInterpretation = 'CRITICAL - Weights rolled back to checkpoint';
+          break;
+        case 'alert':
+          driftInterpretation = 'ALERT - Drift approaching threshold, checkpoint created';
+          break;
+        default:
+          driftInterpretation = 'OK - Pattern weights updated successfully';
+      }
     }
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
-          success: result.success,
+          success: true,
           trajectoryId: input.trajectoryId,
           quality: input.quality,
-          weightsUpdated: result.weightsUpdated,
-          driftScore: result.driftScore.toFixed(4),
-          driftStatus: result.driftStatus,
-          driftInterpretation,
-          message: result.message
+          // MemRL results (entry-level Q-value learning)
+          memrl: result.memrl ? {
+            entriesUpdated: result.memrl.entriesUpdated,
+            avgQChange: result.memrl.avgQChange.toFixed(4),
+            queryId: memrlQueryId
+          } : null,
+          // Sona results (pattern-level learning)
+          sona: result.sona ? {
+            weightsUpdated: result.sona.weightsUpdated,
+            driftScore: result.sona.driftScore.toFixed(4),
+            driftStatus: result.sona.driftStatus,
+            driftInterpretation
+          } : null,
+          message: `Updated ${result.memrl?.entriesUpdated ?? 0} Q-values and ${result.sona?.weightsUpdated ?? 0} pattern weights`
         }, null, 2)
       }]
     };
@@ -5020,25 +5342,49 @@ class GodAgentMCPServer {
 
   private async handleLearningStats(): Promise<{ content: Array<{ type: string; text: string }> }> {
     const engine = await this.getEngine();
-    const stats = engine.getLearningStats();
+
+    // Get both MemRL and Sona stats
+    const memrlStats = engine.getMemRLStats();
+    const sonaStats = engine.getLearningStats();
     const drift = engine.checkLearningDrift();
 
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
-          totalTrajectories: stats.totalTrajectories,
-          trajectoriesWithFeedback: stats.trajectoriesWithFeedback,
-          feedbackRate: stats.totalTrajectories > 0
-            ? ((stats.trajectoriesWithFeedback / stats.totalTrajectories) * 100).toFixed(1) + '%'
-            : '0%',
-          trackedPatterns: stats.trackedPatterns,
-          avgWeight: stats.avgWeight.toFixed(4),
-          avgSuccessRate: (stats.avgSuccessRate * 100).toFixed(1) + '%',
+          // MemRL stats (entry-level Q-value learning)
+          memrl: {
+            totalEntries: memrlStats.totalEntries,
+            entriesWithQUpdates: memrlStats.entriesWithQUpdates,
+            avgQValue: memrlStats.avgQValue.toFixed(4),
+            qValueDistribution: memrlStats.qValueDistribution,
+            totalQueries: memrlStats.totalQueries,
+            queriesWithFeedback: memrlStats.queriesWithFeedback,
+            feedbackRate: memrlStats.totalQueries > 0
+              ? ((memrlStats.queriesWithFeedback / memrlStats.totalQueries) * 100).toFixed(1) + '%'
+              : '0%',
+            config: {
+              delta: memrlStats.config.delta,
+              lambda: memrlStats.config.lambda,
+              alpha: memrlStats.config.alpha
+            }
+          },
+          // Sona stats (pattern-level learning)
+          sona: {
+            totalTrajectories: sonaStats.totalTrajectories,
+            trajectoriesWithFeedback: sonaStats.trajectoriesWithFeedback,
+            feedbackRate: sonaStats.totalTrajectories > 0
+              ? ((sonaStats.trajectoriesWithFeedback / sonaStats.totalTrajectories) * 100).toFixed(1) + '%'
+              : '0%',
+            trackedPatterns: sonaStats.trackedPatterns,
+            avgWeight: sonaStats.avgWeight.toFixed(4),
+            avgSuccessRate: (sonaStats.avgSuccessRate * 100).toFixed(1) + '%',
+            pruneCandidates: sonaStats.prunedPatterns,
+            boostCandidates: sonaStats.boostedPatterns
+          },
+          // Overall health
           currentDrift: drift.drift.toFixed(4),
           driftStatus: drift.status,
-          pruneCandidates: stats.prunedPatterns,
-          boostCandidates: stats.boostedPatterns,
           learningHealth: drift.status === 'ok' ? 'HEALTHY' : drift.status === 'alert' ? 'WARNING' : 'CRITICAL'
         }, null, 2)
       }]
@@ -6571,6 +6917,315 @@ class GodAgentMCPServer {
           text: JSON.stringify({
             success: false,
             message: 'Failed to extend timeout.'
+          }, null, 2)
+        }]
+      };
+    }
+  }
+
+  // ==========================================
+  // CODEX Estimate Handlers
+  // ==========================================
+
+  /**
+   * Scan codebase to gather statistics for estimation
+   */
+  private async scanCodebaseForEstimate(codebasePath: string): Promise<{
+    fileCount: number;
+    totalChars: number;
+    avgFileSize: number;
+    languages: string[];
+  }> {
+    const glob = await import('glob');
+    const fs = await import('fs');
+    const path = await import('path');
+
+    // Source file patterns (same as ContextScout uses)
+    const patterns = [
+      '**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx',
+      '**/*.py', '**/*.java', '**/*.go', '**/*.rs',
+      '**/*.php', '**/*.rb', '**/*.vue', '**/*.svelte',
+      '**/*.css', '**/*.scss', '**/*.html'
+    ];
+
+    const ignorePatterns = [
+      '**/node_modules/**', '**/dist/**', '**/build/**',
+      '**/.git/**', '**/vendor/**', '**/__pycache__/**'
+    ];
+
+    let fileCount = 0;
+    let totalChars = 0;
+    const languageSet = new Set<string>();
+
+    for (const pattern of patterns) {
+      try {
+        const files = await glob.glob(pattern, {
+          cwd: codebasePath,
+          ignore: ignorePatterns,
+          nodir: true,
+          absolute: true
+        });
+
+        for (const file of files) {
+          try {
+            const stats = fs.statSync(file);
+            if (stats.size < 100000) { // Skip files > 100KB
+              const content = fs.readFileSync(file, 'utf-8');
+              fileCount++;
+              totalChars += content.length;
+
+              const ext = path.extname(file).toLowerCase();
+              const langMap: Record<string, string> = {
+                '.ts': 'typescript', '.tsx': 'typescript',
+                '.js': 'javascript', '.jsx': 'javascript',
+                '.py': 'python', '.java': 'java',
+                '.go': 'go', '.rs': 'rust',
+                '.php': 'php', '.rb': 'ruby',
+                '.vue': 'vue', '.svelte': 'svelte',
+                '.css': 'css', '.scss': 'scss',
+                '.html': 'html'
+              };
+              if (langMap[ext]) languageSet.add(langMap[ext]);
+            }
+          } catch {
+            // Skip unreadable files
+          }
+        }
+      } catch {
+        // Skip failed glob patterns
+      }
+    }
+
+    return {
+      fileCount,
+      totalChars,
+      avgFileSize: fileCount > 0 ? Math.round(totalChars / fileCount) : 0,
+      languages: Array.from(languageSet)
+    };
+  }
+
+  /**
+   * Estimate task complexity from description and specification
+   */
+  private estimateTaskComplexity(description: string, specification?: string): 'low' | 'medium' | 'high' {
+    const text = `${description} ${specification || ''}`.toLowerCase();
+
+    // High complexity indicators
+    const highIndicators = [
+      'system', 'architecture', 'integration', 'multiple', 'complex',
+      'refactor entire', 'redesign', 'migrate', 'rewrite', 'security',
+      'authentication', 'authorization', 'database schema', 'api gateway'
+    ];
+
+    // Low complexity indicators
+    const lowIndicators = [
+      'simple', 'add button', 'fix typo', 'rename', 'update text',
+      'change color', 'add comment', 'fix bug', 'small change'
+    ];
+
+    // Check high complexity first
+    for (const indicator of highIndicators) {
+      if (text.includes(indicator)) return 'high';
+    }
+
+    // Check low complexity
+    for (const indicator of lowIndicators) {
+      if (text.includes(indicator)) return 'low';
+    }
+
+    // Default to medium based on text length
+    const wordCount = text.split(/\s+/).length;
+    if (wordCount < 10) return 'low';
+    if (wordCount > 50) return 'high';
+    return 'medium';
+  }
+
+  /**
+   * Calculate per-phase token estimates
+   */
+  private calculatePhaseEstimates(
+    codebaseStats: { fileCount: number; totalChars: number; avgFileSize: number },
+    complexity: 'low' | 'medium' | 'high'
+  ): Array<{
+    name: string;
+    model: 'sonnet' | 'opus';
+    inputTokens: number;
+    outputTokens: number;
+  }> {
+    const phases: Array<{
+      name: string;
+      model: 'sonnet' | 'opus';
+      inputTokens: number;
+      outputTokens: number;
+    }> = [];
+
+    // Phase 1: Context Scout (Sonnet)
+    // Reads up to 20 files × 2000 chars, converts to tokens (÷4)
+    const scoutFileCount = Math.min(codebaseStats.fileCount, 20);
+    const scoutChars = scoutFileCount * Math.min(codebaseStats.avgFileSize, 2000);
+    const scoutTokens = Math.round(scoutChars / 4) + 2500; // + overhead
+    phases.push({
+      name: 'contextScout',
+      model: 'sonnet',
+      inputTokens: scoutTokens,
+      outputTokens: complexity === 'low' ? 1000 : complexity === 'medium' ? 1500 : 2000
+    });
+
+    // Phase 2: Architect (Opus)
+    // Complexity-based estimation
+    const architectInput = {
+      low: 1000,
+      medium: 1800,
+      high: 2800
+    }[complexity];
+    phases.push({
+      name: 'architect',
+      model: 'opus',
+      inputTokens: architectInput,
+      outputTokens: complexity === 'low' ? 500 : complexity === 'medium' ? 1000 : 1500
+    });
+
+    // Phase 3: Engineer (Sonnet for low/medium, may escalate to Opus for high)
+    const engineerInput = {
+      low: 2800,
+      medium: 12000,
+      high: 22000
+    }[complexity];
+    phases.push({
+      name: 'engineer',
+      model: complexity === 'high' ? 'opus' : 'sonnet',
+      inputTokens: engineerInput,
+      outputTokens: complexity === 'low' ? 2000 : complexity === 'medium' ? 4000 : 8000
+    });
+
+    // Phase 4: Validator (Sonnet)
+    // Based on file count + overhead
+    const validatorInput = Math.min(codebaseStats.fileCount * 250, 3000) + 1500;
+    phases.push({
+      name: 'validator',
+      model: 'sonnet',
+      inputTokens: validatorInput,
+      outputTokens: complexity === 'low' ? 500 : complexity === 'medium' ? 800 : 1500
+    });
+
+    // Phase 5: Executor - Local, no tokens
+    // Not added to phases as it's 0 cost
+
+    // Phase 6: Fix Loop (estimate 1 iteration)
+    // In practice could be 0-5 iterations
+    phases.push({
+      name: 'fixLoop',
+      model: 'sonnet',
+      inputTokens: complexity === 'low' ? 750 : complexity === 'medium' ? 2000 : 4000,
+      outputTokens: complexity === 'low' ? 1000 : complexity === 'medium' ? 2000 : 4000
+    });
+
+    return phases;
+  }
+
+  /**
+   * Calculate cost breakdown from phase estimates
+   */
+  private calculateCost(phases: Array<{
+    name: string;
+    model: 'sonnet' | 'opus';
+    inputTokens: number;
+    outputTokens: number;
+  }>): {
+    sonnetInput: string;
+    sonnetOutput: string;
+    opusInput: string;
+    opusOutput: string;
+    total: string;
+  } {
+    // 2025 pricing
+    const SONNET_INPUT_PER_M = 3.00;
+    const SONNET_OUTPUT_PER_M = 15.00;
+    const OPUS_INPUT_PER_M = 15.00;
+    const OPUS_OUTPUT_PER_M = 75.00;
+
+    let sonnetInputTokens = 0;
+    let sonnetOutputTokens = 0;
+    let opusInputTokens = 0;
+    let opusOutputTokens = 0;
+
+    for (const phase of phases) {
+      if (phase.model === 'sonnet') {
+        sonnetInputTokens += phase.inputTokens;
+        sonnetOutputTokens += phase.outputTokens;
+      } else {
+        opusInputTokens += phase.inputTokens;
+        opusOutputTokens += phase.outputTokens;
+      }
+    }
+
+    const sonnetInputCost = (sonnetInputTokens / 1_000_000) * SONNET_INPUT_PER_M;
+    const sonnetOutputCost = (sonnetOutputTokens / 1_000_000) * SONNET_OUTPUT_PER_M;
+    const opusInputCost = (opusInputTokens / 1_000_000) * OPUS_INPUT_PER_M;
+    const opusOutputCost = (opusOutputTokens / 1_000_000) * OPUS_OUTPUT_PER_M;
+    const totalCost = sonnetInputCost + sonnetOutputCost + opusInputCost + opusOutputCost;
+
+    return {
+      sonnetInput: `$${sonnetInputCost.toFixed(3)}`,
+      sonnetOutput: `$${sonnetOutputCost.toFixed(3)}`,
+      opusInput: `$${opusInputCost.toFixed(3)}`,
+      opusOutput: `$${opusOutputCost.toFixed(3)}`,
+      total: `$${totalCost.toFixed(2)}`
+    };
+  }
+
+  /**
+   * Handle god_codex_estimate - estimate token usage and cost for a task
+   */
+  private async handleCodexEstimate(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = CodexEstimateInputSchema.parse(args);
+
+    try {
+      // 1. Scan codebase for file count and sizes
+      const codebaseStats = await this.scanCodebaseForEstimate(input.codebase);
+
+      // 2. Estimate complexity from task description
+      const complexity = this.estimateTaskComplexity(input.description, input.specification);
+
+      // 3. Calculate per-phase token estimates
+      const phases = this.calculatePhaseEstimates(codebaseStats, complexity);
+
+      // 4. Calculate cost
+      const estimatedCost = this.calculateCost(phases);
+
+      // 5. Calculate totals
+      const totals = {
+        inputTokens: phases.reduce((sum, p) => sum + p.inputTokens, 0),
+        outputTokens: phases.reduce((sum, p) => sum + p.outputTokens, 0)
+      };
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            codebase: input.codebase,
+            complexity,
+            codebaseStats,
+            phases,
+            totals,
+            estimatedCost,
+            notes: [
+              'Estimates assume single fix loop iteration',
+              'High complexity tasks may use Opus ($15/M in) instead of Sonnet ($3/M in)',
+              'Actual usage varies based on generated code size'
+            ]
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            codebase: input.codebase
           }, null, 2)
         }]
       };
@@ -8645,6 +9300,70 @@ class GodAgentMCPServer {
     };
   }
 
+  // Ollama Status Handler
+  private async handleOllamaStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const endpoint = process.env.OLLAMA_ENDPOINT;
+    const model = process.env.OLLAMA_MODEL || 'qwen3-coder:480b-cloud';
+    const apiKey = process.env.OLLAMA_API_KEY;
+    const engineerProvider = process.env.RUBIX_ENGINEER_PROVIDER;
+    const timeout = parseInt(process.env.OLLAMA_TIMEOUT || '120000', 10);
+
+    // Check if Ollama is configured as the engineer provider
+    const isConfigured = engineerProvider === 'ollama';
+
+    // Check availability if configured
+    let available = false;
+    let availabilityError: string | undefined;
+
+    if (endpoint) {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json'
+        };
+        if (apiKey) {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);  // 10s health check
+
+        try {
+          const res = await fetch(`${endpoint}/api/tags`, {
+            headers,
+            signal: controller.signal
+          });
+          available = res.ok;
+          if (!res.ok) {
+            availabilityError = `HTTP ${res.status}: ${res.statusText}`;
+          }
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } catch (error) {
+        available = false;
+        availabilityError = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          configured: isConfigured,
+          available,
+          endpoint: endpoint || 'not set',
+          model,
+          hasApiKey: !!apiKey,
+          timeout,
+          availabilityError,
+          message: isConfigured
+            ? (available ? 'Ollama is configured and available' : `Ollama is configured but not available: ${availabilityError}`)
+            : 'Ollama is not configured as the engineer provider. Set RUBIX_ENGINEER_PROVIDER=ollama to enable.'
+        }, null, 2)
+      }]
+    };
+  }
+
   // ===========================================================================
   // Code Review Handlers
   // ===========================================================================
@@ -9925,6 +10644,95 @@ god_comms_setup mode="set" channel="email" config={
     };
   }
 
+  private async handleCuriosityWebExplore(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      searchQuery: z.string().optional(),
+      urls: z.array(z.string()).optional(),
+      maxPages: z.number().optional(),
+      selectors: z.array(z.string()).optional(),
+      storeAsProbe: z.boolean().optional()
+    }).parse(args);
+
+    // Need at least a search query or URLs
+    if (!input.searchQuery && (!input.urls || input.urls.length === 0)) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'Either searchQuery or urls must be provided'
+          }, null, 2)
+        }]
+      };
+    }
+
+    const discovery = await this.getDiscoveryEngine();
+    const webStrategy = discovery.getWebStrategy();
+
+    // Run web exploration
+    const result = await webStrategy.exploreWithConfig({
+      searchQuery: input.searchQuery,
+      urls: input.urls,
+      maxPages: input.maxPages ?? 3,
+      selectors: input.selectors,
+      captureScreenshots: true
+    }, input.searchQuery || input.urls?.join(', '));
+
+    // Optionally store findings as a resolved probe
+    if (input.storeAsProbe !== false && result.success) {
+      const curiosity = await this.getCuriosityTracker();
+      const probeId = await curiosity.recordCuriosity({
+        domain: 'web-research',
+        question: input.searchQuery || `Explore: ${input.urls?.slice(0, 2).join(', ')}`,
+        origin: 'knowledge_gap',
+        confidence: 0.7,
+        noveltyScore: 0.5,
+        estimatedTokens: 1000,
+        context: {
+          webConfig: {
+            searchQuery: input.searchQuery,
+            urls: input.urls,
+            maxPages: input.maxPages,
+            selectors: input.selectors
+          },
+          explorationMethod: 'web'
+        }
+      });
+
+      // Immediately resolve it with findings
+      await curiosity.startExploring(probeId);
+      await curiosity.recordDiscovery(probeId, {
+        success: true,
+        tokensUsed: 0,
+        findings: `Web exploration visited ${result.visitedUrls.length} pages. Content extracted from: ${result.visitedUrls.join(', ')}`,
+        storedFacts: result.visitedUrls,
+        confidence: 0.7,
+        durationMs: result.durationMs
+      });
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: result.success,
+          searchQuery: result.searchQuery,
+          visitedUrls: result.visitedUrls,
+          screenshots: result.screenshots,
+          pageCount: result.pageContents.length,
+          pages: result.pageContents.map(p => ({
+            url: p.url,
+            title: p.title,
+            textLength: p.text.length,
+            textPreview: p.text.slice(0, 200) + (p.text.length > 200 ? '...' : '')
+          })),
+          durationMs: result.durationMs,
+          error: result.error
+        }, null, 2)
+      }]
+    };
+  }
+
   private async handleBudgetStatus(): Promise<{ content: Array<{ type: string; text: string }> }> {
     const budget = await this.getTokenBudget();
     const config = getCuriosityConfig();
@@ -10631,6 +11439,205 @@ god_comms_setup mode="set" channel="email" config={
         }]
       };
     }
+  }
+
+  // ===========================================================================
+  // DISTILLATION HANDLERS (Memory Lesson Extraction)
+  // ===========================================================================
+
+  private async handleDistill(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      types: z.array(z.enum(['success_pattern', 'failure_fix', 'cross_domain', 'contradiction', 'consolidation'])).optional(),
+      lookbackDays: z.number().min(1).max(90).optional(),
+      maxTokens: z.number().min(1000).max(500000).optional(),
+      force: z.boolean().optional(),
+      dryRun: z.boolean().optional()
+    }).parse(args || {});
+
+    const service = await this.getDistillationService();
+
+    // Check if already running
+    if (service.isDistillationRunning()) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'Distillation already running',
+            message: 'Wait for the current run to complete or try again later'
+          }, null, 2)
+        }]
+      };
+    }
+
+    const options: ManualDistillationOptions = {
+      types: input.types as DistillationType[] | undefined,
+      lookbackDays: input.lookbackDays,
+      maxTokens: input.maxTokens,
+      force: input.force,
+      dryRun: input.dryRun
+    };
+
+    const result = await service.runDistillation(options);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: result.success,
+          dryRun: input.dryRun ?? false,
+          startedAt: result.startedAt.toISOString(),
+          completedAt: result.completedAt.toISOString(),
+          durationMs: result.durationMs,
+          tokensUsed: result.tokensUsed,
+          memoriesProcessed: result.memoriesProcessed,
+          insightsExtracted: result.insights.length,
+          byType: result.byType,
+          budgetExhausted: result.budgetExhausted,
+          errors: result.errors.length > 0 ? result.errors : undefined,
+          insights: result.insights.map(i => ({
+            type: i.type,
+            insight: i.insight.substring(0, 200) + (i.insight.length > 200 ? '...' : ''),
+            confidence: i.confidence,
+            applicableContexts: i.applicableContexts.slice(0, 3)
+          }))
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleDistillationStats(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const service = await this.getDistillationService();
+    const stats: DistillationStats = await service.getStats();
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          totalRuns: stats.totalRuns,
+          totalInsights: stats.totalInsights,
+          byType: stats.byType,
+          avgConfidence: stats.avgConfidence.toFixed(3),
+          totalTokensUsed: stats.totalTokensUsed,
+          avgTokensPerRun: stats.avgTokensPerRun,
+          lastRunAt: stats.lastRunAt?.toISOString(),
+          lastRunResult: stats.lastRunResult,
+          pendingMemories: stats.pendingMemories,
+          topInsights: stats.topInsights.slice(0, 5),
+          isRunning: service.isDistillationRunning(),
+          scheduling: {
+            isSchedulerRunning: service.isScheduledRunning(),
+            nextScheduledRun: service.getNextScheduledRun()?.toISOString()
+          }
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleDistillationConfig(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      enabled: z.boolean().optional(),
+      schedule: z.string().optional(),
+      maxTokensPerRun: z.number().min(1000).max(500000).optional(),
+      minConfidence: z.number().min(0).max(1).optional(),
+      lookbackDays: z.number().min(1).max(90).optional(),
+      types: z.array(z.enum(['success_pattern', 'failure_fix', 'cross_domain', 'contradiction', 'consolidation'])).optional(),
+      startScheduler: z.boolean().optional(),
+      stopScheduler: z.boolean().optional()
+    }).parse(args || {});
+
+    const service = await this.getDistillationService();
+
+    // Update config if any values provided
+    const configUpdates: Partial<DistillationConfig> = {};
+    if (input.enabled !== undefined) configUpdates.enabled = input.enabled;
+    if (input.schedule !== undefined) configUpdates.schedule = input.schedule;
+    if (input.maxTokensPerRun !== undefined) configUpdates.maxTokensPerRun = input.maxTokensPerRun;
+    if (input.minConfidence !== undefined) configUpdates.minConfidence = input.minConfidence;
+    if (input.lookbackDays !== undefined) configUpdates.lookbackDays = input.lookbackDays;
+    if (input.types !== undefined) configUpdates.distillationTypes = input.types as DistillationType[];
+
+    if (Object.keys(configUpdates).length > 0) {
+      service.updateConfig(configUpdates);
+    }
+
+    // Handle scheduler start/stop
+    if (input.startScheduler) {
+      service.startScheduled();
+    }
+    if (input.stopScheduler) {
+      service.stopScheduled();
+    }
+
+    const config = service.getConfig();
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          config: {
+            enabled: config.enabled,
+            schedule: config.schedule,
+            maxTokensPerRun: config.maxTokensPerRun,
+            minConfidence: config.minConfidence,
+            lookbackDays: config.lookbackDays,
+            distillationTypes: config.distillationTypes,
+            model: config.model,
+            enableExtendedThinking: config.enableExtendedThinking,
+            thinkingBudget: config.thinkingBudget
+          },
+          scheduling: {
+            isSchedulerRunning: service.isScheduledRunning(),
+            nextScheduledRun: service.getNextScheduledRun()?.toISOString()
+          },
+          message: Object.keys(configUpdates).length > 0 ? 'Configuration updated' : 'Current configuration'
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleDistillationQuery(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      query: z.string(),
+      topK: z.number().min(1).max(50).optional(),
+      type: z.enum(['success_pattern', 'failure_fix', 'cross_domain', 'contradiction', 'consolidation']).optional(),
+      minConfidence: z.number().min(0).max(1).optional(),
+      tags: z.array(z.string()).optional()
+    }).parse(args);
+
+    const service = await this.getDistillationService();
+
+    const result = await service.queryInsights({
+      query: input.query,
+      topK: input.topK,
+      type: input.type as DistillationType | undefined,
+      minConfidence: input.minConfidence,
+      tags: input.tags
+    });
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          count: result.insights.length,
+          insights: result.insights.map(i => ({
+            id: i.insight.id,
+            type: i.insight.type,
+            insight: i.insight.insight,
+            pattern: i.insight.pattern,
+            applicableContexts: i.insight.applicableContexts,
+            caveats: i.insight.caveats,
+            confidence: i.insight.confidence,
+            similarity: i.similarity.toFixed(4),
+            sourceCount: i.insight.sourceMemoryIds.length
+          })),
+          applicableLessons: result.applicableLessons,
+          relevantPatterns: result.relevantPatterns,
+          relevantCaveats: result.relevantCaveats
+        }, null, 2)
+      }]
+    };
   }
 
   async run(): Promise<void> {
