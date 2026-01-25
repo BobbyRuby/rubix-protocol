@@ -126,9 +126,6 @@ export class PlanningSession {
   /** Session metadata */
   private meta: SessionMeta;
 
-  /** Track last stored exchange for chaining */
-  private lastExchangeId?: string;
-
   /** Track metadata entry ID to update instead of creating duplicates */
   private metaEntryId?: string;
 
@@ -307,7 +304,7 @@ export class PlanningSession {
    * Continue the planning conversation
    * @param userMessage Text message from user
    * @param image Optional image attachment
-   * @param maxIterations Optional max tool iterations (default 10, increased for queued messages)
+   * @param maxIterations Optional max tool iterations (default 20, increased for queued messages)
    */
   async chat(userMessage: string, image?: ImageContent, maxIterations?: number): Promise<string> {
     if (!this.isActive()) {
@@ -685,7 +682,38 @@ export class PlanningSession {
   static async deleteSession(engine: MemoryEngine, sessionId: string): Promise<number> {
     console.log(`[PlanningSession] Deleting session ${sessionId}`);
 
-    // Find all entries with this session tag
+    let deleted = 0;
+
+    // 1. Delete session metadata entry explicitly
+    // Query by planning+session-meta tags, then filter by content
+    // This catches metadata entries that may be missing the session:${id} tag
+    const metaResults = await engine.query('planning session metadata', {
+      topK: 100,
+      filters: {
+        tags: ['planning', 'session-meta']
+      }
+    });
+
+    for (const r of metaResults) {
+      try {
+        let content = r.entry.content;
+        // Decompress if needed
+        const tags = (r.entry.metadata?.tags as string[]) || [];
+        content = await decompressMemoryContent(content, tags);
+
+        const meta = JSON.parse(content);
+        if (meta.id === sessionId) {
+          if (engine.deleteEntry(r.entry.id)) {
+            deleted++;
+            console.log(`[PlanningSession] Deleted session metadata entry: ${r.entry.id}`);
+          }
+        }
+      } catch {
+        // Not valid JSON, skip
+      }
+    }
+
+    // 2. Delete all entries with session:${id} tag (exchanges, decisions, etc.)
     const results = await engine.query('session data', {
       topK: 500, // Get all related entries
       filters: {
@@ -693,16 +721,15 @@ export class PlanningSession {
       }
     });
 
-    console.log(`[PlanningSession] Found ${results.length} entries to delete`);
+    console.log(`[PlanningSession] Found ${results.length} tagged entries to delete`);
 
-    let deleted = 0;
     for (const r of results) {
       if (engine.deleteEntry(r.entry.id)) {
         deleted++;
       }
     }
 
-    console.log(`[PlanningSession] Deleted ${deleted} entries`);
+    console.log(`[PlanningSession] Deleted ${deleted} total entries`);
     return deleted;
   }
 
@@ -747,12 +774,13 @@ export class PlanningSession {
         importance: 0.85,
         confidence: 1.0,
         sessionId: this.id,
-        parentIds: this.lastExchangeId ? [this.lastExchangeId] : undefined,
+        // No parentIds - each exchange is fresh user input, not a derivation.
+        // Chaining parentIds causes L-Score degradation (0.9^n) which fails
+        // after ~14 exchanges when it drops below the 0.3 threshold.
         context: summary ? { summary } : undefined
       });
 
       exchange.memoryId = entry.id;
-      this.lastExchangeId = entry.id;
       entryId = entry.id;
       console.log(`[PlanningSession] Stored ${role} exchange (${content.length} chars)`);
     } catch (error) {
@@ -850,6 +878,13 @@ export class PlanningSession {
    */
   private async storeSessionMeta(): Promise<void> {
     try {
+      // Flush any pending embeddings before saving session
+      // This ensures recent exchanges become searchable on resume
+      const pendingCount = this.engine.getPendingEmbeddingCount();
+      if (pendingCount > 0) {
+        await this.engine.flushPendingEmbeddings();
+      }
+
       const content = JSON.stringify(this.meta);
 
       // Update existing entry if we have one, otherwise create new
@@ -945,10 +980,6 @@ export class PlanningSession {
       this.recentExchanges = this.recentExchanges.slice(-10);
     }
 
-    if (this.recentExchanges.length > 0) {
-      this.lastExchangeId = this.recentExchanges[this.recentExchanges.length - 1].memoryId;
-    }
-
     console.log(`[PlanningSession] Loaded ${this.recentExchanges.length} recent exchanges`);
   }
 
@@ -1023,9 +1054,9 @@ export class PlanningSession {
 
     // Use local cache as fallback when memory query returns insufficient results
     // (handles case where L-Score storage failures prevent persistence)
-    const useLocalCache = storedExchanges.length < 4 && this.recentExchanges.length >= 4;
+    const useLocalCache = storedExchanges.length < 2 && this.recentExchanges.length >= 2;
 
-    if (storedExchanges.length < 4 && !useLocalCache) {
+    if (storedExchanges.length < 2 && !useLocalCache) {
       console.log('[PlanningSession] Not enough exchanges for plan generation yet');
       return;
     }
@@ -1129,8 +1160,8 @@ export class PlanningSession {
         ],
         source: MemorySource.USER_INPUT,
         importance: 0.95,
-        sessionId: this.id,
-        parentIds: this.lastExchangeId ? [this.lastExchangeId] : undefined
+        sessionId: this.id
+        // No parentIds - decisions are user input, not derivations
       });
       console.log(`[PlanningSession] Stored decision`);
     } catch (error) {

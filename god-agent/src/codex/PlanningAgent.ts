@@ -145,6 +145,33 @@ const PLANNING_TOOLS: Anthropic.Messages.Tool[] = [
       },
       required: ['query']
     }
+  },
+  {
+    name: 'write_file',
+    description: 'Write content to a file. Creates the file if it does not exist, or overwrites if it does. Use for creating new files or completely replacing file contents.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: 'File path to write (absolute or relative to codebase root)' },
+        content: { type: 'string', description: 'Content to write to the file' },
+        createDirs: { type: 'boolean', description: 'Create parent directories if they do not exist (default: true)' }
+      },
+      required: ['path', 'content']
+    }
+  },
+  {
+    name: 'edit_file',
+    description: 'Edit a file by replacing a specific string with new content. Safer than write_file for modifications. The old_string must match exactly (including whitespace/indentation).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        path: { type: 'string', description: 'File path to edit (absolute or relative to codebase root)' },
+        old_string: { type: 'string', description: 'Exact string to find and replace (must be unique in the file)' },
+        new_string: { type: 'string', description: 'String to replace it with' },
+        replace_all: { type: 'boolean', description: 'Replace all occurrences instead of just the first (default: false)' }
+      },
+      required: ['path', 'old_string', 'new_string']
+    }
   }
 ];
 
@@ -473,6 +500,86 @@ export class PlanningAgent {
           }
         }
 
+        case 'write_file': {
+          const inputPath = input.path as string;
+          const content = input.content as string;
+          const createDirs = input.createDirs !== false; // default true
+
+          const filePath = path.isAbsolute(inputPath)
+            ? inputPath
+            : path.resolve(this.codebaseRoot, inputPath);
+
+          if (!this.checkAccess(filePath, 'write')) {
+            return `Permission denied: Cannot write to ${filePath}\n\nTo grant access, use the MCP tool: god_containment_session add "${path.dirname(filePath)}" write`;
+          }
+
+          try {
+            // Create parent directories if needed
+            if (createDirs) {
+              await fs.mkdir(path.dirname(filePath), { recursive: true });
+            }
+
+            await fs.writeFile(filePath, content, 'utf-8');
+            console.log(`[PlanningAgent] Wrote file: ${filePath} (${content.length} chars)`);
+            return `Successfully wrote ${content.length} characters to ${filePath}`;
+          } catch (err) {
+            const error = err as Error;
+            return `Error writing file: ${error.message}`;
+          }
+        }
+
+        case 'edit_file': {
+          const inputPath = input.path as string;
+          const oldString = input.old_string as string;
+          const newString = input.new_string as string;
+          const replaceAll = input.replace_all === true;
+
+          const filePath = path.isAbsolute(inputPath)
+            ? inputPath
+            : path.resolve(this.codebaseRoot, inputPath);
+
+          if (!this.checkAccess(filePath, 'write')) {
+            return `Permission denied: Cannot edit ${filePath}\n\nTo grant access, use the MCP tool: god_containment_session add "${path.dirname(filePath)}" write`;
+          }
+
+          try {
+            const content = await fs.readFile(filePath, 'utf-8');
+
+            // Check if old_string exists
+            if (!content.includes(oldString)) {
+              return `Error: Could not find the specified text in ${filePath}.\n\nMake sure old_string matches exactly, including whitespace and indentation.`;
+            }
+
+            // Check uniqueness if not replace_all
+            if (!replaceAll) {
+              const occurrences = content.split(oldString).length - 1;
+              if (occurrences > 1) {
+                return `Error: Found ${occurrences} occurrences of old_string in ${filePath}.\n\nProvide more context to make the match unique, or set replace_all: true to replace all occurrences.`;
+              }
+            }
+
+            // Perform replacement
+            const newContent = replaceAll
+              ? content.split(oldString).join(newString)
+              : content.replace(oldString, newString);
+
+            await fs.writeFile(filePath, newContent, 'utf-8');
+
+            const replacements = replaceAll
+              ? content.split(oldString).length - 1
+              : 1;
+
+            console.log(`[PlanningAgent] Edited file: ${filePath} (${replacements} replacement(s))`);
+            return `Successfully edited ${filePath}: replaced ${replacements} occurrence(s)`;
+          } catch (err) {
+            const error = err as Error;
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+              return `Error: File not found: ${filePath}`;
+            }
+            return `Error editing file: ${error.message}`;
+          }
+        }
+
         default:
           return `Unknown tool: ${name}`;
       }
@@ -507,7 +614,7 @@ export class PlanningAgent {
       currentPlan?: PlanDocument;
       decisions?: string[];
       image?: ImageContent;
-      maxIterations?: number;  // Dynamic iteration budget (default 10, increased for queued messages)
+      maxIterations?: number;  // Dynamic iteration budget (default 20, increased for queued messages)
     }
   ): Promise<string> {
     // Use provided iteration budget or default
