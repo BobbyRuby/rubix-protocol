@@ -406,9 +406,15 @@ export class PlanningSession {
     await this.loadRecentExchanges();
 
     // Verify exchange count matches reality
-    const actualExchanges = await this.engine.query('exchange', {
-      topK: 100,
-      filters: { tags: ['planning', 'exchange', `session:${this.id}`] }
+    // Query by session tag only, then filter for 'exchange' tag in code
+    // (avoids tagMatchAll:true requiring ALL tags to match)
+    const allSessionEntries = await this.engine.query('exchange', {
+      topK: 200,
+      filters: { tags: [`session:${this.id}`] }
+    });
+    const actualExchanges = allSessionEntries.filter(r => {
+      const tags = r.entry.metadata.tags || [];
+      return tags.includes('exchange');
     });
     if (actualExchanges.length !== this.meta.exchangeCount) {
       console.log(`[PlanningSession] Exchange count mismatch: metadata=${this.meta.exchangeCount}, actual=${actualExchanges.length}. Correcting.`);
@@ -904,11 +910,18 @@ export class PlanningSession {
    * Load recent exchanges from memory
    */
   private async loadRecentExchanges(): Promise<void> {
-    const results = await this.engine.query('recent exchange', {
-      topK: 20,
+    // Query by session tag only, then filter for 'exchange' tag in code
+    // (avoids tagMatchAll:true requiring ALL tags to match)
+    const allResults = await this.engine.query('recent exchange', {
+      topK: 50,  // Get more since we'll filter
       filters: {
-        tags: ['planning', 'exchange', `session:${this.id}`]
+        tags: [`session:${this.id}`]
       }
+    });
+
+    const results = allResults.filter(r => {
+      const tags = r.entry.metadata.tags || [];
+      return tags.includes('exchange');
     });
 
     this.recentExchanges = await Promise.all(results.map(async r => {
@@ -997,11 +1010,18 @@ export class PlanningSession {
    */
   private async updatePlanDocument(): Promise<void> {
     // Get conversation summary
-    const allExchanges = await this.engine.query('exchange', {
-      topK: 100,
+    // Query by session tag only, then filter for 'exchange' tag in code
+    // (avoids tagMatchAll:true requiring ALL tags to match)
+    const allResults = await this.engine.query('exchange', {
+      topK: 200,  // Get more since we'll filter
       filters: {
-        tags: ['planning', 'exchange', `session:${this.id}`]
+        tags: [`session:${this.id}`]
       }
+    });
+
+    const allExchanges = allResults.filter(r => {
+      const tags = r.entry.metadata.tags || [];
+      return tags.includes('exchange');
     });
 
     if (allExchanges.length < 4) {
