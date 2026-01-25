@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix\\(codex\\): Fix tag filtering in PlanningSession exchange queries\n\nUse session tag only in queries then filter for ''exchange'' tag in code.\nThis avoids tagMatchAll:true requiring ALL tags to match, which caused\n\"not enough exchanges for plan generation\" despite having 9+ exchanges.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit:*)",
+      "Bash(sqlite3:*)",
+      "Bash(node:*)",
+      "mcp__rubix__god_query",
+      "Bash(tree:*)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\rruby\\\\AndroidStudioProjects\\\\OneShotProAi\\\\code-reviewer\" -Recurse -Filter \"*.ts\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(dir /b /s D:rubix-protocolgod-agentsite)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "rubix"
+  ]
+}

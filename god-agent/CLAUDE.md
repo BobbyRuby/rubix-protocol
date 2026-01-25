@@ -1,40 +1,31 @@
 # God-Agent Architecture
 
-## Primary Purpose
+## DIRECTIVE: PRIMARY PURPOSE
 
 **God-Agent is a development tool for building OTHER software projects.**
 
-This system exists to assist in developing external codebases - not to be self-referentially worked on. When given tasks:
-- Focus on the TARGET project/codebase being developed
-- Use memory and capabilities to understand and modify external code
-- Apply CODEX for implementing features, fixing bugs, and refactoring in user projects
+- Focus on TARGET project/codebase being developed
+- Use memory/capabilities to understand and modify external code
+- Apply CODEX for features, bugs, refactoring in user projects
 - Store learnings about external projects and patterns
-
-Do NOT assume tasks are about modifying God-Agent itself unless explicitly stated.
+- Do NOT assume tasks are about God-Agent itself unless explicit
 
 ---
 
-## Communication Protocol (MANDATORY)
+## DIRECTIVE: COMMUNICATION PROTOCOL (MANDATORY)
 
-**ALL questions, clarifications, and user interactions MUST go through Telegram via `god_comms_escalate`.**
+**ALL questions/clarifications MUST go through Telegram via `god_comms_escalate`.**
 
-This is NON-NEGOTIABLE. Do NOT:
+DO NOT:
 - Use AskUserQuestion tool
 - Ask questions in text responses
-- Wait for user input via CLI
-
-The user monitors Telegram exclusively. Use `god_comms_escalate` for:
-- Decisions and approvals
-- Clarifications and questions
-- Blocked/stuck situations
-- Progress updates requiring response
+- Wait for CLI input
 
 ```typescript
-// REQUIRED mechanism for user communication
 mcp__rubix__god_comms_escalate({
   title: "Question Title",
   message: "Your question here",
-  type: "decision",  // decision | clarification | blocked | approval | info
+  type: "decision",  // decision|clarification|blocked|approval|info
   options: [{ label: "Option A", description: "..." }, ...]
 });
 ```
@@ -43,354 +34,403 @@ mcp__rubix__god_comms_escalate({
 
 ---
 
-## Overview
+## DIRECTIVE: HOUSEKEEPING
 
-God-Agent is a **standalone autonomous agent system** - NOT just an MCP server. It has THREE deployment modes:
-
-1. **MCP Server Mode** - Claude Code integration via Model Context Protocol
-2. **CLI Mode** - Direct command-line interface
-3. **Standalone Service Mode** - Background daemon with Telegram/HTTP interfaces
-
-> "Give it a task. It does the work. Bothers you only when necessary."
-
----
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      INTERFACE LAYER                                │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   MCP Server          CLI              Telegram Bot    HTTP Server  │
-│   (mcp-server.ts)     (cli/)           (telegram/)     (webhooks)   │
-│        │                │                   │              │        │
-│        └────────────────┴───────────────────┴──────────────┘        │
-│                                    │                                │
-├────────────────────────────────────┼────────────────────────────────┤
-│                      CORE SYSTEMS  │                                │
-├────────────────────────────────────┼────────────────────────────────┤
-│                                    ▼                                │
-│   ┌─────────────────────────────────────────────────────────┐       │
-│   │                    CODEX (TaskExecutor)                 │       │
-│   │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐│       │
-│   │  │TaskDecomposer│ │CodeGenerator │ │   SelfHealer     ││       │
-│   │  └──────────────┘ └──────────────┘ └──────────────────┘│       │
-│   │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐│       │
-│   │  │EscalationGate│ │  Learning    │ │ CausalDebugger   ││       │
-│   │  └──────────────┘ └──────────────┘ └──────────────────┘│       │
-│   └─────────────────────────────────────────────────────────┘       │
-│                                    │                                │
-│   ┌─────────────────────────────────────────────────────────┐       │
-│   │                    MemoryEngine                         │       │
-│   │  ┌────────────┐ ┌────────────┐ ┌────────────┐          │       │
-│   │  │ VectorDB   │ │ Provenance │ │  Causal    │          │       │
-│   │  │  (HNSW)    │ │ (L-Score)  │ │ Hypergraph │          │       │
-│   │  └────────────┘ └────────────┘ └────────────┘          │       │
-│   │  ┌────────────┐ ┌────────────┐ ┌────────────┐          │       │
-│   │  │   Sona     │ │TinyDancer  │ │    GNN     │          │       │
-│   │  │ (Learning) │ │ (Routing)  │ │(Enhancement│          │       │
-│   │  └────────────┘ └────────────┘ └────────────┘          │       │
-│   └─────────────────────────────────────────────────────────┘       │
-│                                                                     │
-│   ┌─────────────────────────────────────────────────────────┐       │
-│   │              Communication & Notification               │       │
-│   │  ┌──────────────────────────────────────────────────┐  │       │
-│   │  │ Fallback Chain: Telegram→Phone→SMS→Slack→Discord │  │       │
-│   │  └──────────────────────────────────────────────────┘  │       │
-│   └─────────────────────────────────────────────────────────┘       │
-│                                                                     │
-│   ┌─────────────────────────────────────────────────────────┐       │
-│   │                  Capabilities (10)                      │       │
-│   │  LSP | Git | AST | Profiler | Debug | Playwright | etc  │       │
-│   └─────────────────────────────────────────────────────────┘       │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Directory Structure (32+ subsystems)
-
-```
-src/
-├── mcp-server.ts           # MCP protocol entry point (50+ tools)
-├── index.ts                # Main exports
-│
-├── core/                   # Core memory system
-│   ├── MemoryEngine.ts     # Unified API facade
-│   ├── config.ts           # Configuration loading
-│   └── types.ts            # Core type definitions
-│
-├── codex/                  # Autonomous developer agent (CORE)
-│   ├── TaskExecutor.ts     # Main orchestrator (~1800 lines)
-│   ├── TaskDecomposer.ts   # Breaks tasks into subtasks
-│   ├── CodeGenerator.ts    # Claude API integration
-│   ├── SelfHealer.ts       # Failure analysis & recovery
-│   ├── EscalationGate.ts   # Human escalation logic
-│   ├── LearningIntegration.ts
-│   ├── AlternativesFinder.ts
-│   ├── CausalDebugger.ts
-│   └── types.ts
-│
-├── cli/                    # Command-line interface
-│   ├── index.ts
-│   └── commands/           # init, store, query, trace, etc.
-│
-├── telegram/               # Telegram bot - CAN TRIGGER CODEX
-│   ├── TelegramBot.ts      # Bot instance
-│   ├── TelegramHandler.ts  # /task command → TaskExecutor
-│   └── types.ts
-│
-├── communication/          # Multi-channel escalation
-│   ├── CommunicationManager.ts  # Orchestrates fallback chain
-│   ├── channels/           # Phone, SMS, Slack, Discord, Email, Telegram
-│   └── server/             # Webhook server (:3456)
-│
-├── notification/           # Notification system
-│   ├── NotificationService.ts
-│   ├── SlackNotifier.ts
-│   └── DiscordNotifier.ts
-│
-├── deepwork/               # Focus mode management
-│   └── DeepWorkManager.ts
-│
-├── scheduler/              # Background daemon
-│   └── SchedulerDaemon.ts  # Cron, event, file triggers
-│
-├── capabilities/           # IDE-like powers (10 capabilities)
-│   └── CapabilitiesManager.ts
-│
-├── playwright/             # Browser automation
-│   ├── PlaywrightManager.ts
-│   └── VerificationService.ts
-│
-├── learning/               # Sona continuous learning
-│   └── SonaEngine.ts       # Trajectory-based, EWC++ regularization
-│
-├── routing/                # Query routing
-│   └── TinyDancer.ts       # Neural router with circuit breakers
-│
-├── provenance/             # L-Score reliability tracking
-│   └── LScoreCalculator.ts
-│
-├── causal/                 # Hypergraph reasoning (n→m relations)
-│   └── CausalMemory.ts
-│
-├── gnn/                    # Graph neural network enhancement
-│   └── EnhancementLayer.ts
-│
-├── adversarial/            # Shadow search (contradiction finding)
-│   └── ShadowSearch.ts
-│
-├── failure/                # Failure learning
-│   └── FailureMemoryService.ts
-│
-├── review/                 # Code review
-│   └── CodeReviewer.ts
-│
-├── storage/                # SQLite persistence
-│   └── SQLiteStorage.ts
-│
-└── vector/                 # HNSW vector database (768-dim)
-    └── VectorDB.ts
-```
-
----
-
-## Entry Points
-
-### 1. MCP Server (Claude Code integration)
+**Clean temp directories proactively:**
 ```bash
-node dist/mcp-server.js
-# Configured in .claude/mcp.json
+npm run clean:temp                    # Clean tmpclaude-*-cwd dirs
+node scripts/clean-temp.cjs --dry-run # Preview
 ```
 
-### 2. CLI (Direct commands)
-```bash
-god-agent init              # Initialize database
-god-agent query "search"    # Query memory
-god-agent store "content"   # Store to memory
-god-agent trace <id>        # Trace provenance
-god-agent stats             # Memory statistics
+Run automatically:
+- At session start
+- Before git commits
+- When git status shows `tmpclaude-*`
+
+---
+
+## DIRECTIVE: CRITICAL NOTES
+
+1. `ANTHROPIC_API_KEY` required for CodeGenerator file writes
+2. MCP server reads env at startup → restart Claude Code after config changes
+3. Always use `.claude/mcp.json` (project) → NEVER `~/.claude/mcp.json` (global)
+4. Single CODEX task at a time → cancel or wait before new submission
+5. `god_codex_do` async → poll with `god_codex_status`
+
+---
+
+## ARCHITECTURE
+
+```
+INTERFACES: MCP(mcp-server.ts)|CLI(cli/)|Telegram(telegram/)|HTTP(webhooks:3456)
+     │
+CORE─┼─►CODEX[PhasedExecutor,ParallelEngineer,TaskExecutor,SelfHealer,EscalationGate]
+     │
+     ├─►MEMORY[MemoryEngine→storage,vectorDb,embeddings,provenance,causal,patterns,
+     │         shadowSearch,sona,memrl,gnn,router,queryCache]
+     │
+     ├─►COMMS[Fallback:Telegram→Phone→SMS→Slack→Discord→Email(5min/channel)]
+     │
+     └─►CAPABILITIES[10:LSP,Git,AST,Profiler,Debug,Playwright,StaticAnalysis,
+                     DepGraph,DocMining,DBIntrospection]
 ```
 
-### 3. Telegram Bot (Standalone - CAN TRIGGER CODEX)
-```typescript
-// Users can send: /task Build a calculator
-const bot = new TelegramBot(config, taskExecutor);
-bot.start();  // Independent of MCP
-```
+**Modes:** MCP Server | CLI | Standalone Service (daemon+Telegram+HTTP)
 
-### 4. Scheduler Daemon (Background service)
-```typescript
-const daemon = new SchedulerDaemon(engine);
-daemon.start();  // Runs cron jobs, file watchers, event triggers
+---
+
+## REPO STRUCTURE
+
+```
+god-agent/src/ [242 TS files, 32 subsystems]
+├─ mcp-server.ts [50+ tools, StdioTransport, Zod validation]
+├─ index.ts [478L, 32 export categories]
+├─ core/ [MemoryEngine facade ~1418L, types ~324L, config, errors]
+├─ storage/ [SQLite 15 tables, WAL mode, schema.sql]
+├─ vector/ [HNSW 768d, OpenAI text-embedding-3-small]
+├─ codex/ [PhasedExecutor ~1791L, ParallelEngineer ~320L, SelfHealer ~985L]
+├─ learning/ [Sona, MemRL ~373L, trajectories]
+├─ curiosity/ [AutonomousDiscovery ~436L, probes, budget]
+├─ distillation/ [MemoryDistillation ~1263L, weekly]
+├─ capabilities/ [10 IDE powers]
+├─ playwright/ [browser automation, verification]
+├─ scheduler/ [cron, events, daemon]
+├─ communication/ [CommunicationManager, 6 channels]
+├─ notification/ [Slack, Discord]
+├─ deepwork/ [DeepWorkManager]
+├─ routing/ [TinyDancer, CircuitBreaker]
+├─ provenance/ [LScoreCalculator]
+├─ causal/ [CausalMemory, Hypergraph]
+├─ gnn/ [EnhancementLayer]
+├─ adversarial/ [ShadowSearch]
+├─ failure/ [FailureMemoryService]
+├─ review/ [CodeReviewer]
+└─ telegram/ [TelegramBot, Handler, strict session modes]
 ```
 
 ---
 
-## Telegram Bot Commands
-
-The Telegram bot uses **strict session mode enforcement**. All non-command messages require an active mode.
-
-### Session Modes
-
-| Mode | Command | Behavior |
-|------|---------|----------|
-| `conversation` | `/conversation` | Free-form chat, can `/rubixallize` to plan |
-| `plan` | `/plan <desc>` | Planning session with Claude |
-| `task` | `/task <desc>` | Immediate execution (transient) |
-
-### Mode Transitions
+## TYPES (core/types.ts)
 
 ```
-NONE -> /conversation -> CHAT -> /rubixallize -> PLAN
-NONE -> /plan -> PLAN
-NONE -> /task -> TASK -> (completes) -> NONE
-ANY -> /exit -> NONE
-```
+MemoryEntry{id,content,embedding?,metadata,provenance,created,updated}
+MemorySource: USER_INPUT|AGENT_INFERENCE|TOOL_OUTPUT|SYSTEM|EXTERNAL
+ProvenanceInfo{parentIds[],lineageDepth,confidence,relevance,lScore?}
+CausalRelation{id,type,src[],tgt[],strength,ttl?,expiresAt?}
+  type: causes|enables|prevents|correlates|precedes|triggers
+QueryOptions{topK?,minScore?,filters?,includeProvenance?,traceDepth?}
+QueryFilters{sources?,tags?,tagMatchAll?,dateRange?,minImportance?,session?,agent?}
 
-### Quick Reference
+HNSWConfig{maxElements:100K,efConstruction:200,efSearch:100,M:16,space:cosine}
+EmbeddingConfig{provider:openai,model:text-embedding-3-small,dims:768,batch:100}
+LScoreConfig{depthDecay:0.9,minScore:0.01,threshold:0.3,enforce:true}
 
-**Start modes:** `/conversation`, `/plan <desc>`, `/task <desc>`
-**Exit mode:** `/exit`
-**Convert:** `/rubixallize` (conversation -> plan)
-**Execute:** `/execute` (plan -> run)
-**Resume:** `/resume` or `/resume N`
-
-For full command reference, see [Telegram Bot Guide](docs/communication/telegram-bot-guide.md).
-
----
-
-## RUBIX Department Head System (NEW)
-
-```
-                    ┌─────────────────┐
-                    │     CLAUDE      │
-                    │  (Head of Ops)  │
-                    └────────┬────────┘
-                             │
-        ┌────────┬───────────┼───────────┬────────┐
-        ▼        ▼           ▼           ▼        ▼
-   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
-   │RESEARCHER│ │ARCHITECT│ │ENGINEER │ │VALIDATOR│ │GUARDIAN │
-   └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘
-        │           │           │           │           │
-     ┌──┴──┐     ┌──┴──┐     ┌──┴──┐     ┌──┴──┐     ┌──┴──┐
-     │█ █ █│     │█ █ █│     │█ █ █│     │█ █ █│     │█ █ █│
-     └─────┘     └─────┘     └─────┘     └─────┘     └─────┘
-    Sub-agents  Sub-agents  Sub-agents  Sub-agents  Sub-agents
-```
-
-### The 5 Departments
-
-| Department | Role | Responsibilities |
-|------------|------|------------------|
-| **RESEARCHER** | VP of Discovery | Codebase analysis, pattern detection, dependency mapping |
-| **ARCHITECT** | VP of Design | Solution structure, interfaces, data models |
-| **ENGINEER** | VP of Implementation | Code writing, component building (highest parallelism) |
-| **VALIDATOR** | VP of Quality | Unit tests, integration tests, edge cases |
-| **GUARDIAN** | VP of Reliability | Security scanning, performance, code review |
-
-### Enable RUBIX Mode
-
-```typescript
-// In TaskExecutor
-executor.enableRubixMode({
-  model: 'claude-sonnet-4-20250514',
-  maxSubAgentsPerDepartment: 5,
-  codebaseRoot: process.cwd()
-});
-```
-
-### RUBIX Execution Flow
-
-```
-User submits task
-    │
-    ▼
-RubixOrchestrator.execute()
-    │
-    ▼
-Create Plan → Phases with parallel departments
-    │
-    ▼
-Phase 1: RESEARCHER (understand problem)
-    │
-    ▼
-Phase 2: ARCHITECT (design solution)
-    │
-    ▼
-Phase 3: ENGINEER (build code - parallel per file)
-    │
-    ▼
-Phase 4: VALIDATOR + GUARDIAN (verify in parallel)
-    │
-    ▼
-Synthesize Results → Return artifacts
+CodexLLMConfig{
+  apiKey?,model:claude-opus-4-5,maxTokens:8192,
+  extendedThinking{enabled,baseBudget:5000,increment:5000,max:16000,enableOnAttempt:2},
+  executionMode:cli-first|api-only|cli-only,
+  engineerProvider:claude|ollama,
+  ollamaEndpoint?,ollamaModel:qwen3-coder:480b-cloud,ollamaTimeout:120000
+}
 ```
 
 ---
 
-## Legacy CODEX Execution Flow
+## MEMORY ENGINE (core/MemoryEngine.ts)
 
 ```
-User submits task (MCP, Telegram, CLI, or API)
-    │
-    ▼
-TaskExecutor.execute()
-    │
-    ▼
-TaskDecomposer → 7 subtask types:
-    • research   - Analyze codebase
-    • design     - Architecture planning
-    • code       - CodeGenerator → Claude API
-    • test       - Write/run tests
-    • integrate  - Wire components
-    • verify     - Playwright verification
-    • review     - Code quality check
-    │
-    ▼
-For each subtask (up to 3 attempts):
-    │
-    ├─► Attempt 1: Standard approach
-    │   └─► If fails → SelfHealer analyzes
-    │
-    ├─► Attempt 2: Alternative + learning suggestions
-    │   └─► If fails → Extended thinking enabled
-    │
-    ├─► Attempt 3: Ultrathink (16K token budget)
-    │   └─► If fails → EscalationGate
-    │
-    └─► Escalation: CommunicationManager
-        └─► Fallback: Telegram → Phone → SMS → Slack → Discord → Email
+FACADE→[storage,vectorDb,embeddings,provenance,causal,patterns,shadowSearch,
+        sona,memrl,gnn,router,queryCache]
+
+STORE: content,opts→calcLScore(parents)→enforceThreshold→createEntry→
+       sqlInsert[memory_entries,tags,provenance,links]→queueEmbed→checkFlush(10+)
+
+QUERY: text,opts→checkCache(LRU100/60s)→flushPending→tagPreFilter(SQL)→
+       genEmbed(OpenAI)→vectorSearch(HNSW,5*topK)→
+       [memrl?→PhaseA(delta)→PhaseB(composite)|simpleRank]→
+       applyFilters→incProvenance→cacheResult
+
+MEMRL_2PHASE:
+  PhaseA: filter(sim>=delta)
+  PhaseB: score=(1-λ)*sim_norm+λ*Q_norm
+  Q_UPDATE: Q_new=Q_old+α*(reward-Q_old)
+
+CAUSAL:
+  addRelation(src[],tgt[],type,strength,ttl?)→hyperedge
+  traverse(entry,dir,maxDepth)→DFS/BFS
+  findPaths(src,tgt)→shortest
+  cleanupExpired()→TTL check
+
+PROVENANCE:
+  root→LScore=1.0 | derived→aggregate(parents)*depthDecay | threshold(0.3)→reject
 ```
 
 ---
 
-## Environment Variables
+## STORAGE (SQLite 15 tables)
 
-```env
+```
+memory_entries{id,content,source,importance,session,agent,context,created,updated,
+  pending_embedding,q_value,q_update_count,last_q_update}
+memory_tags{entry_id,tag} PK(entry,tag)
+provenance{entry_id,lineage_depth,confidence,relevance,l_score}
+provenance_links{entry_id,parent_id}
+causal_relations{id,type,strength,metadata,created,ttl,expires_at}
+causal_sources{relation_id,entry_id}
+causal_targets{relation_id,entry_id}
+pattern_templates{id,name,pattern,slots[JSON],priority,created}
+pattern_stats{pattern_id,uses,successes,failures}
+vector_mappings{entry_id,label,access_count,last_accessed,compression_tier}
+system_metadata{key,value}
+scheduled_tasks{id,name,prompt,trigger[JSON],context_ids,context_query,
+  priority,status,last_run,next_run,created,updated}
+task_runs{id,task_id,started,completed,duration,result,error}
+event_queue{id,event_name,payload[JSON],created}
+memrl_queries{id,query_text,query_embed,entry_ids,similarities,q_values,
+  delta,lambda,created,feedback_given}
+```
+
+---
+
+## PHASED EXECUTOR (codex/PhasedExecutor.ts)
+
+```
+6_PHASE_EXECUTION:
+  P1:CONTEXT_SCOUT(Sonnet)→ContextBundle{polyglot,patterns}
+  P2:ARCHITECT(Opus always)→Design{complexity,componentDeps[]}
+  P3:ENGINEER(complexity-routed):
+    low/med→single(Haiku/Sonnet)
+    high→ParallelEngineer(topoSort,batches)
+  P4a:CODE_REVIEWER→OWASP scan→SecurityFinding[]
+  P5:EXECUTOR→writeFiles(before validation for fix loop)
+  P5a:POST_AUDIT→Guardian audit→rollback?
+  P4:VALIDATOR(complexity-model)→blockers[],requiredMods[]
+  P6:FIX_LOOP(5-tier):
+    T1:Sonnet(std)→T2:Sonnet(alt)→T3:Sonnet+think(8K)→
+    T4:Opus(fresh)→T5:Opus+think(16K)→exhausted?→escalate
+
+GUARDRAILS:
+  before_exec→CollaborativePartner.identifyKnowledgeGaps()→critical?→escalate
+  after_architect→CollaborativePartner.assessApproach()→shadowSearch
+    →HARD_GATE(cred<0.3)→require override
+  before_write→ContainmentManager.checkPermission(path,write)
+  after_write→CodeReviewer.review(files,'security')→critical?→blocker
+  post_exec→PostExecGuardian.audit()→critical?→rollback
+
+MODEL_ROUTING: ModelSelector(complexity)→Haiku(low)|Sonnet(med)|Opus(high)
+FALLBACK: Ollama→Claude
+```
+
+---
+
+## PARALLEL ENGINEER (codex/ParallelEngineer.ts)
+
+```
+HIGH_COMPLEXITY:
+  input:components[]{name,deps[]}→topoSort(DFS)→getBatches(group independent)→
+  forEach batch: gatherOutputs(completedOutputs,deps)→Promise.all(engineerFn)→
+  track completedOutputs[name]=output→merge PlanOutput
+
+PROVIDER_AGNOSTIC: EngineerProvider.createEngineer()→EngineerFn
+CIRCULAR_PROTECT: batch.length===0→add remaining as single batch+warn
+```
+
+---
+
+## SELF HEALER (codex/SelfHealer.ts)
+
+```
+ANALYZE:
+  classifyError(err,consoleErrs)→ErrorPattern{type,isTransient,strategy}
+  queryFailureMemory→{similar[],avoidances[],recommended[]}
+  performEnhancedAnalysis→CapMgr[parseStackTrace,getStackContext,gitRecentChanges,getDiagnostics]
+  applyLessons(ReflexionService)
+  generateReflection()[async,non-block]
+  isFundamentalBlocker(pattern,prevAttempts)→same_type2+|integration2+?
+  selectStrategy→generateHealing→recordFailure
+  →HealingAnalysis{isFundamental,reason,newApproach,contextNeeded[],actions[],similar[]}
+
+ERROR_TYPES: syntax|type|runtime|test|integration|timeout|unknown
+STRATEGIES: retry_with_context|simplify_approach|try_alternative|gather_more_context|
+            break_into_smaller_steps|escalate
+
+HEALING_RECORD:
+  recordSuccessfulHealing→store+causalLink(failure→resolution)+sonaFeedback(0.8)
+  recordResolutionWithCause→chain:failure→rootCause→fix(CAUSES relations)
+```
+
+---
+
+## LEARNING SYSTEMS
+
+### SONA (learning/SonaEngine.ts)
+```
+TRAJECTORY_LEARNING:
+  createTrajectory(query,matchedIds,matchScores)
+  provideFeedback(trajectoryId,quality:0-1)→
+    forEach pattern: gradient=(quality-0.5)*matchScore*learningRate
+    Q_new=Q_old+EWC_reg(gradient), importance+=|gradient|
+    checkDrift()→critical?→rollback
+
+CONFIG: learningRate:0.01,lambda:0.5(EWC),driftThreshold:0.3,criticalDrift:0.5,
+        minUsesForUpdate:3,pruneThreshold:0.4,pruneMinUses:100,
+        boostMultiplier:1.2,boostThreshold:0.8
+
+OPS: autoPrune(<40%),autoBoost(>80%),checkDrift(),checkpoint(),rollback()
+```
+
+### MEMRL (learning/memrl/MemRLEngine.ts)
+```
+TWO_PHASE:
+  PhaseA: filter(sim>=delta)→candidates[]
+  PhaseB: score=(1-λ)*sim_norm+λ*Q_norm (z-score norm)
+  Q_UPDATE: Q_new=Q_old+α*(reward-Q_old)
+
+STATE: processVectorResults→PhaseA→resolveLabels→batchFetchQ→PhaseB→storeQuery
+       provideFeedback(queryId,rewards)→Q updates→calcDrift
+```
+
+### AUTONOMOUS DISCOVERY (curiosity/AutonomousDiscoveryEngine.ts)
+```
+CYCLE(Mon/Wed/Fri):
+  canExplore()?→getSlotType(3:1 high:mod)→selectProbe→markExploring→
+  explore(100K cap): webKeywords?→webExplore(Playwright→Claude)|textExplore(Claude)
+  →recordResult→incCycle
+
+PROBE_PRIORITY: failure:1.0|low_confidence:0.7|knowledge_gap:0.5|success_confirm:0.2
+                priority=baseWeight+novelty*0.3+(1-conf)*0.2
+
+BUDGET: tokensPerProbe:100K,probesPerWeek:5,highPriorityRatio:3,resetDay:0(Sun)
+```
+
+### MEMORY DISTILLATION (distillation/MemoryDistillationService.ts)
+```
+WEEKLY:
+  extractSuccessPatterns→findSuccess(since)→cluster(min3)→genInsight(Claude)→store
+  extractFailureFixChains→findChains(causal)→genInsight→store
+  extractCrossDomain→findPatterns→groupByDomain→genInsight(pairs)→store
+
+INSIGHT_TYPES: success_pattern|failure_fix|cross_domain|contradiction|consolidation
+STORAGE: MemoryEntry+tags['distilled_insight','type:X']+causalLinks+sonaWeights(conf>=0.8)
+SCHEDULE: cron(Sun 3am),interval(60min check),~20K tokens/run
+```
+
+### REFLEXION SERVICE
+```
+generate(failureId,taskDesc,subtaskDesc,prevAttempts[])→
+  Claude→"why did X fail"→Reflection{rootCause,lessons[],recommendedApproach}
+query(error)→semantic search past reflections
+
+ROOT_CAUSE_CATS: missing_context|wrong_approach|external_dependency|
+                 integration_mismatch|incomplete_spec|environment_issue
+```
+
+---
+
+## TINY DANCER (routing/TinyDancer.ts)
+
+```
+ROUTES: PATTERN_MATCH|CAUSAL_FORWARD|CAUSAL_BACKWARD|TEMPORAL_CAUSAL|
+        HYBRID|DIRECT_RETRIEVAL|ADVERSARIAL
+
+CIRCUIT_BREAKER: track failures per route→open circuit on threshold→fallback
+```
+
+---
+
+## TELEGRAM BOT
+
+```
+SESSION_MODES (strict enforcement):
+  conversation: /conversation → free chat, /rubixallize→plan
+  plan: /plan <desc> → planning with Claude
+  task: /task <desc> → immediate exec (transient)
+
+TRANSITIONS:
+  NONE→/conversation→CHAT→/rubixallize→PLAN
+  NONE→/plan→PLAN
+  NONE→/task→TASK→(completes)→NONE
+  ANY→/exit→NONE
+
+CMDS: /start,/help,/task,/plan,/conversation,/rubixallize,/execute,/resume,/exit
+WHITELIST: task|status|cancel|help|list
+FLOW: polling→TelegramHandler.handleMessage()→CommandParser→route→TaskExecutor
+```
+
+---
+
+## MCP TOOLS (50+)
+
+```
+mem: god_store,god_query,god_edit,god_delete,god_trace,god_stats,god_checkpoint
+causal: god_causal,god_find_paths,god_cleanup_expired
+learn: god_learn,god_learning_stats,god_prune_patterns
+shadow: god_shadow_search
+route: god_route,god_route_result,god_routing_stats,god_circuit_status,god_reset_circuit
+enhance: god_enhance,god_enhance_batch,god_gnn_stats,god_clear_gnn_cache
+schedule: god_schedule,god_trigger,god_tasks,god_pause,god_resume,god_cancel
+pw: god_pw_launch,god_pw_navigate,god_pw_screenshot,god_pw_action,god_pw_assert,
+    god_pw_console,god_pw_verify
+codex: god_codex_do,god_codex_status,god_codex_answer,god_codex_decision,
+       god_codex_cancel,god_codex_log,god_codex_estimate,god_codex_wait,god_codex_logs
+cfg: god_config_get,god_config_set,god_config_load,god_config_save,god_config_reset
+comms: god_comms_setup,god_comms_escalate
+notify: god_notify,god_notify_slack,god_notify_discord,god_notify_preferences,
+        god_notify_test,god_notify_history
+deepwork: god_deepwork_start,god_deepwork_pause,god_deepwork_resume,
+          god_deepwork_status,god_deepwork_log,god_deepwork_checkpoint
+failure: god_failure_record,god_failure_query,god_failure_resolve,god_failure_stats
+reflexion: god_reflexion_query,god_reflexion_generate,god_reflexion_stats
+review: god_review,god_quick_review,god_security_review,god_review_config
+guardian: god_guardian_audit
+curiosity: god_curiosity_list,god_curiosity_explore,god_curiosity_web_explore,
+           god_budget_status,god_budget_history
+compression: god_store_compressed,god_query_expanded,god_self_query,god_compression_stats,
+             god_bootstrap_status,god_recompress_all
+autorecall: god_autorecall_config,god_autorecall_status
+capabilities: god_capabilities_status,god_ollama_status
+lsp: god_lsp_start,god_lsp_stop,god_lsp_available,god_lsp_definition,
+     god_lsp_references,god_lsp_diagnostics,god_lsp_symbols
+git: god_git_blame,god_git_bisect,god_git_history,god_git_diff,god_git_branches
+ast: god_ast_parse,god_ast_query,god_ast_refactor,god_ast_symbols
+analyze: god_analyze_lint,god_analyze_types,god_analyze_deps,god_analyze_impact
+debug: god_debug_start,god_debug_stop,god_debug_breakpoint,god_debug_step,god_debug_eval
+profile: god_profile_start,god_profile_stop,god_profile_hotspots
+stack: god_stack_parse,god_stack_context
+db: god_db_schema,god_db_types
+docs: god_docs_fetch,god_docs_search
+wolfram: god_wolfram_query,god_wolfram_calculate,god_wolfram_solve,god_wolfram_convert
+agent: god_agent_card
+partner: god_partner_config,god_partner_challenge,god_partner_status
+containment: god_containment_check,god_containment_config,god_containment_add_rule,
+             god_containment_remove_rule,god_containment_status,god_containment_session
+distill: god_distill,god_distillation_stats,god_distillation_config,god_distillation_query
+```
+
+---
+
+## ENV VARS
+
+```
 # Required
-OPENAI_API_KEY=sk-...           # For embeddings (768-dim)
-ANTHROPIC_API_KEY=sk-ant-...    # For RUBIX code generation
+OPENAI_API_KEY=sk-...           # Embeddings (768d)
+ANTHROPIC_API_KEY=sk-ant-...    # Claude code gen
 
 # Optional
-GOD_AGENT_DATA_DIR=./data       # Database location
-RUBIX_MODEL=claude-opus-4-5-20250514  # Claude model
-RUBIX_MAX_PARALLEL=5            # Parallel department heads
-RUBIX_ULTRATHINK=true           # Extended thinking
-RUBIX_THINK_BASE=5000           # Initial thinking budget
-RUBIX_THINK_MAX=16000           # Max thinking budget
-TELEGRAM_BOT_TOKEN=...          # Telegram integration
+GOD_AGENT_DATA_DIR=./data
+RUBIX_MODEL=claude-opus-4-5-20250514
+RUBIX_MAX_PARALLEL=5
+RUBIX_ULTRATHINK=true
+RUBIX_THINK_BASE=5000
+RUBIX_THINK_MAX=16000
+TELEGRAM_BOT_TOKEN=...
 ```
 
 ---
 
-## MCP Configuration
+## MCP CONFIG
 
-**IMPORTANT: Use PROJECT-LEVEL config at `.claude/mcp.json`. NEVER modify `~/.claude/mcp.json` (global).**
+**Project-level only: `.claude/mcp.json`**
 
 ```json
 {
@@ -411,195 +451,22 @@ TELEGRAM_BOT_TOKEN=...          # Telegram integration
 
 ---
 
-## Design Principles
-
-1. **Autonomous First** - Decides independently, escalates only when genuinely blocked
-2. **Self-Healing** - Analyzes failures, tries alternatives, learns from patterns
-3. **Provenance Tracking** - Every entry has L-Score reliability score
-4. **Multi-Channel Comms** - 6 channels with automatic fallback (5 min timeout each)
-5. **Deep Work Mode** - Batches notifications, minimizes interruptions
-6. **IDE-Like Powers** - LSP, Git, AST, profiling built-in
-
----
-
-## Key Subsystems
-
-### MemoryEngine (Unified Facade)
-- Vector semantic search (HNSW, 768-dim embeddings)
-- L-Score provenance tracking (reliability scoring)
-- Hypergraph causal relations (n→m with TTL)
-- Pattern matching and reusable templates
-- Shadow search (contradiction/counterargument finding)
-
-### Sona Engine (Continuous Learning)
-- Trajectory-based learning from query outcomes
-- LoRA-style efficient delta weights
-- EWC++ regularization (prevents catastrophic forgetting)
-- Auto-prune bad patterns (<40% success rate)
-- Auto-boost good patterns (>80% success rate)
-
-### Tiny Dancer (Neural Query Router)
-Routes queries to optimal reasoning strategy:
-- `PATTERN_MATCH` - Similar historical patterns
-- `CAUSAL_FORWARD` - What effects does X cause?
-- `CAUSAL_BACKWARD` - What caused X?
-- `TEMPORAL_CAUSAL` - Time-based cause-effect chains
-- `HYBRID` - Combined pattern + causal
-- `DIRECT_RETRIEVAL` - Simple vector search
-- `ADVERSARIAL` - Find contradictory evidence
-
-Circuit breaker protection for failing routes.
-
-### Capabilities Manager (10 IDE Powers)
-1. **LSP** - Go-to-definition, find-references, diagnostics
-2. **Git** - Blame, bisect, history analysis
-3. **Static Analysis** - ESLint + TypeScript compiler
-4. **AST** - Parse, traverse, safe refactoring
-5. **Dependency Graph** - Impact analysis
-6. **Doc Mining** - Fetch library documentation
-7. **REPL/Debug** - Live code inspection
-8. **Profiler** - CPU profiling
-9. **Stack Trace Parser** - Error understanding
-10. **Database Introspection** - Schema awareness
-
-### CodeGenerator (Claude API)
-- Uses `claude-opus-4-5-20250514` by default
-- Supports extended thinking (ultrathink)
-- Progressive thinking budget: 5K → 10K → 16K tokens
-- Parses `<file path="..." action="create|modify">` from responses
-- Creates/modifies files in codebase
-
-### Communication Manager
-Escalation fallback chain with 5-minute timeout per channel:
-1. Telegram (if configured)
-2. Phone (CallMe/Twilio/Telnyx)
-3. SMS
-4. Slack
-5. Discord
-6. Email
-
----
-
-## MCP Tools (50+)
-
-### Memory
-- `god_store`, `god_query`, `god_edit`, `god_delete`
-- `god_trace` (provenance), `god_stats`, `god_checkpoint`
-
-### Causal
-- `god_causal`, `god_find_paths`, `god_cleanup_expired`
-
-### Learning
-- `god_learn`, `god_learning_stats`, `god_prune_patterns`
-
-### Routing
-- `god_route`, `god_route_result`, `god_routing_stats`
-- `god_circuit_status`, `god_reset_circuit`
-
-### CODEX
-- `god_codex_do`, `god_codex_status`, `god_codex_cancel`
-- `god_codex_answer`, `god_codex_decision`, `god_codex_log`
-
-### Deep Work
-- `god_deepwork_start`, `god_deepwork_pause`, `god_deepwork_resume`
-- `god_deepwork_status`, `god_deepwork_checkpoint`, `god_deepwork_log`
-
-### Playwright
-- `god_pw_launch`, `god_pw_navigate`, `god_pw_screenshot`
-- `god_pw_action`, `god_pw_assert`, `god_pw_console`, `god_pw_verify`
-
-### Code Review
-- `god_review`, `god_quick_review`, `god_security_review`
-
-### Configuration
-- `god_config_get`, `god_config_set`, `god_config_load`, `god_config_save`
-
-### Notification
-- `god_notify`, `god_notify_slack`, `god_notify_discord`
-- `god_notify_preferences`, `god_notify_test`
-
-### Communication
-- `god_comms_setup`, `god_comms_escalate`
-
-### Failure Learning
-- `god_failure_record`, `god_failure_query`, `god_failure_resolve`
-
----
-
-## Database Schema
-
-SQLite with 13+ tables:
-- `memory_entries` - Core memory storage
-- `memory_tags` - Entry tags (many-to-many)
-- `provenance` - L-Score and lineage data
-- `causal_relations` - Hyperedge relations with TTL
-- `pattern_templates` - Reusable patterns
-- `scheduled_tasks` - Task definitions
-- `task_runs` - Execution history
-- `trajectories` - Learning trajectories
-- `pattern_weights` - Sona learning weights
-- `vector_mappings` - HNSW label mappings
-
----
-
-## Quick Start
+## QUICK START
 
 ```bash
-# Build
-npm install
-npm run build
-
-# Initialize database
+npm install && npm run build
 node dist/cli/index.js init
-
-# Run as MCP server (for Claude Code)
-node dist/mcp-server.js
-
-# Or run standalone with Telegram
-TELEGRAM_BOT_TOKEN=... node dist/telegram/standalone.js
+node dist/mcp-server.js                              # MCP mode
+TELEGRAM_BOT_TOKEN=... node dist/telegram/standalone.js  # Standalone
 ```
 
 ---
 
-## Critical Notes
+## DESIGN PRINCIPLES
 
-1. **CodeGenerator requires `ANTHROPIC_API_KEY`** - Without it, CODEX reports success but doesn't write files
-
-2. **MCP server reads env at startup** - Restart Claude Code after config changes
-
-3. **Project-level vs Global config** - Always use `.claude/mcp.json` in project root, never modify `~/.claude/mcp.json`
-
-4. **Single task at a time** - CODEX only runs one task; must cancel or wait before submitting another
-
-5. **Async execution** - `god_codex_do` returns immediately; poll with `god_codex_status`
-
----
-
-## Housekeeping
-
-### Temporary Directory Cleanup
-
-Claude Code creates `tmpclaude-*-cwd` directories during execution. These should auto-cleanup but get left behind when sessions crash or are force-killed.
-
-**IMPORTANT: Always check for and clean up these temp directories:**
-
-```bash
-# Clean temp directories
-npm run clean:temp
-
-# Or dry-run to see what would be deleted
-node scripts/clean-temp.cjs --dry-run
-```
-
-The cleanup script is at `scripts/clean-temp.cjs` and scans:
-- Project root for `tmpclaude-*-cwd/`
-- Subdirectories up to 2 levels deep
-
-These directories are already in `.gitignore` so they won't be committed, but they can accumulate and waste disk space.
-
-**When to clean (PROACTIVE - do automatically):**
-- **At session start** - Run cleanup before beginning work
-- **Before git commits** - Always clean before committing changes
-- **When git status shows `tmpclaude-*` entries** - Clean immediately
-
-**CLAUDE: Run `npm run clean:temp` proactively. Don't wait to be asked.**
+1. **Autonomous First** - Decides independently, escalates only when blocked
+2. **Self-Healing** - Analyzes failures, tries alternatives, learns
+3. **Provenance** - Every entry has L-Score reliability
+4. **Multi-Channel** - 6 channels, 5min timeout each, auto-fallback
+5. **Deep Work** - Batches notifications, minimizes interruptions
+6. **IDE Powers** - LSP, Git, AST, profiling built-in
