@@ -40,6 +40,12 @@ import { createPlanExecutor, ExecutionResult } from './PlanExecutor.js';
 import { getCodexLogger, resetCodexLogger } from './Logger.js';
 import { getModelSelector, type TaskComplexity } from './ModelSelector.js';
 import { ParallelEngineer } from './ParallelEngineer.js';
+import {
+  EngineerProvider,
+  ClaudeEngineerProvider,
+  OllamaEngineerProvider,
+  FallbackEngineerProvider
+} from './EngineerProvider.js';
 import type { CodexTask, Subtask } from './types.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { MemorySource, CausalRelationType } from '../core/types.js';
@@ -55,6 +61,12 @@ import { PostExecGuardian } from '../guardian/index.js';
 import type { AuditContext, AuditResult } from '../guardian/index.js';
 // Security: Output sanitization
 import { getSanitizer } from '../core/OutputSanitizer.js';
+// Plan deviation detection
+import {
+  detectPlanDeviations,
+  formatDeviationReport,
+  type DeviationReport
+} from './PlanDeviationDetector.js';
 
 /**
  * Fix loop escalation tiers - All use API.
@@ -136,6 +148,22 @@ export class PhasedExecutor {
   /** Enable/disable post-execution audit (default: true) */
   private postAuditEnabled: boolean = true;
 
+  // === ENGINEER PROVIDER CONFIGURATION ===
+  /** Preferred engineer provider: 'claude' | 'ollama' */
+  private engineerProviderType: 'claude' | 'ollama' = 'claude';
+  /** Ollama endpoint URL */
+  private ollamaEndpoint: string = 'https://ollama.com/api';
+  /** Ollama API key for cloud services */
+  private ollamaApiKey?: string;
+  /** Ollama model to use */
+  private ollamaModel: string = 'qwen3-coder:480b-cloud';
+  /** Ollama timeout in milliseconds */
+  private ollamaTimeout: number = 120000;
+
+  // === PLAN DEVIATION GATE CONFIGURATION ===
+  /** Plan deviation mode: 'strict' | 'smart' | 'autonomous' */
+  private planDeviationMode: 'strict' | 'smart' | 'autonomous' = 'strict';
+
   constructor(codebasePath: string, dryRun = false, engine?: MemoryEngine, comms?: CommunicationManager) {
     this.codebasePath = codebasePath;
     this.dryRun = dryRun;
@@ -152,6 +180,28 @@ export class PhasedExecutor {
     } else {
       console.warn('[PhasedExecutor] No ANTHROPIC_API_KEY - phases will fail');
     }
+
+    // Initialize engineer provider configuration from environment
+    const engineerProvider = process.env.RUBIX_ENGINEER_PROVIDER;
+    if (engineerProvider === 'ollama') {
+      this.engineerProviderType = 'ollama';
+      this.ollamaEndpoint = process.env.OLLAMA_ENDPOINT || 'https://ollama.com/api';
+      this.ollamaApiKey = process.env.OLLAMA_API_KEY;
+      this.ollamaModel = process.env.OLLAMA_MODEL || 'qwen3-coder:480b-cloud';
+      this.ollamaTimeout = parseInt(process.env.OLLAMA_TIMEOUT || '120000', 10);
+      console.log(`[PhasedExecutor] Engineer provider: ollama (${this.ollamaModel})`);
+    } else {
+      console.log('[PhasedExecutor] Engineer provider: claude (default)');
+    }
+
+    // Initialize plan deviation mode from environment
+    const deviationMode = process.env.RUBIX_PLAN_DEVIATION_MODE;
+    if (deviationMode === 'smart' || deviationMode === 'autonomous') {
+      this.planDeviationMode = deviationMode;
+    } else {
+      this.planDeviationMode = 'strict';  // Default to strict for user control
+    }
+    console.log(`[PhasedExecutor] Plan deviation mode: ${this.planDeviationMode}`);
   }
 
   /**
@@ -166,6 +216,15 @@ export class PhasedExecutor {
    */
   setCommunicationManager(comms: CommunicationManager): void {
     this.comms = comms;
+  }
+
+  /**
+   * Set codebase path for task execution.
+   * Call this when reusing the executor for a different project.
+   */
+  setCodebasePath(codebasePath: string): void {
+    this.codebasePath = codebasePath;
+    console.log(`[PhasedExecutor] Codebase path set to: ${codebasePath}`);
   }
 
   // === GUARDRAIL SETTERS ===
@@ -241,6 +300,22 @@ export class PhasedExecutor {
   }
 
   /**
+   * Set plan deviation mode.
+   * @param mode - 'strict' (always escalate), 'smart' (major only), 'autonomous' (never escalate)
+   */
+  setPlanDeviationMode(mode: 'strict' | 'smart' | 'autonomous'): void {
+    this.planDeviationMode = mode;
+    console.log(`[PhasedExecutor] Plan deviation mode set to: ${mode}`);
+  }
+
+  /**
+   * Get current plan deviation mode.
+   */
+  getPlanDeviationMode(): 'strict' | 'smart' | 'autonomous' {
+    return this.planDeviationMode;
+  }
+
+  /**
    * Get enhancement status.
    */
   getEnhancementStatus(): { reflexion: boolean; postAudit: boolean; postAuditEnabled: boolean } {
@@ -248,6 +323,60 @@ export class PhasedExecutor {
       reflexion: !!this.reflexionService,
       postAudit: !!this.postExecGuardian,
       postAuditEnabled: this.postAuditEnabled
+    };
+  }
+
+  // === ENGINEER PROVIDER MANAGEMENT ===
+
+  /**
+   * Initialize the engineer provider based on configuration.
+   *
+   * When Ollama is configured, wraps it in a FallbackEngineerProvider that
+   * automatically switches to Claude if Ollama quota is exhausted or
+   * rate limits kick in mid-execution.
+   */
+  private async initEngineerProvider(model: string): Promise<EngineerProvider> {
+    const claudeProvider = new ClaudeEngineerProvider(
+      process.env.ANTHROPIC_API_KEY || '',
+      model
+    );
+
+    if (this.engineerProviderType === 'ollama') {
+      const ollama = new OllamaEngineerProvider(
+        this.ollamaEndpoint,
+        this.ollamaModel,
+        this.ollamaApiKey,
+        this.ollamaTimeout
+      );
+
+      if (await ollama.isAvailable()) {
+        console.log(`[PhasedExecutor] ENGINEER: Using Ollama (${this.ollamaModel}) with Claude fallback`);
+        // Wrap in FallbackEngineerProvider for automatic recovery if Ollama fails mid-task
+        return new FallbackEngineerProvider(ollama, claudeProvider);
+      }
+
+      console.log('[PhasedExecutor] ENGINEER: Ollama unavailable at startup, using Claude directly');
+    }
+
+    return claudeProvider;
+  }
+
+  /**
+   * Get the current engineer provider configuration.
+   */
+  getEngineerProviderStatus(): {
+    type: 'claude' | 'ollama';
+    ollamaEndpoint?: string;
+    ollamaModel?: string;
+    ollamaHasApiKey: boolean;
+    ollamaTimeout: number;
+  } {
+    return {
+      type: this.engineerProviderType,
+      ollamaEndpoint: this.engineerProviderType === 'ollama' ? this.ollamaEndpoint : undefined,
+      ollamaModel: this.engineerProviderType === 'ollama' ? this.ollamaModel : undefined,
+      ollamaHasApiKey: !!this.ollamaApiKey,
+      ollamaTimeout: this.ollamaTimeout
     };
   }
 
@@ -316,6 +445,97 @@ export class PhasedExecutor {
     }
 
     return null;
+  }
+
+  /**
+   * Escalate and retry until user responds - never timeout silently.
+   * Used for critical design approval gates where we MUST get a response.
+   *
+   * @param taskId - Task identifier
+   * @param title - Escalation title
+   * @param context - Detailed context message
+   * @param type - Escalation type
+   * @param retryIntervalMs - Interval between retry attempts (default: 4 minutes)
+   * @returns User response (guaranteed non-null - retries until answered)
+   */
+  private async escalateUntilAnswered(
+    taskId: string,
+    title: string,
+    context: string,
+    type: 'clarification' | 'decision' | 'blocked' | 'approval' = 'approval',
+    retryIntervalMs: number = 240000  // 4 minutes (before 5min channel timeout)
+  ): Promise<string> {
+    let attempt = 0;
+
+    while (true) {
+      attempt++;
+      const isReminder = attempt > 1;
+
+      const prefixedTitle = isReminder
+        ? `REMINDER #${attempt - 1}: ${title}`
+        : title;
+
+      const prefixedContext = isReminder
+        ? `**This is reminder #${attempt - 1} - awaiting your response**\n\n${context}`
+        : context;
+
+      console.log(`[PhasedExecutor] Design approval attempt ${attempt}...`);
+
+      const response = await this.escalateToUser(taskId, prefixedTitle, prefixedContext, type);
+
+      if (response) {
+        console.log(`[PhasedExecutor] Got response on attempt ${attempt}`);
+        return response;
+      }
+
+      // No response - wait before retry
+      console.log(`[PhasedExecutor] No response, retrying in ${retryIntervalMs / 60000} minutes...`);
+      await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+    }
+  }
+
+  /**
+   * Format deviation escalation message for user review.
+   *
+   * @param report - Deviation report from detectPlanDeviations
+   * @param specification - Original plan specification
+   * @param design - Architect's proposed design
+   * @returns Formatted markdown message for escalation
+   */
+  private formatDeviationEscalation(
+    report: DeviationReport,
+    specification: string,
+    design: DesignOutput
+  ): string {
+    const lines: string[] = [
+      '## Architect Design Review Required',
+      '',
+      "The Architect's design differs from your approved plan specification.",
+      '',
+      formatDeviationReport(report),
+      '',
+      '---',
+      '',
+      '### Your Plan Specified:',
+      '```',
+      specification.substring(0, 500) + (specification.length > 500 ? '...' : ''),
+      '```',
+      '',
+      '### Architect Proposes:',
+      `- **Components:** ${design.components.join(', ')}`,
+      `- **Complexity:** ${design.complexity}`,
+      `- **Task Type:** ${design.taskType}`,
+      design.notes ? `- **Notes:** ${design.notes}` : '',
+      '',
+      '---',
+      '',
+      '**Options:**',
+      '- Reply "approve" or "yes" to proceed with architect\'s design',
+      '- Reply "reject" or "abort" to stop execution',
+      '- Reply with modifications to adjust the design'
+    ];
+
+    return lines.filter(l => l !== '').join('\n');
   }
 
   /**
@@ -624,6 +844,60 @@ Please provide clarification or type "proceed with assumptions" to continue.`;
       // Check for abort after Phase 2
       this.checkAborted();
 
+      // === PLAN DEVIATION GATE (Strict Mode) ===
+      // Compare architect's design against the approved plan specification
+      // and escalate ALL deviations to user for approval before proceeding
+      if ('specification' in task && (task as CodexTask).specification && this.planDeviationMode === 'strict') {
+        const specification = (task as CodexTask).specification!;
+        console.log('[PhasedExecutor] === PLAN DEVIATION GATE (Strict Mode) ===');
+
+        const deviationReport = detectPlanDeviations(specification, design);
+        console.log(`[PhasedExecutor] Plan deviation check: ${deviationReport.deviations.length} deviations found`);
+
+        // Log the deviation check
+        logger.logResponse(
+          'PLAN_DEVIATION_CHECK',
+          `Specification: ${specification.substring(0, 200)}...`,
+          JSON.stringify({
+            hasDeviations: deviationReport.hasDeviations,
+            deviationCount: deviationReport.deviations.length,
+            majorCount: deviationReport.majorCount,
+            minorCount: deviationReport.minorCount,
+            summary: deviationReport.summary,
+            deviations: deviationReport.deviations
+          }, null, 2),
+          deviationReport.deviations.length
+        );
+
+        if (deviationReport.hasDeviations) {
+          console.log('[PhasedExecutor] Escalating design review to user');
+
+          // Use persistent escalation - retries until answered
+          const response = await this.escalateUntilAnswered(
+            taskId,
+            'Architect Design Review Required',
+            this.formatDeviationEscalation(deviationReport, specification, design),
+            'approval'
+          );
+
+          // Response is guaranteed non-null (loop continues until answered)
+          const lowerResponse = response.toLowerCase();
+          if (lowerResponse.includes('abort') || lowerResponse.includes('reject')) {
+            console.log('[PhasedExecutor] User rejected architect design deviations');
+            result.error = 'User rejected architect design deviations';
+            result.duration = Date.now() - startTime;
+            return result;
+          }
+
+          // User approved - continue with design
+          console.log('[PhasedExecutor] User approved design deviations');
+        } else {
+          console.log('[PhasedExecutor] No deviations detected - design aligns with plan');
+        }
+      } else if (this.planDeviationMode !== 'strict') {
+        console.log(`[PhasedExecutor] Plan deviation gate skipped (mode: ${this.planDeviationMode})`);
+      }
+
       // === GUARDRAIL: SHADOW SEARCH CHALLENGE ===
       // Before engineering, assess the design approach for potential issues
       if (this.guardrailsEnabled && this.collaborativePartner && 'description' in task) {
@@ -726,15 +1000,14 @@ ${assessment.recommendation}
       const complexity: TaskComplexity = design.complexity || 'medium';
       let plan: PlanOutput;
 
-      // High complexity with multiple components → parallel Opus engineers
+      // High complexity with multiple components → parallel engineers
       if (complexity === 'high' && design.componentDependencies && design.componentDependencies.length > 1) {
-        console.log(`[PhasedExecutor] High complexity (${design.componentDependencies.length} components) → Parallel Opus engineers`);
+        console.log(`[PhasedExecutor] High complexity (${design.componentDependencies.length} components) → Parallel engineers`);
         const engineerModel = modelSelector.selectForPhase('engineer', 'high');
 
-        const parallelEngineer = new ParallelEngineer(
-          process.env.ANTHROPIC_API_KEY!,
-          engineerModel
-        );
+        // Use provider-agnostic engineer (Claude or Ollama based on config)
+        const provider = await this.initEngineerProvider(engineerModel);
+        const parallelEngineer = new ParallelEngineer(provider);
 
         plan = await parallelEngineer.executeInOrder(context, design);
 
@@ -764,6 +1037,54 @@ ${assessment.recommendation}
       result.apiCalls++;
       console.log(`[PhasedExecutor] PLAN: ${plan.compressedToken.substring(0, 60)}...`);
       console.log(`[PhasedExecutor] Files: ${plan.files.length}, Commands: ${plan.commands.length}`);
+
+      // === GUARDRAIL: HIGH COMPONENT FAILURE RATE CHECK ===
+      // After ENGINEER phase - check if too many components failed for high-complexity tasks
+      if (complexity === 'high' && design.componentDependencies && design.componentDependencies.length > 0) {
+        const totalComponents = design.componentDependencies.length;
+        const generatedFiles = plan.files.length;
+        const failureRate = 1 - (generatedFiles / Math.max(totalComponents, 1));
+
+        if (failureRate > 0.3) {
+          console.log(`[PhasedExecutor] HIGH FAILURE RATE: ${(failureRate * 100).toFixed(0)}% of components missing`);
+          console.log(`[PhasedExecutor] Expected: ${totalComponents} components, Generated: ${generatedFiles} files`);
+
+          const escalationMessage = `## High Component Failure Rate Detected
+
+**Expected Components:** ${totalComponents}
+**Generated Files:** ${generatedFiles}
+**Failure Rate:** ${(failureRate * 100).toFixed(0)}%
+
+The ENGINEER phase failed to generate files for many expected components. This may indicate:
+- Task misinterpretation
+- Missing context
+- Complexity beyond system capability
+
+**Options:**
+- Reply "continue" to proceed with partial results
+- Reply "abort" to stop and review the task
+- Reply with guidance to clarify the task`;
+
+          const response = await this.escalateToUser(
+            taskId,
+            'High Component Failure Rate',
+            escalationMessage,
+            'blocked'
+          );
+
+          if (response?.toLowerCase().includes('abort')) {
+            console.log('[PhasedExecutor] User aborted due to high failure rate');
+            result.error = 'Aborted by user: high component failure rate';
+            result.duration = Date.now() - startTime;
+            return result;
+          }
+
+          if (response && !response.toLowerCase().includes('continue')) {
+            // User provided guidance - add to context
+            console.log('[PhasedExecutor] User provided guidance - noted for fix loop');
+          }
+        }
+      }
 
       // Log Phase 3 completion
       logger.logResponse(
@@ -934,6 +1255,55 @@ These paths are protected because they may contain sensitive data (credentials, 
         plan.files.map(f => ({ path: f.path, action: f.action })),
         'executor'
       );
+
+      // === GUARDRAIL: DOCUMENTATION TASK OUTPUT CHECK ===
+      // For documentation tasks, ensure we actually produced documentation files (not code)
+      if (design.taskType === 'document' && execution.success) {
+        const docExtensions = ['.md', '.txt', '.json', '.html', '.rst', '.adoc'];
+        const producedDocFiles = plan.files.filter(f =>
+          docExtensions.some(ext => f.path.toLowerCase().endsWith(ext))
+        );
+        const producedCodeFiles = plan.files.filter(f =>
+          ['.ts', '.js', '.py', '.java', '.kt', '.cs', '.go', '.rs'].some(ext => f.path.toLowerCase().endsWith(ext))
+        );
+
+        if (producedDocFiles.length === 0 && producedCodeFiles.length > 0) {
+          console.log('[PhasedExecutor] DOCUMENTATION TASK MISMATCH: No documentation files produced');
+          console.log(`[PhasedExecutor] Task type: ${design.taskType}, but produced ${producedCodeFiles.length} code files`);
+
+          const escalationMessage = `## Task Interpretation Warning
+
+**Task Type:** Documentation/Analysis
+**Expected Output:** Markdown/documentation files
+**Actual Output:** ${producedCodeFiles.length} code files, 0 documentation files
+
+The task was classified as a documentation task, but the system generated code files instead of documentation. This may indicate a task misinterpretation.
+
+**Files Generated:**
+${producedCodeFiles.slice(0, 5).map(f => `- ${f.path}`).join('\n')}
+
+**Expected:** Files like \`output.md\`, \`analysis.txt\`, \`report.json\`
+
+**Options:**
+- Reply "continue" to accept the code output
+- Reply "abort" to stop and rephrase the task
+- Reply with clarification about what you wanted`;
+
+          const response = await this.escalateToUser(
+            taskId,
+            'Documentation Task Produced Code Instead',
+            escalationMessage,
+            'clarification'
+          );
+
+          if (response?.toLowerCase().includes('abort')) {
+            console.log('[PhasedExecutor] User aborted due to documentation mismatch');
+            result.error = 'Aborted by user: documentation task produced code instead of documentation';
+            result.duration = Date.now() - startTime;
+            return result;
+          }
+        }
+      }
 
       // Check for abort after Phase 5
       this.checkAborted();

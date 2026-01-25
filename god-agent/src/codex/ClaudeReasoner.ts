@@ -34,6 +34,8 @@ export interface DesignOutput {
   // Cost-based routing fields
   complexity: 'low' | 'medium' | 'high';
   componentDependencies: ComponentDependency[];
+  // Task type classification (for documentation vs build tasks)
+  taskType: 'document' | 'build' | 'modify';
 }
 
 /**
@@ -249,6 +251,26 @@ export class ClaudeReasoner {
 You are the ARCHITECT. Design the solution structure based on the research context.
 DO NOT write code. Only design components, models, and structure.
 
+## CRITICAL: Task Type Interpretation
+Before designing, classify the task type:
+
+**DOCUMENTATION/ANALYSIS tasks** (keywords: "document", "analyze", "examine", "describe", "map", "list", "export", "generate report"):
+- The OUTPUT should be markdown/text documentation
+- DO NOT create code infrastructure, frameworks, or tools
+- DO analyze the TARGET codebase/directory
+- DO produce documentation files (*.md, *.txt, *.json)
+- Example: "Document the API" → Output API.md, NOT "DocumentationTool.ts"
+
+**BUILD/IMPLEMENTATION tasks** (keywords: "build", "create", "implement", "add feature", "fix bug"):
+- The OUTPUT should be working code
+- DO create necessary code components
+- Example: "Build a login feature" → Output LoginService.ts, LoginController.ts
+
+**When in doubt:**
+- If task mentions "create documentation FOR X" → documentation task
+- If task mentions "create a tool TO document" → build task
+- If unclear → flag in NOTES and recommend clarification
+
 ## Project Root
 ${context.codebaseRoot}
 ALL paths in your output MUST be RELATIVE to this root (e.g., "src/models/User.ts", NOT "/project/src/models/User.ts").
@@ -294,6 +316,12 @@ List API endpoints/functions:
 
 ### NOTES
 Brief design notes (max 50 words).
+
+### TASK_TYPE
+Classify the task type (REQUIRED - pick exactly one):
+- document: Task requires analyzing existing code/project and producing documentation OUTPUT
+- build: Task requires creating/modifying code components
+- modify: Task requires changing existing code behavior
 
 ### COMPLEXITY
 Rate the task complexity (REQUIRED - pick exactly one):
@@ -379,7 +407,8 @@ Provide COMPLETE file contents. No placeholders or TODOs.`;
       notes: '',
       compressedToken: '',
       complexity: 'medium',  // Default to medium if not specified
-      componentDependencies: []
+      componentDependencies: [],
+      taskType: 'build'  // Default to build if not specified
     };
 
     // Parse COMPONENTS
@@ -419,6 +448,13 @@ Provide COMPLETE file contents. No placeholders or TODOs.`;
     if (notesMatch) {
       result.notes = notesMatch[1].trim().substring(0, 100);
     }
+
+    // Parse TASK_TYPE
+    const taskTypeMatch = output.match(/### TASK_TYPE\n[^-]*-?\s*(document|build|modify)/i);
+    if (taskTypeMatch) {
+      result.taskType = taskTypeMatch[1].toLowerCase() as 'document' | 'build' | 'modify';
+    }
+    console.log(`[ClaudeReasoner] Detected task type: ${result.taskType}`);
 
     // Parse COMPLEXITY
     const complexityMatch = output.match(/### COMPLEXITY\n[^-]*-?\s*(low|medium|high)/i);

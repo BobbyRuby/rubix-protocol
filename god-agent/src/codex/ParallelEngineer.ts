@@ -6,11 +6,14 @@
  * 2. Groups independent components into batches
  * 3. Executes each batch in parallel
  * 4. Passes completed outputs to dependent components
+ *
+ * Now supports provider-agnostic execution via EngineerProvider interface,
+ * allowing use of Claude, Ollama, or other LLM backends.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import type { ContextBundle } from './ContextScout.js';
 import type { DesignOutput, PlanOutput, FileContent, ComponentDependency } from './ClaudeReasoner.js';
+import type { EngineerProvider, EngineerFn } from './EngineerProvider.js';
 
 /**
  * Re-export ComponentDependency as ComponentTask for backwards compatibility.
@@ -31,13 +34,13 @@ interface EngineerResult {
  * ParallelEngineer orchestrates multiple engineers for complex tasks.
  */
 export class ParallelEngineer {
-  private apiClient: Anthropic;
-  private model: string;
+  private engineerFn: EngineerFn;
+  private readonly providerName: string;
 
-  constructor(apiKey: string, model: string) {
-    this.apiClient = new Anthropic({ apiKey });
-    this.model = model;
-    console.log(`[ParallelEngineer] Initialized with model: ${model}`);
+  constructor(provider: EngineerProvider) {
+    this.engineerFn = provider.createEngineer();
+    this.providerName = provider.name;
+    console.log(`[ParallelEngineer] Using ${this.providerName} engineers`);
   }
 
   /**
@@ -184,23 +187,38 @@ IMPORTANT:
 - Export what other components might need`;
 
     try {
-      const response = await this.apiClient.messages.create({
-        model: this.model,
-        max_tokens: 8192,
-        messages: [{ role: 'user', content: prompt }]
-      });
+      // Provider-agnostic call
+      const responseText = await this.engineerFn(prompt);
 
-      const text = response.content.find(b => b.type === 'text');
-      if (!text || text.type !== 'text') {
-        throw new Error('No text response from API');
+      if (!responseText) {
+        throw new Error('No response from engineer provider');
       }
 
-      const files = this.parseFiles(text.text);
+      const files = this.parseFiles(responseText);
 
       if (files.length === 0) {
+        // Log parsing failure with response preview for debugging
+        const preview = responseText.slice(0, 500).replace(/\n/g, '\\n');
+        console.warn(`[ParallelEngineer] ${component.name}: No <file> blocks parsed from response`);
+        console.warn(`[ParallelEngineer] Response preview (${responseText.length} chars): ${preview}...`);
+
+        // Log to file for detailed analysis
+        try {
+          const { getCodexLogger } = await import('./Logger.js');
+          const logger = getCodexLogger();
+          logger.logParsingFailure(
+            responseText,
+            `Component: ${component.name}, Expected file: ${component.file}`
+          );
+        } catch (logErr) {
+          // Don't fail the operation if logging fails
+          console.warn(`[ParallelEngineer] Could not log parsing failure: ${logErr}`);
+        }
+
         // Try to extract any code block as fallback
-        const codeMatch = text.text.match(/```(?:typescript|ts)?\n([\s\S]*?)```/);
+        const codeMatch = responseText.match(/```(?:typescript|ts)?\n([\s\S]*?)```/);
         if (codeMatch) {
+          console.log(`[ParallelEngineer] ${component.name}: Extracted code from markdown block as fallback`);
           files.push({
             path: component.file,
             action: 'create',
@@ -212,7 +230,10 @@ IMPORTANT:
       return {
         component: component.name,
         files,
-        success: files.length > 0
+        success: files.length > 0,
+        error: files.length === 0
+          ? `No valid <file> blocks parsed. Response length: ${responseText.length} chars. Check PARSING_FAILURE logs.`
+          : undefined
       };
     } catch (error) {
       return {
@@ -322,6 +343,6 @@ IMPORTANT:
 /**
  * Factory function for ParallelEngineer.
  */
-export function createParallelEngineer(apiKey: string, model: string): ParallelEngineer {
-  return new ParallelEngineer(apiKey, model);
+export function createParallelEngineer(provider: EngineerProvider): ParallelEngineer {
+  return new ParallelEngineer(provider);
 }
