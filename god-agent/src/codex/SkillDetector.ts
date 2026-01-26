@@ -173,6 +173,10 @@ export interface PolyglotContextResult {
   entriesFound: number;
   /** Tags that were matched */
   matchedTags: string[];
+  /** Number of entries from local memory */
+  localCount?: number;
+  /** Number of entries from shared/core brain memory */
+  sharedCount?: number;
 }
 
 /**
@@ -181,8 +185,13 @@ export interface PolyglotContextResult {
  * Queries the memory engine for entries matching the skill tags
  * and formats them for prompt injection.
  *
- * @param engine - MemoryEngine instance for querying
+ * Supports multi-source queries for shared knowledge:
+ * - Primary engine: Local project memory (project-specific patterns)
+ * - Additional engines: Shared core brain memory (cross-project knowledge)
+ *
+ * @param engine - Primary MemoryEngine instance (local project memory)
  * @param skills - Array of polyglot tags from detectSkills()
+ * @param additionalEngines - Optional additional engines (e.g., core brain)
  * @returns Formatted polyglot context string, or empty if no matches
  *
  * @example
@@ -190,11 +199,16 @@ export interface PolyglotContextResult {
  * const skills = detectSkills("Build a Laravel REST API");
  * const context = await loadPolyglotContext(engine, skills);
  * // Returns formatted polyglot knowledge for Laravel and API patterns
+ *
+ * // With core brain:
+ * const context = await loadPolyglotContext(localEngine, skills, [coreBrainEngine]);
+ * // Returns merged results from local + shared memory
  * ```
  */
 export async function loadPolyglotContext(
   engine: MemoryEngine,
-  skills: string[]
+  skills: string[],
+  additionalEngines?: MemoryEngine[]
 ): Promise<PolyglotContextResult> {
   const logger = getCodexLogger();
 
@@ -216,16 +230,49 @@ export async function loadPolyglotContext(
   );
 
   try {
-    // Query memory for polyglot knowledge matching the detected skills
-    // Use tagMatchAll: false (OR logic) to find entries with ANY of the detected tags
-    // e.g., "Laravel API" should return both laravel entries AND api entries
-    const results = await engine.query('polyglot knowledge patterns best practices', {
+    // === MULTI-SOURCE QUERY ===
+    // Query both local and additional engines (e.g., core brain)
+    const queryOptions = {
       topK: 10,
       filters: { tags: skills, tagMatchAll: false },
       minScore: 0.2
-    });
+    };
 
-    if (results.length === 0) {
+    // Query local memory
+    const localResults = await engine.query('polyglot knowledge patterns best practices', queryOptions);
+
+    // Query additional engines (shared memory)
+    const sharedResults: Array<{ result: any; source: string }> = [];
+    if (additionalEngines && additionalEngines.length > 0) {
+      for (let i = 0; i < additionalEngines.length; i++) {
+        try {
+          const results = await additionalEngines[i].query(
+            'polyglot knowledge patterns best practices',
+            queryOptions
+          );
+          sharedResults.push(
+            ...results.map(r => ({ result: r, source: `shared_${i}` }))
+          );
+        } catch (error) {
+          console.warn(`[SkillDetector] Failed to query additional engine ${i}:`, error);
+        }
+      }
+    }
+
+    // Merge and deduplicate results
+    const allResults = [
+      ...localResults.map(r => ({ result: r, source: 'local' })),
+      ...sharedResults
+    ];
+
+    // Sort by score (descending) and take top results
+    allResults.sort((a, b) => b.result.score - a.result.score);
+    const topResults = allResults.slice(0, 15); // Take top 15 total
+
+    const localCount = topResults.filter(r => r.source === 'local').length;
+    const sharedCount = topResults.filter(r => r.source.startsWith('shared_')).length;
+
+    if (topResults.length === 0) {
       console.log(`[SkillDetector] No polyglot entries found for tags: ${skills.join(', ')}`);
 
       logger.logResponse(
@@ -233,22 +280,24 @@ export async function loadPolyglotContext(
         `No entries found for: ${skills.join(', ')}`,
         JSON.stringify({
           skills,
-          entriesFound: 0
+          entriesFound: 0,
+          localCount: 0,
+          sharedCount: 0
         }, null, 2),
         0,
         undefined,
         'skill_detector'
       );
 
-      return { context: '', entriesFound: 0, matchedTags: skills };
+      return { context: '', entriesFound: 0, matchedTags: skills, localCount: 0, sharedCount: 0 };
     }
 
     // Format results for prompt injection
     const contextParts: string[] = [];
     const seenContent = new Set<string>(); // Dedupe by content hash
-    const entrySummaries: Array<{ id: string; tags: string[]; contentLength: number }> = [];
+    const entrySummaries: Array<{ id: string; tags: string[]; contentLength: number; source: string }> = [];
 
-    for (const r of results) {
+    for (const { result: r, source } of topResults) {
       const tags = r.entry.metadata.tags || [];
       const polyglotTags = tags.filter((t: string) => t.startsWith('polyglot:'));
 
@@ -262,14 +311,17 @@ export async function loadPolyglotContext(
         ? r.entry.content.substring(0, 800) + '...'
         : r.entry.content;
 
+      // Add source label for debugging
+      const sourceLabel = source === 'local' ? '[Local]' : '[Shared]';
       contextParts.push(
-        `### ${polyglotTags.join(', ')}\n${content}`
+        `### ${sourceLabel} ${polyglotTags.join(', ')}\n${content}`
       );
 
       entrySummaries.push({
         id: r.entry.id,
         tags: polyglotTags,
-        contentLength: r.entry.content.length
+        contentLength: r.entry.content.length,
+        source
       });
     }
 
@@ -277,27 +329,34 @@ export async function loadPolyglotContext(
       ? `\n## POLYGLOT KNOWLEDGE (auto-loaded)\n${contextParts.join('\n\n')}`
       : '';
 
-    console.log(`[SkillDetector] Loaded ${results.length} polyglot entries (${formattedContext.length} chars)`);
+    console.log(
+      `[SkillDetector] Loaded ${topResults.length} polyglot entries ` +
+      `(${localCount} local, ${sharedCount} shared, ${formattedContext.length} chars)`
+    );
 
     // Log polyglot loading complete
     logger.logResponse(
       'POLYGLOT_LOAD_COMPLETE',
-      `Loaded ${results.length} entries`,
+      `Loaded ${topResults.length} entries (${localCount} local, ${sharedCount} shared)`,
       JSON.stringify({
         skills,
-        entriesFound: results.length,
+        entriesFound: topResults.length,
+        localCount,
+        sharedCount,
         entries: entrySummaries,
         contextLength: formattedContext.length
       }, null, 2),
-      results.length,
+      topResults.length,
       undefined,
       'skill_detector'
     );
 
     return {
       context: formattedContext,
-      entriesFound: results.length,
-      matchedTags: skills
+      entriesFound: topResults.length,
+      matchedTags: skills,
+      localCount,
+      sharedCount
     };
   } catch (error) {
     console.error('[SkillDetector] Error loading polyglot context:', error);
