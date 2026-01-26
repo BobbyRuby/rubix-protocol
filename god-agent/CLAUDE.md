@@ -12,25 +12,490 @@
 
 ---
 
-## DIRECTIVE: COMMUNICATION PROTOCOL (MANDATORY)
+## DIRECTIVE: MULTI-PROJECT CONTEXT
 
-**ALL questions/clarifications MUST go through Telegram via `god_comms_escalate`.**
+**God-Agent supports working on multiple projects simultaneously via MCP instance isolation.**
 
-DO NOT:
-- Use AskUserQuestion tool
-- Ask questions in text responses
-- Wait for CLI input
+### Architecture: Multi-Instance Design
+
+Each project runs as an independent MCP server instance with:
+- ✅ **Isolated memory** - Separate SQLite database per project
+- ✅ **Independent containment** - Project-specific write restrictions
+- ✅ **Dedicated context** - No cross-contamination between projects
+- ✅ **Parallel execution** - All instances can run CODEX tasks simultaneously
+
+### Configuration
+
+**Setup (one-time):**
+```bash
+# Interactive configuration helper
+node scripts/configure-projects.js
+
+# Or manually edit .claude/mcp.json
+# See .claude/mcp.json.example for template
+```
+
+**Example MCP configuration:**
+```json
+{
+  "mcpServers": {
+    "rubix-backend-api": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol\\god-agent",
+      "env": {
+        "RUBIX_DATA_DIR": "./data/projects/backend-api",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\backend-api",
+        "RUBIX_PROJECT_NAME": "Backend API"
+      }
+    },
+    "rubix-frontend": {
+      "env": {
+        "RUBIX_DATA_DIR": "./data/projects/frontend",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\web-app",
+        "RUBIX_PROJECT_NAME": "Frontend App"
+      }
+    }
+  }
+}
+```
+
+### Environment Variables (Per Instance)
+
+- **`RUBIX_PROJECT_ROOT`** - Absolute path to project directory (required)
+- **`RUBIX_PROJECT_NAME`** - Human-readable project name (optional)
+- **`RUBIX_DATA_DIR`** - Isolated data directory for this instance (required)
+
+### Checking Active Projects
+
+At session start, identify available project instances:
 
 ```typescript
-mcp__rubix__god_comms_escalate({
-  title: "Question Title",
-  message: "Your question here",
-  type: "decision",  // decision|clarification|blocked|approval|info
-  options: [{ label: "Option A", description: "..." }, ...]
+// Available MCP servers appear as tool prefixes:
+// - mcp__rubix_backend_api__*
+// - mcp__rubix_frontend__*
+// - mcp__rubix_mobile__*
+
+// Each instance has full access to all God-Agent tools:
+// - god_codex_do, god_query, god_store, etc.
+```
+
+### Project-Specific Operations
+
+**Always use the correct instance prefix for operations:**
+
+```typescript
+// Backend API project
+mcp__rubix_backend_api__god_codex_do({
+  task: "Add authentication middleware to Express routes"
+});
+
+// Frontend project (can run in parallel)
+mcp__rubix_frontend__god_codex_do({
+  task: "Create login form component with validation"
+});
+
+// Infrastructure project
+mcp__rubix_infra__god_codex_do({
+  task: "Update Terraform config to add new API Gateway"
 });
 ```
 
-**This tool must always be allowed in permissions.**
+### Project Context Queries
+
+Query each project's context independently:
+
+```typescript
+// What's the backend API structure?
+const backendContext = mcp__rubix_backend_api__god_query({
+  query: "What API endpoints exist and how is authentication handled?",
+  topK: 10
+});
+
+// What components exist in frontend?
+const frontendContext = mcp__rubix_frontend__god_query({
+  query: "What React components are there and what's the routing structure?",
+  topK: 10
+});
+
+// Queries are scoped - backend query won't return frontend results
+```
+
+### Cross-Project Coordination
+
+When a task involves multiple projects:
+
+1. **Query each project** for relevant context
+2. **Execute tasks in parallel** on respective instances
+3. **Coordinate changes** by understanding dependencies
+
+**Example: Full-stack feature requiring API + Frontend changes**
+
+```typescript
+// Step 1: Add API endpoint (backend instance)
+const apiTask = mcp__rubix_backend_api__god_codex_do({
+  task: `Add GET /api/users/:id endpoint that returns user profile data.
+  Response format: { id, name, email, avatar, createdAt }`
+});
+
+// Step 2: Add frontend component (runs in parallel)
+const frontendTask = mcp__rubix_frontend__god_codex_do({
+  task: `Create UserProfile component that:
+  - Fetches data from GET /api/users/:id
+  - Displays user name, email, avatar
+  - Shows loading state and error handling`
+});
+
+// Step 3: After both complete, verify integration
+// (Query each instance to understand implementation details)
+```
+
+### Instance Isolation Guarantees
+
+**Each instance maintains complete isolation:**
+
+| Aspect | Isolation Level | Details |
+|--------|----------------|---------|
+| **Memory** | Complete | Separate SQLite DB per instance |
+| **Embeddings** | Complete | Independent HNSW indexes |
+| **Containment** | Project-scoped | Can only write to project root |
+| **Context** | No crosstalk | Queries don't cross projects |
+| **Task execution** | Independent | Separate CODEX task queues |
+| **Learning** | Project-specific | SONA/MemRL per instance |
+
+**What this means:**
+- ❌ **Cannot** query backend context from frontend instance
+- ❌ **Cannot** write frontend files from backend instance
+- ❌ **Cannot** access backend memory from frontend queries
+- ✅ **Can** run tasks on all instances simultaneously
+- ✅ **Can** coordinate by manually sharing information
+- ✅ **Can** use shared learnings via core brain (see below)
+
+---
+
+### Shared Knowledge Base (Core Brain)
+
+**NEW:** God-Agent supports a shared "core brain" that accumulates cross-project knowledge automatically.
+
+#### Architecture
+
+Projects can optionally connect to a shared memory instance:
+
+```
+┌──────────────────┐     ┌──────────────────┐
+│  Backend API     │────▶│   Core Brain     │
+│  (Project Memory)│     │ (Shared Memory)  │
+└──────────────────┘     └──────────────────┘
+                                   ▲
+┌──────────────────┐              │
+│  Frontend App    │──────────────┘
+│  (Project Memory)│
+└──────────────────┘
+
+Each project:
+- Queries LOCAL memory first (project-specific patterns)
+- Automatically queries CORE BRAIN for skills/technologies
+- Benefits from accumulated wisdom across all projects
+```
+
+#### Configuration
+
+**Step 1: Create a core brain instance**
+
+```json
+{
+  "mcpServers": {
+    "rubix-core-brain": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol\\god-agent",
+      "env": {
+        "RUBIX_DATA_DIR": "./data/core-brain",
+        "RUBIX_PROJECT_ROOT": "D:\\rubix-protocol\\god-agent",
+        "RUBIX_PROJECT_NAME": "Rubix Core Brain"
+      }
+    }
+  }
+}
+```
+
+**Step 2: Configure projects to use the core brain**
+
+```json
+{
+  "mcpServers": {
+    "rubix-backend-api": {
+      "env": {
+        "RUBIX_DATA_DIR": "./data/projects/backend-api",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\backend-api",
+        "RUBIX_PROJECT_NAME": "Backend API",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    },
+    "rubix-frontend": {
+      "env": {
+        "RUBIX_DATA_DIR": "./data/projects/frontend",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\web-app",
+        "RUBIX_PROJECT_NAME": "Frontend App",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    }
+  }
+}
+```
+
+**Key Points:**
+- `RUBIX_CORE_BRAIN_DATA_DIR` points to the core brain's data directory
+- Each project instance can read from the shared brain
+- Core brain is optional - graceful degradation if unavailable
+
+#### How It Works
+
+**Automatic skill-based knowledge injection:**
+
+```typescript
+// User request: "Add Laravel authentication middleware"
+
+// System automatically:
+// 1. Detects skills: ['polyglot:laravel', 'polyglot:auth']
+// 2. Queries local memory for project patterns
+// 3. Queries core brain for Laravel + auth patterns
+// 4. Merges and ranks by relevance (L-Score)
+// 5. Injects top 15 patterns into CODEX execution
+```
+
+**Logs show source attribution:**
+
+```
+[PhasedExecutor] Detected skills: polyglot:laravel, polyglot:auth
+[PhasedExecutor] Core brain available - querying shared knowledge
+[SkillDetector] Loaded 12 polyglot entries (5 local, 7 shared, 3842 chars)
+```
+
+**Context includes source labels:**
+
+```markdown
+## POLYGLOT KNOWLEDGE (auto-loaded)
+
+### [Local] polyglot:laravel, polyglot:auth
+[Project-specific authentication implementation patterns...]
+
+### [Shared] polyglot:laravel, polyglot:auth
+[Cross-project Laravel authentication best practices...]
+```
+
+#### Populating the Core Brain
+
+**Store cross-project knowledge with polyglot tags:**
+
+```typescript
+// Store to core brain instance
+mcp__rubix_core_brain__god_store({
+  content: `Laravel Authentication Best Practices:
+  - Use service layer for business logic
+  - Middleware for route protection
+  - JWT tokens for stateless auth
+  - Hash passwords with bcrypt
+  - Implement rate limiting`,
+  tags: ['polyglot:laravel', 'polyglot:auth', 'best_practice'],
+  importance: 0.9
+});
+
+// Store framework patterns
+mcp__rubix_core_brain__god_store({
+  content: `React Component Patterns:
+  - Use hooks for state management
+  - Extract custom hooks for reusable logic
+  - Memoize expensive computations
+  - Use React.lazy for code splitting`,
+  tags: ['polyglot:react', 'polyglot:patterns', 'best_practice'],
+  importance: 0.9
+});
+```
+
+**Automatic learning:** Projects automatically learn patterns during execution and can store them to core brain.
+
+#### Benefits
+
+1. **Knowledge Accumulation** - Skills learned on one project benefit all projects
+2. **Consistency** - Shared patterns ensure consistent approaches
+3. **Efficiency** - No need to re-learn common patterns per project
+4. **Zero Configuration** - Works automatically once `RUBIX_CORE_BRAIN_DATA_DIR` is set
+5. **Graceful Degradation** - Projects work normally if core brain unavailable
+
+#### Advanced: Multiple Core Brains
+
+You can configure different core brains for different domains:
+
+```bash
+# Backend-specific shared knowledge
+RUBIX_CORE_BRAIN_DATA_DIR="./data/core-brain-backend"
+
+# Frontend-specific shared knowledge
+RUBIX_CORE_BRAIN_DATA_DIR="./data/core-brain-frontend"
+
+# General engineering knowledge
+RUBIX_CORE_BRAIN_DATA_DIR="./data/core-brain-general"
+```
+
+---
+
+### Best Practices
+
+**1. Start by identifying the relevant project:**
+```typescript
+// Wrong: Assume single project
+god_codex_do({ task: "Add feature" });  // Which project?
+
+// Right: Specify the instance
+mcp__rubix_backend_api__god_codex_do({ task: "Add feature" });
+```
+
+**2. Query project context before making changes:**
+```typescript
+// Understand the project first
+const context = mcp__rubix_backend_api__god_query({
+  query: "What's the current architecture and coding patterns?",
+  topK: 15
+});
+
+// Then make informed changes
+mcp__rubix_backend_api__god_codex_do({
+  task: "Add feature following the existing patterns"
+});
+```
+
+**3. For cross-project features, coordinate explicitly:**
+```typescript
+// Bad: Assume projects know about each other
+mcp__rubix_frontend__god_codex_do({
+  task: "Call the new API endpoint"  // What endpoint? What format?
+});
+
+// Good: Share the contract explicitly
+const apiContract = `
+API Endpoint: POST /api/auth/login
+Request: { email: string, password: string }
+Response: { token: string, user: { id, name, email } }
+`;
+
+mcp__rubix_frontend__god_codex_do({
+  task: `Implement login form using this API contract:\n${apiContract}`
+});
+```
+
+**4. Use high-priority memory for project configuration:**
+```typescript
+// Store project-specific conventions
+mcp__rubix_backend_api__god_store({
+  content: `Project Conventions:
+- Use Express.js with TypeScript
+- All routes in src/routes/
+- Authentication via JWT middleware
+- Tests with Jest`,
+  tags: ['project_config', 'always_recall'],
+  importance: 1.0
+});
+```
+
+### Troubleshooting
+
+**Problem**: Tool not found or undefined
+**Solution**: Check that:
+1. `.claude/mcp.json` is configured correctly
+2. Claude Code has been restarted after config changes
+3. You're using the correct instance name (check available tools)
+
+**Problem**: Operation outside allowed paths
+**Solution**: The project root is enforced by ContainmentManager. If you need to write outside the project root:
+```typescript
+mcp__rubix_backend_api__god_containment_add_rule({
+  pattern: "/path/to/shared/lib/**",
+  permission: "write",
+  reason: "Access shared utility library"
+});
+```
+
+**Problem**: Context not found in queries
+**Solution**: Verify you're querying the correct instance. Each instance has its own isolated memory.
+
+### Resource Usage
+
+**Per instance (approximate):**
+- Idle: ~20MB RAM
+- Active (running task): ~100-200MB RAM
+- 5 instances idle: ~100MB total
+- 5 instances active: ~500MB-1GB total
+
+**Recommendation**: Configure only the projects you actively work on (2-5 typically).
+
+---
+
+## DIRECTIVE: COMMUNICATION PROTOCOL (MANDATORY)
+
+**ALWAYS use `god_comms_escalate` for questions/clarifications.**
+
+The system automatically detects execution context and routes appropriately:
+- **Daemon running** → Telegram escalation
+- **Daemon not running** → CLI fallback via AskUserQuestion
+
+### Universal Usage Pattern
+
+```typescript
+// Step 1: Always try god_comms_escalate first
+const result = mcp__rubix__god_comms_escalate({
+  title: "Question Title",
+  message: "Your question here",
+  type: "decision",  // decision|clarification|blocked|approval
+  options: [{ label: "Option A", description: "..." }, ...]
+});
+
+// Step 2: Check response and adapt
+if (result.success) {
+  // Got response via Telegram daemon
+  const answer = result.response;
+  // Continue with answer
+} else if (result.daemonRequired) {
+  // Auto-fallback to CLI mode
+  const cliResponse = AskUserQuestion({
+    questions: [{
+      question: result.question.message,
+      header: result.question.title,
+      multiSelect: false,
+      options: result.question.options?.map(o => ({
+        label: o.label,
+        description: o.description
+      })) || []
+    }]
+  });
+  // Use cliResponse.answers
+}
+```
+
+### How It Works
+
+1. **Daemon Detection**: System checks if God-Agent daemon is running using:
+   - HTTP health check (localhost:3456/health)
+   - PID file validation
+   - Process existence check
+
+2. **Automatic Routing**:
+   - **Daemon detected** → `god_comms_escalate` sends question via Telegram and waits for response
+   - **No daemon** → `god_comms_escalate` returns fallback response with `daemonRequired: true`
+
+3. **Seamless Fallback**: When daemon not detected, the fallback response contains all question data needed for `AskUserQuestion`, making it trivial to adapt.
+
+### Benefits
+
+✅ **Zero configuration** - No RUBIX_MODE needed
+✅ **Single protocol** - Always start with `god_comms_escalate`
+✅ **Graceful degradation** - Automatically falls back to CLI
+✅ **Self-documenting** - Response tells you exactly what to do
+✅ **Works everywhere** - Daemon or CLI, same code pattern
+
+### Optional: RUBIX_MODE Override
+
+Users can still set `RUBIX_MODE=daemon` or `RUBIX_MODE=mcp-only` to force a specific mode, but it's no longer required for normal operation.
 
 ---
 
@@ -416,14 +881,25 @@ distill: god_distill,god_distillation_stats,god_distillation_config,god_distilla
 OPENAI_API_KEY=sk-...           # Embeddings (768d)
 ANTHROPIC_API_KEY=sk-ant-...    # Claude code gen
 
-# Optional
-GOD_AGENT_DATA_DIR=./data
+# Optional (Global)
+RUBIX_DATA_DIR=./data           # Data directory (overridden per-instance in multi-project mode)
+RUBIX_MODE=auto                 # Optional override: 'mcp-only' | 'daemon' | 'auto' (default)
+                                # System auto-detects daemon at runtime (health check + PID)
+                                # Set only if you need to force a specific mode
 RUBIX_MODEL=claude-opus-4-5-20250514
 RUBIX_MAX_PARALLEL=5
 RUBIX_ULTRATHINK=true
 RUBIX_THINK_BASE=5000
 RUBIX_THINK_MAX=16000
 TELEGRAM_BOT_TOKEN=...
+
+# Multi-Project Support (Per MCP Instance)
+RUBIX_PROJECT_ROOT=D:\path\to\project   # Absolute path to project directory
+RUBIX_PROJECT_NAME=My Project           # Human-readable project name
+RUBIX_CORE_BRAIN_DATA_DIR=./data/core-brain  # Optional: Path to shared knowledge base
+                                             # Enables automatic cross-project learning
+                                             # Projects query local + core brain for skills
+# Each instance in .claude/mcp.json sets these independently
 ```
 
 ---
@@ -431,6 +907,8 @@ TELEGRAM_BOT_TOKEN=...
 ## MCP CONFIG
 
 **Project-level only: `.claude/mcp.json`**
+
+### Single Project (Simple)
 
 ```json
 {
@@ -442,12 +920,48 @@ TELEGRAM_BOT_TOKEN=...
       "env": {
         "OPENAI_API_KEY": "...",
         "ANTHROPIC_API_KEY": "...",
-        "GOD_AGENT_DATA_DIR": "./data"
+        "RUBIX_DATA_DIR": "./data"
       }
     }
   }
 }
 ```
+
+### Multi-Project (Recommended)
+
+```json
+{
+  "mcpServers": {
+    "rubix-backend": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol\\god-agent",
+      "env": {
+        "OPENAI_API_KEY": "...",
+        "ANTHROPIC_API_KEY": "...",
+        "RUBIX_DATA_DIR": "./data/projects/backend",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\backend-api",
+        "RUBIX_PROJECT_NAME": "Backend API"
+      }
+    },
+    "rubix-frontend": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol\\god-agent",
+      "env": {
+        "OPENAI_API_KEY": "...",
+        "ANTHROPIC_API_KEY": "...",
+        "RUBIX_DATA_DIR": "./data/projects/frontend",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\web-app",
+        "RUBIX_PROJECT_NAME": "Frontend App"
+      }
+    }
+  }
+}
+```
+
+**Setup Helper**: Run `node scripts/configure-projects.js` for interactive configuration.
+**See Also**: `.claude/mcp.json.example` for complete template with 5 projects.
 
 ---
 
