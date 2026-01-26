@@ -8,6 +8,7 @@
 
 // Core exports
 export { MemoryEngine } from './core/MemoryEngine.js';
+export { CoreBrainConnector } from './core/CoreBrainConnector.js';
 export { getDefaultConfig, validateConfig, mergeConfig } from './core/config.js';
 export {
   ProvenanceThresholdError,
