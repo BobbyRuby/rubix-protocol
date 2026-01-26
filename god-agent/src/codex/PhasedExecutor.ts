@@ -50,6 +50,7 @@ import type { CodexTask, Subtask } from './types.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 import { MemorySource, CausalRelationType } from '../core/types.js';
 import type { CommunicationManager } from '../communication/CommunicationManager.js';
+import { CoreBrainConnector } from '../core/CoreBrainConnector.js';
 // Guardrail imports
 import { CollaborativePartner } from './CollaborativePartner.js';
 import { ContainmentManager } from './ContainmentManager.js';
@@ -71,16 +72,18 @@ import {
 /**
  * Fix loop escalation tiers - All use API.
  *
- * Strategy:
- * 1-2: API Sonnet (fast, cheap)
- * 3: API Sonnet + extended thinking
- * 4: API Opus (fresh perspective)
- * 5: API Opus + extended thinking
+ * Strategy (COST-OPTIMIZED with Ollama):
+ * 1-2: Ollama (fast, free) - if RUBIX_USE_OLLAMA_FOR_SONNET=true
+ * 3: Ollama + retry (free) - Ollama doesn't support extended thinking
+ * 4: API Opus (fresh perspective, quality gate)
+ * 5: API Opus + extended thinking (final escalation)
+ *
+ * Note: When RUBIX_USE_OLLAMA_FOR_SONNET=false, tiers 1-3 use Claude Sonnet instead.
  */
 const FIX_ESCALATION_TIERS = [
-  { attempt: 1, model: 'sonnet', ultrathink: false, budgetTokens: 0, description: 'API Sonnet - standard fix' },
-  { attempt: 2, model: 'sonnet', ultrathink: false, budgetTokens: 0, description: 'API Sonnet - alternative approach' },
-  { attempt: 3, model: 'sonnet', ultrathink: true, budgetTokens: 8000, description: 'API Sonnet + extended thinking' },
+  { attempt: 1, model: 'ollama', ultrathink: false, budgetTokens: 0, description: 'Ollama - standard fix' },
+  { attempt: 2, model: 'ollama', ultrathink: false, budgetTokens: 0, description: 'Ollama - alternative approach' },
+  { attempt: 3, model: 'ollama', ultrathink: false, budgetTokens: 0, description: 'Ollama - retry with more context' },
   { attempt: 4, model: 'opus', ultrathink: false, budgetTokens: 0, description: 'API Opus - fresh eyes' },
   { attempt: 5, model: 'opus', ultrathink: true, budgetTokens: 16000, description: 'API Opus + extended thinking' },
 ] as const;
@@ -134,6 +137,7 @@ export class PhasedExecutor {
   private opusModel = 'claude-opus-4-20250514';
   private comms?: CommunicationManager;
   private abortController: AbortController | null = null;
+  private coreBrainConnector: CoreBrainConnector;
 
   // === GUARDRAIL COMPONENTS ===
   private collaborativePartner?: CollaborativePartner;
@@ -169,6 +173,9 @@ export class PhasedExecutor {
     this.dryRun = dryRun;
     this.engine = engine;
     this.comms = comms;
+
+    // Initialize core brain connector for shared knowledge
+    this.coreBrainConnector = new CoreBrainConnector();
 
     // Initialize API client for all Claude calls
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -655,6 +662,9 @@ export class PhasedExecutor {
     // Get task description for logging
     const taskDesc = 'description' in task ? task.description : (task as Subtask).type;
 
+    // Initialize model selector early (used in Phase 1)
+    const modelSelector = getModelSelector();
+
     console.log(`[PhasedExecutor] Starting 6-phase execution for task ${taskId}`);
     console.log(`[PhasedExecutor] Using full API approach: Opus (thinking) + Sonnet (doing)`);
 
@@ -693,10 +703,32 @@ export class PhasedExecutor {
         const skills = detectSkills(combinedText);
         if (skills.length > 0) {
           console.log(`[PhasedExecutor] Detected skills: ${skills.join(', ')}`);
-          const polyglotResult = await loadPolyglotContext(this.engine, skills);
+
+          // Query both local memory and core brain (if available)
+          const additionalEngines: MemoryEngine[] = [];
+          if (await this.coreBrainConnector.isAvailable()) {
+            try {
+              const coreBrainEngine = await this.coreBrainConnector.getEngine();
+              additionalEngines.push(coreBrainEngine);
+              console.log('[PhasedExecutor] Core brain available - querying shared knowledge');
+            } catch (error) {
+              console.warn('[PhasedExecutor] Failed to connect to core brain:', error);
+            }
+          }
+
+          const polyglotResult = await loadPolyglotContext(
+            this.engine,
+            skills,
+            additionalEngines.length > 0 ? additionalEngines : undefined
+          );
           polyglotContext = polyglotResult.context;
           if (polyglotContext) {
-            console.log(`[PhasedExecutor] Loaded ${polyglotResult.entriesFound} polyglot entries (${polyglotContext.length} chars)`);
+            const localCount = polyglotResult.localCount || 0;
+            const sharedCount = polyglotResult.sharedCount || 0;
+            console.log(
+              `[PhasedExecutor] Loaded ${polyglotResult.entriesFound} polyglot entries ` +
+              `(${localCount} local, ${sharedCount} shared, ${polyglotContext.length} chars)`
+            );
           }
         } else {
           console.log('[PhasedExecutor] No skills detected in task description');
@@ -775,13 +807,17 @@ Please provide clarification or type "proceed with assumptions" to continue.`;
         }
       }
 
-      // Phase 1: CONTEXT SCOUT (API Sonnet)
-      console.log('[PhasedExecutor] === Phase 1: CONTEXT SCOUT (API Sonnet) ===');
+      // Phase 1: CONTEXT SCOUT (routed model - medium complexity)
+      // Uses medium complexity routing: Sonnet or Ollama (if RUBIX_USE_OLLAMA_FOR_SONNET=true)
+      const scoutModel = modelSelector.selectForComplexity('medium');
+      const scoutModelName = scoutModel === 'OLLAMA' ? 'Ollama' : modelSelector.getModelName(scoutModel);
+      console.log(`[PhasedExecutor] === Phase 1: CONTEXT SCOUT (${scoutModelName}) ===`);
       const scout = createContextScout(
         this.codebasePath,
         polyglotContext,
         process.env.ANTHROPIC_API_KEY,
-        this.engine
+        this.engine,
+        scoutModel
       );
       const context = await scout.scout(task as CodexTask);
       result.phases.context = context;
@@ -996,7 +1032,6 @@ ${assessment.recommendation}
       // Phase 3: ENGINEER (complexity-based model selection)
       console.log('[PhasedExecutor] === Phase 3: ENGINEER ===');
 
-      const modelSelector = getModelSelector();
       const complexity: TaskComplexity = design.complexity || 'medium';
       let plan: PlanOutput;
 
@@ -1505,9 +1540,10 @@ ${producedCodeFiles.slice(0, 5).map(f => `- ${f.path}`).join('\n')}
         }
       }
 
-      // Phase 4: VALIDATOR (complexity-based model) - VALIDATE CREATED FILES
+      // Phase 4: VALIDATOR (ALWAYS OPUS for quality) - VALIDATE CREATED FILES
       // SECURITY CONSOLIDATION: Receives pre-scanned findings from Phase 4a (CodeReviewer)
-      const validatorModel = modelSelector.selectForPhase('validator', complexity);
+      // COST-OPTIMIZED: Always use Opus for validation (quality gate after Ollama generation)
+      const validatorModel = this.opusModel;
       const validatorModelName = modelSelector.getModelName(validatorModel);
       console.log(`[PhasedExecutor] === Phase 4: VALIDATOR (${validatorModelName}) ===`);
       const validator = createPlanValidator(
@@ -1744,7 +1780,7 @@ ${producedCodeFiles.slice(0, 5).map(f => `- ${f.path}`).join('\n')}
         const fixResponse = await this.executeApiFix(
           tokenChain,
           errorSummary,
-          tier.model as 'sonnet' | 'opus',
+          tier.model as 'sonnet' | 'opus' | 'ollama',
           tier.ultrathink,
           tier.budgetTokens,
           validationBlockers,
@@ -1898,25 +1934,37 @@ ${FIX_ESCALATION_TIERS.map(t => `${t.attempt}. ${t.description}`).join('\n')}`;
   }
 
   /**
-   * Execute fix via API (Sonnet or Opus).
+   * Execute fix via API (Sonnet, Opus) or Ollama.
+   * Routes to EngineerProvider for Ollama, Claude API for Sonnet/Opus.
    */
   private async executeApiFix(
     tokenChain: string,
     errors: string,
-    model: 'sonnet' | 'opus',
+    model: 'sonnet' | 'opus' | 'ollama',
     ultrathink: boolean,
     budgetTokens: number,
     validationBlockers?: string[],
     successfulFiles?: string[],
     failedFiles?: string[]
   ): Promise<string> {
+    const prompt = this.buildFixPrompt(tokenChain, errors, ultrathink, validationBlockers, successfulFiles, failedFiles);
+
+    // Route to Ollama if model is 'ollama' (tiers 1-3)
+    if (model === 'ollama') {
+      console.log(`[PhasedExecutor] Executing Ollama fix via EngineerProvider...`);
+      const provider = await this.initEngineerProvider('OLLAMA');
+      const engineerFn = provider.createEngineer();
+      const response = await engineerFn(prompt);
+      console.log(`[PhasedExecutor] Ollama fix completed: ${response.length} chars`);
+      return response;
+    }
+
+    // Claude API route (Opus for tiers 4-5)
     if (!this.apiClient) {
       throw new Error('API client not initialized - missing ANTHROPIC_API_KEY');
     }
 
     const modelId = model === 'opus' ? this.opusModel : this.sonnetModel;
-    const prompt = this.buildFixPrompt(tokenChain, errors, ultrathink, validationBlockers, successfulFiles, failedFiles);
-
     console.log(`[PhasedExecutor] Executing API ${model} fix (${modelId})${ultrathink ? ' with extended thinking' : ''}...`);
 
     const baseParams = {

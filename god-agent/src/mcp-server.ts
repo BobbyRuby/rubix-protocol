@@ -38,7 +38,8 @@ import type { NotificationType, NotificationUrgency } from './notification/index
 import { ConfigurationManager } from './config/index.js';
 import type { CodexConfiguration, PartialCodexConfiguration } from './config/index.js';
 import { CommunicationManager } from './communication/index.js';
-import type { ChannelType, CommunicationConfig, EscalationResponse } from './communication/index.js';
+import type { ChannelType, CommunicationConfig, EscalationResponse, EscalationFallbackResponse } from './communication/index.js';
+import { DaemonDetector } from './utils/DaemonDetector.js';
 import { getCodexLLMConfig, getCuriosityConfig } from './core/config.js';
 import { CuriosityTracker } from './curiosity/CuriosityTracker.js';
 import { TokenBudgetManager } from './curiosity/TokenBudgetManager.js';
@@ -3762,6 +3763,42 @@ const TOOLS: Tool[] = [
       properties: {}
     }
   },
+  {
+    name: 'god_recall_feedback',
+    description: `Provide feedback on AutoRecall results to improve MemRL Q-values.
+
+    Score 1-10 indicates how useful the recalled memories were:
+    - 1-3: Irrelevant noise, no value
+    - 4-6: Somewhat helpful, partial value
+    - 7-9: Directly relevant, high value
+    - 10: Perfect recall, exactly what was needed
+
+    Auto-rating: Claude can automatically rate recalls during task execution.
+    Override: Users can provide manual ratings via Telegram to calibrate learning.
+
+    Tracks disagreements (|auto - human| >= 3) for calibration learning.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        score: {
+          type: 'number',
+          description: 'How useful were the recalled memories? 1=useless, 10=perfect',
+          minimum: 1,
+          maximum: 10
+        },
+        queryId: {
+          type: 'string',
+          description: 'Optional: specific queryId. If omitted, uses last AutoRecall query'
+        },
+        auto: {
+          type: 'boolean',
+          description: 'True if auto-rated by Claude, false if human override',
+          default: false
+        }
+      },
+      required: ['score']
+    }
+  },
   // Reflexion Tools (Verbal Reflexion System)
   {
     name: 'god_reflexion_query',
@@ -4170,6 +4207,25 @@ class GodAgentMCPServer {
 
       // Wire AutoRecall to the engine (enables centralized brain from any entry point)
       this.autoRecall.setEngine(this.engine);
+
+      // Log core brain configuration status
+      const coreBrainDataDir = process.env.RUBIX_CORE_BRAIN_DATA_DIR;
+      if (coreBrainDataDir) {
+        console.log(`[MCP Server] Core brain configured: ${coreBrainDataDir}`);
+        try {
+          const { CoreBrainConnector } = await import('./core/CoreBrainConnector.js');
+          const connector = new CoreBrainConnector(coreBrainDataDir);
+          if (await connector.isAvailable()) {
+            console.log('[MCP Server] ✓ Core brain connection verified');
+          } else {
+            console.warn('[MCP Server] ⚠ Core brain configured but unavailable');
+          }
+        } catch (error) {
+          console.warn('[MCP Server] ⚠ Core brain connection failed:', error);
+        }
+      } else {
+        console.log('[MCP Server] Core brain not configured (set RUBIX_CORE_BRAIN_DATA_DIR to enable shared knowledge)');
+      }
     }
     return this.engine;
   }
@@ -4709,6 +4765,8 @@ class GodAgentMCPServer {
             return await this.handleAutoRecallConfig(args);
           case 'god_autorecall_status':
             return await this.handleAutoRecallStatus();
+          case 'god_recall_feedback':
+            return await this.handleRecallFeedback(args);
 
           // Reflexion Tools (Verbal Reflexion System)
           case 'god_reflexion_query':
@@ -4831,6 +4889,73 @@ class GodAgentMCPServer {
             skipReason: lastResult.skipReason
           } : null,
           description: 'AutoRecall automatically queries memory before processing any tool call, making the system work as a centralized brain that never forgets relevant context.'
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleRecallFeedback(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      score: z.number().min(1).max(10),
+      queryId: z.string().optional(),
+      auto: z.boolean().default(false)
+    }).parse(args);
+
+    const lastResult = this.autoRecall.getLastRecallResult();
+    const queryId = input.queryId || lastResult?.memrlQueryId;
+
+    if (!queryId) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: 'No recent AutoRecall query to provide feedback for. Either provide a queryId or perform an AutoRecall-enabled operation first.'
+          }, null, 2)
+        }]
+      };
+    }
+
+    const engine = await this.getEngine();
+    const storage = engine.getStorage();
+
+    // Check for human override of previous auto-rating
+    const previousRating = storage.getQueryFeedback(queryId);
+
+    if (previousRating && previousRating.auto && !input.auto) {
+      const diff = Math.abs(previousRating.score - input.score);
+      if (diff >= 3) {
+        // Significant disagreement — store for calibration learning
+        storage.storeDisagreement({
+          queryId,
+          autoScore: previousRating.score,
+          humanScore: input.score,
+          context: lastResult?.context
+        });
+      }
+    }
+
+    // Normalize score from 1-10 to 0-1 for MemRL
+    const normalized = (input.score - 1) / 9; // 1→0, 10→1
+
+    // Provide feedback to MemRL
+    const result = await engine.provideMemRLFeedback(queryId, normalized);
+
+    // Store the rating in the database
+    storage.markQueryFeedback(queryId, input.score, input.auto);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: result.success,
+          queryId,
+          score: input.score,
+          normalizedReward: normalized.toFixed(3),
+          entriesUpdated: result.entriesUpdated,
+          avgQChange: result.avgQChange.toFixed(4),
+          isOverride: previousRating?.auto && !input.auto,
+          message: result.message
         }, null, 2)
       }]
     };
@@ -10159,9 +10284,13 @@ class GodAgentMCPServer {
       const telegramChatId = process.env.TELEGRAM_CHAT_ID;
       const hasTelegram = !!(telegramBotToken && telegramChatId);
 
+      // Enable communications if configured or Telegram env vars present
+      // Actual availability is determined at runtime by daemon detection
+      const shouldEnableComms = codexConfig.communications?.enabled || hasTelegram;
+
       // Map CodexConfiguration communications to CommunicationConfig format
       const commsConfig: Partial<CommunicationConfig> = codexConfig.communications ? {
-        enabled: codexConfig.communications.enabled || hasTelegram,
+        enabled: shouldEnableComms,
         fallbackOrder: codexConfig.communications.fallbackOrder || ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
         timeoutMs: codexConfig.communications.timeoutMs || 300000,
         retryAttempts: codexConfig.communications.retryAttempts || 1,
@@ -10174,7 +10303,7 @@ class GodAgentMCPServer {
         } : undefined
       } : {
         // Default config - auto-enable if Telegram env vars present
-        enabled: hasTelegram,
+        enabled: shouldEnableComms,
         fallbackOrder: ['telegram', 'phone', 'sms', 'slack', 'discord', 'email'],
         timeoutMs: 300000,
         retryAttempts: 1,
@@ -10192,6 +10321,9 @@ class GodAgentMCPServer {
       if (commsConfig.enabled) {
         this.communications.initialize();
         console.log(`[MCP Server] CommunicationManager initialized - channels: ${this.communications.getConfiguredChannels().join(', ') || 'none'}`);
+        console.log('[MCP Server] Communication routing will auto-detect daemon availability at runtime');
+      } else {
+        console.log('[MCP Server] CommunicationManager disabled - no channels configured');
       }
     }
     return this.communications;
@@ -10436,15 +10568,52 @@ god_comms_setup mode="set" channel="email" config={
       options?: Array<{ label: string; description: string }>;
     };
 
+    // Detect if daemon is running
+    const daemonStatus = await DaemonDetector.detect();
+
+    if (!daemonStatus.running) {
+      // Daemon not running - return fallback response for CLI mode
+      const fallbackResponse: EscalationFallbackResponse = {
+        success: false,
+        daemonRequired: true,
+        fallbackAction: 'ask_user_question',
+        question: {
+          title: input.title,
+          message: input.message,
+          type: input.type,
+          options: input.options
+        },
+        instructions: 'Daemon not detected. Use AskUserQuestion tool with the above question data.',
+        detectionDetails: {
+          method: daemonStatus.method,
+          details: daemonStatus.details || 'No daemon detected'
+        }
+      };
+
+      console.log(`[MCP] Daemon not detected (${daemonStatus.method}), returning CLI fallback`);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(fallbackResponse, null, 2)
+        }]
+      };
+    }
+
+    // Daemon is running - proceed with normal escalation
+    console.log(`[MCP] Daemon detected (${daemonStatus.method}), proceeding with escalation`);
+
     const comms = this.getCommunicationManager();
 
     if (!comms.isEnabled()) {
+      // This shouldn't happen if daemon is detected, but handle it gracefully
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
             success: false,
-            error: 'Communications not enabled. Run god_comms_setup mode="enable" first.'
+            error: 'Communications not enabled despite daemon being detected. Run god_comms_setup mode="enable" first.',
+            daemonStatus
           }, null, 2)
         }]
       };
