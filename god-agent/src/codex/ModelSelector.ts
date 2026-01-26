@@ -25,20 +25,25 @@ const DEFAULT_MODELS: ModelConfig = {
 
 export class ModelSelector {
   private models: ModelConfig;
+  private useOllamaForSonnet: boolean;
 
   constructor(models?: Partial<ModelConfig>) {
     this.models = { ...DEFAULT_MODELS, ...models };
+    // Read from environment variable to route Sonnet calls to Ollama
+    this.useOllamaForSonnet = process.env.RUBIX_USE_OLLAMA_FOR_SONNET === 'true';
   }
 
   /**
    * Select model based on task complexity.
+   * Routes Sonnet to Ollama if RUBIX_USE_OLLAMA_FOR_SONNET=true.
    */
   selectForComplexity(complexity: TaskComplexity): string {
     switch (complexity) {
       case 'low':
         return this.models.haiku;
       case 'medium':
-        return this.models.sonnet;
+        // Route Sonnet to Ollama if configured
+        return this.useOllamaForSonnet ? 'OLLAMA' : this.models.sonnet;
       case 'high':
         return this.models.opus;
     }

@@ -13,6 +13,7 @@ import { MemoryEngine } from '../core/MemoryEngine.js';
 import { TaskExecutor } from '../codex/TaskExecutor.js';
 import { ContainmentManager } from '../codex/ContainmentManager.js';
 import { CapabilitiesManager } from '../capabilities/CapabilitiesManager.js';
+import { MemorySource } from '../core/types.js';
 import { getEnvSummary } from './env.js';
 
 // Get module directory for .env loading
@@ -28,18 +29,22 @@ export interface BootstrapResult {
   executor: TaskExecutor;
   containment: ContainmentManager;
   capabilities: CapabilitiesManager;
+  projectRoot: string;
+  projectName: string;
 }
 
 /**
  * Bootstrap options
  */
 export interface BootstrapOptions {
-  /** Custom data directory (defaults to GOD_AGENT_DATA_DIR or ./data) */
+  /** Custom data directory (defaults to RUBIX_DATA_DIR or ./data) */
   dataDir?: string;
   /** Custom codebase root (defaults to cwd) */
   codebaseRoot?: string;
   /** Show environment summary on start */
   showEnvSummary?: boolean;
+  /** Store project context in high-priority memory (defaults to true) */
+  storeProjectContext?: boolean;
 }
 
 /**
@@ -57,9 +62,19 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     console.log(getEnvSummary());
   }
 
+  // Read project configuration from environment variables
+  // This enables multi-project support via MCP instance configuration
+  const projectRoot = process.env.RUBIX_PROJECT_ROOT || options.codebaseRoot || process.cwd();
+  const projectName = process.env.RUBIX_PROJECT_NAME || (projectRoot.split(/[/\\]/).pop() || 'Unknown Project');
+
+  console.log(`[Bootstrap] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  console.log(`[Bootstrap] Initializing for project: ${projectName}`);
+  console.log(`[Bootstrap] Project root: ${projectRoot}`);
+
   // 1. Initialize MemoryEngine
-  const dataDir = options.dataDir || process.env.GOD_AGENT_DATA_DIR || './data';
-  console.log(`[Bootstrap] Initializing MemoryEngine with dataDir: ${dataDir}`);
+  const dataDir = options.dataDir || process.env.RUBIX_DATA_DIR || './data';
+  console.log(`[Bootstrap] Data directory: ${dataDir}`);
+  console.log(`[Bootstrap] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
   const engine = new MemoryEngine({ dataDir });
   await engine.initialize();
@@ -70,8 +85,9 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
   console.log('[Bootstrap] TaskExecutor created');
 
   // 3. Initialize ContainmentManager and load persisted rules
+  // Use projectRoot from environment to enable project-specific containment
   const containment = new ContainmentManager({
-    projectRoot: options.codebaseRoot || process.cwd()
+    projectRoot
   });
   containment.setRulesFilePath(dataDir);
 
@@ -88,9 +104,9 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
   }
 
   // 4. Initialize CapabilitiesManager with all capabilities enabled
-  const codebaseRoot = options.codebaseRoot || process.cwd();
+  // Use projectRoot from environment for project-specific analysis
   const capabilities = new CapabilitiesManager({
-    projectRoot: codebaseRoot,
+    projectRoot,
     // Enable all capabilities for full functionality
     lsp: { enabled: true, timeout: 30000 },
     git: { enabled: true },
@@ -120,7 +136,30 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
       console.warn('[Bootstrap] Capability prewarm error:', err.message);
     });
 
-  return { engine, executor, containment, capabilities };
+  // 5. Store project context in high-priority memory (optional but recommended)
+  // This ensures project context is always surfaced in queries via AutoRecall
+  if (options.storeProjectContext !== false) {
+    const projectContext = `ACTIVE PROJECT: ${projectName}
+
+**Working Directory**: ${projectRoot}
+**Data Directory**: ${dataDir}
+**Instance ID**: ${process.env.npm_config_local_prefix || 'default'}
+
+All file operations are scoped to this project directory unless explicitly overridden.
+This is project-specific context that persists across sessions.`;
+
+    await engine.store(projectContext, {
+      tags: ['project_context', 'always_recall', 'system_config'],
+      importance: 1.0,
+      source: MemorySource.SYSTEM,
+      sessionId: 'bootstrap',
+      agentId: 'system'
+    });
+
+    console.log('[Bootstrap] Project context stored in memory (high priority)');
+  }
+
+  return { engine, executor, containment, capabilities, projectRoot, projectName };
 }
 
 /**

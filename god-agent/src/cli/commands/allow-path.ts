@@ -26,7 +26,7 @@ interface ContainmentConfig {
  * Get the containment.json path
  */
 function getContainmentPath(): string {
-  const dataDir = process.env.GOD_AGENT_DATA_DIR || './data';
+  const dataDir = process.env.RUBIX_DATA_DIR || './data';
   return join(resolve(dataDir), 'containment.json');
 }
 

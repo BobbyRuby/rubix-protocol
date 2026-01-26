@@ -257,7 +257,7 @@ export function loadExistingConfig(envPath: string): Partial<SetupConfig> {
         case 'TELEGRAM_CHAT_ID':
           config.telegramChatId = value;
           break;
-        case 'GOD_AGENT_DATA_DIR':
+        case 'RUBIX_DATA_DIR':
           config.dataDir = value;
           break;
         case 'WOLFRAM_APP_ID':
@@ -374,14 +374,14 @@ export function generateEnvFile(config: SetupConfig, envPath: string): void {
 
 # Required - Embeddings
 OPENAI_API_KEY=${config.openaiKey}
-GOD_AGENT_EMBEDDING_MODEL=text-embedding-3-small
-GOD_AGENT_EMBEDDING_DIMENSIONS=768
+RUBIX_EMBEDDING_MODEL=text-embedding-3-small
+RUBIX_EMBEDDING_DIMENSIONS=768
 
 # Required - CODEX Code Generation
 ANTHROPIC_API_KEY=${config.anthropicKey}
 
 # Data Storage
-GOD_AGENT_DATA_DIR=${config.dataDir}
+RUBIX_DATA_DIR=${config.dataDir}
 
 # Telegram Integration
 TELEGRAM_BOT_TOKEN=${config.telegramToken}
@@ -433,7 +433,7 @@ export function generateMcpConfig(config: SetupConfig, projectRoot: string, godA
     env: {
       OPENAI_API_KEY: config.openaiKey,
       ANTHROPIC_API_KEY: config.anthropicKey,
-      GOD_AGENT_DATA_DIR: config.dataDir,
+      RUBIX_DATA_DIR: config.dataDir,
       TELEGRAM_BOT_TOKEN: config.telegramToken,
       TELEGRAM_CHAT_ID: config.telegramChatId,
       WOLFRAM_APP_ID: config.wolframAppId
@@ -529,17 +529,17 @@ echo "==============================================="
 echo ""
 
 # Get the directory where this script is located (god-agent root)
-GOD_AGENT_DIR="$( cd "$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+RUBIX_DIR="$( cd "$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
 
 # Get the current working directory (project to assimilate to)
 PROJECT_DIR="$(pwd)"
 
-echo "God-Agent Location: $GOD_AGENT_DIR"
+echo "God-Agent Location: $RUBIX_DIR"
 echo "Project Directory:  $PROJECT_DIR"
 echo ""
 
 # Change to god-agent directory to run node
-cd "$GOD_AGENT_DIR"
+cd "$RUBIX_DIR"
 
 # Run assimilate with project root
 node dist/cli/index.js assimilate --project-root "$PROJECT_DIR"

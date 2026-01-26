@@ -563,7 +563,7 @@ export class ContainmentManager {
       this.auditLog('updateConfig', { attempted: 'enabled: false' }, false);
       return {
         success: false,
-        reason: 'Containment cannot be disabled via MCP tools. Use GOD_AGENT_CONTAINMENT_DISABLED=true at startup if needed.'
+        reason: 'Containment cannot be disabled via MCP tools. Use RUBIX_CONTAINMENT_DISABLED=true at startup if needed.'
       };
     }
 

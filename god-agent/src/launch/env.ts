@@ -66,7 +66,7 @@ export function getEnvSummary(): string {
     `OPENAI_API_KEY:       ${mask(process.env.OPENAI_API_KEY)}`,
     `ANTHROPIC_API_KEY:    ${mask(process.env.ANTHROPIC_API_KEY)}`,
     `TELEGRAM_BOT_TOKEN:   ${mask(process.env.TELEGRAM_BOT_TOKEN)}`,
-    `GOD_AGENT_DATA_DIR:   ${process.env.GOD_AGENT_DATA_DIR || './data (default)'}`,
+    `RUBIX_DATA_DIR:   ${process.env.RUBIX_DATA_DIR || './data (default)'}`,
     `WEBHOOK_PORT:         ${process.env.WEBHOOK_PORT || '3456 (default)'}`,
     '',
     'Optional channels:',
@@ -111,19 +111,19 @@ export const ENV_REQUIREMENTS = {
   /** Full stack - needs everything */
   all: {
     required: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'],
-    optional: ['TELEGRAM_BOT_TOKEN', 'SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'GOD_AGENT_DATA_DIR', 'WEBHOOK_PORT']
+    optional: ['TELEGRAM_BOT_TOKEN', 'SLACK_WEBHOOK_URL', 'DISCORD_WEBHOOK_URL', 'RUBIX_DATA_DIR', 'WEBHOOK_PORT']
   },
 
   /** Telegram bot with RUBIX */
   telegram: {
     required: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'TELEGRAM_BOT_TOKEN'],
-    optional: ['GOD_AGENT_DATA_DIR']
+    optional: ['RUBIX_DATA_DIR']
   },
 
   /** Scheduler daemon */
   daemon: {
     required: ['OPENAI_API_KEY'],
-    optional: ['ANTHROPIC_API_KEY', 'GOD_AGENT_DATA_DIR']
+    optional: ['ANTHROPIC_API_KEY', 'RUBIX_DATA_DIR']
   },
 
   /** Webhook server only */
@@ -135,7 +135,7 @@ export const ENV_REQUIREMENTS = {
   /** MCP server */
   mcp: {
     required: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'],
-    optional: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'WOLFRAM_APP_ID', 'GOD_AGENT_DATA_DIR']
+    optional: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'WOLFRAM_APP_ID', 'RUBIX_DATA_DIR']
   }
 } as const;
 
@@ -148,7 +148,7 @@ const ENV_DESCRIPTIONS: Record<string, string> = {
   TELEGRAM_BOT_TOKEN: 'Telegram Bot Token',
   TELEGRAM_CHAT_ID: 'Telegram Chat ID',
   WOLFRAM_APP_ID: 'Wolfram Alpha App ID',
-  GOD_AGENT_DATA_DIR: 'Data directory path'
+  RUBIX_DATA_DIR: 'Data directory path'
 };
 
 /**

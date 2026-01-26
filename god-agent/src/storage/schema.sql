@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS memory_entries (
     agent_id TEXT,
     context TEXT, -- JSON
     pending_embedding INTEGER DEFAULT 0, -- 1 = awaiting batch embedding
+    q_value REAL DEFAULT 0.5, -- MemRL Q-value for retrieval ranking
+    q_update_count INTEGER DEFAULT 0, -- Number of Q-value updates
+    last_q_update TEXT, -- Timestamp of last Q-value update
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -220,3 +223,28 @@ CREATE TABLE IF NOT EXISTS memrl_queries (
 
 CREATE INDEX IF NOT EXISTS idx_memrl_queries_created ON memrl_queries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memrl_queries_feedback ON memrl_queries(has_feedback);
+
+-- Feedback ratings for AutoRecall results
+CREATE TABLE IF NOT EXISTS feedback_ratings (
+    query_id TEXT PRIMARY KEY,
+    score INTEGER NOT NULL,          -- 1-10 rating
+    auto INTEGER DEFAULT 0,          -- 1 if auto-rated by Claude, 0 if human
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (query_id) REFERENCES memrl_queries(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_ratings_auto ON feedback_ratings(auto);
+CREATE INDEX IF NOT EXISTS idx_feedback_ratings_score ON feedback_ratings(score);
+
+-- Disagreements between auto and human ratings for calibration learning
+CREATE TABLE IF NOT EXISTS feedback_disagreements (
+    id TEXT PRIMARY KEY,
+    query_id TEXT NOT NULL,
+    auto_score INTEGER NOT NULL,
+    human_score INTEGER NOT NULL,
+    context TEXT,                    -- JSON context about the query
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (query_id) REFERENCES memrl_queries(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_disagreements_created ON feedback_disagreements(created_at DESC);

@@ -105,6 +105,33 @@ export class SQLiteStorage {
     // Create indexes if they don't exist (safe to run multiple times)
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memrl_queries_created ON memrl_queries(created_at DESC)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memrl_queries_feedback ON memrl_queries(has_feedback)`);
+
+    // feedback_ratings table (added for AutoRecall feedback tracking)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feedback_ratings (
+        query_id TEXT PRIMARY KEY,
+        score INTEGER NOT NULL,
+        auto INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (query_id) REFERENCES memrl_queries(id) ON DELETE CASCADE
+      )
+    `);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_feedback_ratings_auto ON feedback_ratings(auto)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_feedback_ratings_score ON feedback_ratings(score)`);
+
+    // feedback_disagreements table (added for calibration learning)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS feedback_disagreements (
+        id TEXT PRIMARY KEY,
+        query_id TEXT NOT NULL,
+        auto_score INTEGER NOT NULL,
+        human_score INTEGER NOT NULL,
+        context TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (query_id) REFERENCES memrl_queries(id) ON DELETE CASCADE
+      )
+    `);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_disagreements_created ON feedback_disagreements(created_at DESC)`);
   }
 
   /**
@@ -548,6 +575,81 @@ export class SQLiteStorage {
       totalQueries: stats.total,
       queriesWithFeedback: stats.with_feedback ?? 0
     };
+  }
+
+  // ==========================================
+  // FEEDBACK RATINGS
+  // ==========================================
+
+  /**
+   * Get feedback rating for a query
+   */
+  getQueryFeedback(queryId: string): { score: number; auto: boolean; createdAt: string } | null {
+    const row = this.db.prepare(`
+      SELECT score, auto, created_at
+      FROM feedback_ratings WHERE query_id = ?
+    `).get(queryId) as { score: number; auto: number; created_at: string } | undefined;
+
+    if (!row) return null;
+
+    return {
+      score: row.score,
+      auto: row.auto === 1,
+      createdAt: row.created_at
+    };
+  }
+
+  /**
+   * Store or update feedback rating for a query
+   */
+  markQueryFeedback(queryId: string, score: number, auto: boolean): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT OR REPLACE INTO feedback_ratings (query_id, score, auto, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(queryId, score, auto ? 1 : 0, now);
+
+    // Also mark the query as having feedback
+    this.markMemRLQueryFeedback(queryId);
+  }
+
+  /**
+   * Store a disagreement between auto and human ratings
+   */
+  storeDisagreement(data: {
+    queryId: string;
+    autoScore: number;
+    humanScore: number;
+    context?: string;
+  }): void {
+    const now = new Date().toISOString();
+    const { v4: uuidv4 } = require('uuid');
+    const id = uuidv4();
+
+    this.db.prepare(`
+      INSERT INTO feedback_disagreements (id, query_id, auto_score, human_score, context, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.queryId,
+      data.autoScore,
+      data.humanScore,
+      data.context ? JSON.stringify(data.context) : null,
+      now
+    );
+  }
+
+  /**
+   * Count queries without feedback
+   */
+  countQueriesWithoutFeedback(): number {
+    const result = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM memrl_queries
+      WHERE has_feedback = 0
+    `).get() as { count: number };
+
+    return result.count;
   }
 
   // ==========================================

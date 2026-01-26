@@ -97,7 +97,8 @@ export interface QueryFilters {
 export interface QueryResult {
   entry: MemoryEntry;
   score: number;
-  matchType: 'vector' | 'pattern' | 'hybrid';
+  /** Match type: vector (semantic), pattern, hybrid, or tag-only (SQLite fallback for entries without embeddings) */
+  matchType: 'vector' | 'pattern' | 'hybrid' | 'tag-only';
   lScore?: number;
 }
 
@@ -256,6 +257,31 @@ export interface CodexLLMConfig {
   cliModel?: 'opus' | 'sonnet' | 'haiku';
   /** CLI timeout in ms (default: 300000 = 5 minutes) */
   cliTimeout?: number;
+
+  // === ENGINEER PROVIDER CONFIGURATION ===
+  /**
+   * Engineer provider for code generation in parallel engineering:
+   * - claude: Use Anthropic Claude API (default)
+   * - ollama: Use Ollama cloud or local API
+   */
+  engineerProvider?: 'claude' | 'ollama';
+  /** Ollama API endpoint (default: https://ollama.com/api) */
+  ollamaEndpoint?: string;
+  /** Ollama API key for cloud services (optional) */
+  ollamaApiKey?: string;
+  /** Ollama model to use (default: qwen3-coder:480b-cloud) */
+  ollamaModel?: string;
+  /** Ollama timeout in milliseconds (default: 120000 = 2 minutes) */
+  ollamaTimeout?: number;
+
+  // === PLAN DEVIATION GATE CONFIGURATION ===
+  /**
+   * Plan deviation mode - controls how architect design deviations are handled:
+   * - strict: ALWAYS escalate to user when design deviates from approved plan (default)
+   * - smart: Escalate only for major deviations (future enhancement)
+   * - autonomous: Never escalate, trust architect decisions
+   */
+  planDeviationMode?: 'strict' | 'smart' | 'autonomous';
 }
 
 /**

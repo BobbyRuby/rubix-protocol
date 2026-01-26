@@ -4146,6 +4146,10 @@ class GodAgentMCPServer {
   private communications: CommunicationManager | null = null;
   private wolfram: WolframManager | null = null;
   private dataDir: string;
+  // Project context (multi-project support)
+  private projectRoot: string;
+  private projectName: string;
+  private projectContextStored: boolean = false;
   // Curiosity system
   private curiosityTracker: CuriosityTracker | null = null;
   private tokenBudget: TokenBudgetManager | null = null;
@@ -4165,7 +4169,20 @@ class GodAgentMCPServer {
   private distillationService: MemoryDistillationService | null = null;
 
   constructor() {
-    this.dataDir = process.env.GOD_AGENT_DATA_DIR || './data';
+    // Data directory: prefer RUBIX_DATA_DIR, fallback to GOD_AGENT_DATA_DIR for backwards compat
+    this.dataDir = process.env.RUBIX_DATA_DIR || process.env.GOD_AGENT_DATA_DIR || './data';
+
+    // Project context: enables multi-project support via MCP instance configuration
+    this.projectRoot = process.env.RUBIX_PROJECT_ROOT || process.cwd();
+    this.projectName = process.env.RUBIX_PROJECT_NAME || this.projectRoot.split(/[/\\]/).pop() || 'Unknown Project';
+
+    // Log project configuration at startup
+    console.log(`[MCP Server] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`[MCP Server] Project: ${this.projectName}`);
+    console.log(`[MCP Server] Root: ${this.projectRoot}`);
+    console.log(`[MCP Server] Data: ${this.dataDir}`);
+    console.log(`[MCP Server] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
     this.configManager = ConfigurationManager.getInstance();
 
     // Initialize AutoRecall (centralized brain)
@@ -4226,6 +4243,30 @@ class GodAgentMCPServer {
       } else {
         console.log('[MCP Server] Core brain not configured (set RUBIX_CORE_BRAIN_DATA_DIR to enable shared knowledge)');
       }
+
+      // Store project context in high-priority memory (once per session)
+      // This ensures project context is always surfaced in queries via AutoRecall
+      if (!this.projectContextStored) {
+        const projectContext = `ACTIVE PROJECT: ${this.projectName}
+
+**Working Directory**: ${this.projectRoot}
+**Data Directory**: ${this.dataDir}
+**Instance**: ${process.env.RUBIX_PROJECT_NAME ? 'multi-project' : 'default'}
+
+All file operations are scoped to this project directory unless explicitly overridden.
+This is project-specific context that persists across sessions.`;
+
+        await this.engine.store(projectContext, {
+          tags: ['project_context', 'always_recall', 'system_config'],
+          importance: 1.0,
+          source: MemorySource.SYSTEM,
+          sessionId: 'mcp-init',
+          agentId: 'system'
+        });
+
+        this.projectContextStored = true;
+        console.log(`[MCP Server] Project context stored in memory (high priority)`);
+      }
     }
     return this.engine;
   }
@@ -4274,7 +4315,7 @@ class GodAgentMCPServer {
   private async getCapabilities(): Promise<CapabilitiesManager> {
     if (!this.capabilities) {
       this.capabilities = new CapabilitiesManager({
-        projectRoot: process.cwd(),
+        projectRoot: this.projectRoot,
         // Enable all capabilities for full functionality
         lsp: { enabled: true, timeout: 30000 },
         git: { enabled: true },
@@ -6481,9 +6522,10 @@ class GodAgentMCPServer {
         }
 
         // Initialize CollaborativePartner and ContainmentManager
+        // Use this.projectRoot for proper multi-project scoping
         const containmentManager = new ContainmentManager({
           enabled: true,
-          projectRoot: process.cwd()
+          projectRoot: this.projectRoot
         });
 
         // Load persisted user rules from containment.json
@@ -9418,7 +9460,8 @@ class GodAgentMCPServer {
         type: 'text',
         text: JSON.stringify({
           capabilities: status,
-          projectRoot: process.cwd(),
+          projectRoot: this.projectRoot,
+          projectName: this.projectName,
           message: 'Capabilities status retrieved'
         }, null, 2)
       }]
@@ -10320,8 +10363,10 @@ class GodAgentMCPServer {
       // Initialize channels if enabled
       if (commsConfig.enabled) {
         this.communications.initialize();
+        // Enable TelegramChannel polling since there's no TelegramBot in MCP mode
+        this.communications.setTelegramBotActive(false);
         console.log(`[MCP Server] CommunicationManager initialized - channels: ${this.communications.getConfiguredChannels().join(', ') || 'none'}`);
-        console.log('[MCP Server] Communication routing will auto-detect daemon availability at runtime');
+        console.log('[MCP Server] TelegramChannel polling enabled for CLI routing');
       } else {
         console.log('[MCP Server] CommunicationManager disabled - no channels configured');
       }

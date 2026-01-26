@@ -49,6 +49,7 @@ export interface RecallResult {
   recallTimeMs: number;
   skipped: boolean;
   skipReason?: string;
+  memrlQueryId?: string;
 }
 
 // ==========================================
@@ -329,6 +330,9 @@ export class AutoRecall {
         includeProvenance: true,
       });
 
+      // Get the MemRL query ID for potential feedback
+      const memrlQueryId = this.engine.getLastMemRLQueryId();
+
       // Transform results
       const memories: RecalledMemory[] = results.map((r: QueryResult) => ({
         id: r.entry.id,
@@ -344,6 +348,7 @@ export class AutoRecall {
         context,
         recallTimeMs: Date.now() - startTime,
         skipped: false,
+        memrlQueryId: memrlQueryId ?? undefined,
       };
 
       this.lastRecallResult = result;

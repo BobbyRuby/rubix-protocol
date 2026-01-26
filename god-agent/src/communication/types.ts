@@ -180,6 +180,24 @@ export interface EscalationResponse {
   };
 }
 
+// Fallback response when daemon is not available (for CLI mode)
+export interface EscalationFallbackResponse {
+  success: false;
+  daemonRequired: true;
+  fallbackAction: 'ask_user_question';
+  question: {
+    title: string;
+    message: string;
+    type?: string;
+    options?: Array<{ label: string; description: string }>;
+  };
+  instructions: string;
+  detectionDetails?: {
+    method: string;
+    details: string;
+  };
+}
+
 // Channel interface
 export interface IChannel {
   readonly type: ChannelType;

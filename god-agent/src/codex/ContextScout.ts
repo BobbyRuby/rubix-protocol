@@ -1,11 +1,11 @@
 /**
- * ContextScout - Phase 1: Gather context and analyze with Claude API.
+ * ContextScout - Phase 1: Gather context and analyze with Claude API or Ollama.
  *
  * API-based approach (no CLI):
  * - Gathers files via glob patterns
  * - Reads key files directly
  * - Queries god-agent memory for relevant patterns
- * - Sends pre-gathered context to Claude Sonnet for analysis
+ * - Sends pre-gathered context to Claude Sonnet or Ollama for analysis
  *
  * Outputs: CTX token string for Phase 2 (Architect)
  */
@@ -16,6 +16,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { COMPRESSION_SCHEMAS } from '../memory/CompressionSchemas.js';
 import { getCodexLogger } from './Logger.js';
+import { OllamaEngineerProvider } from './EngineerProvider.js';
 import type { CodexTask } from './types.js';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
 
@@ -64,6 +65,7 @@ interface MemoryMatch {
 /**
  * ContextScout gathers all context needed for subsequent phases.
  * Uses API calls instead of CLI for reliability.
+ * Supports both Claude API and Ollama for cost optimization.
  */
 export class ContextScout {
   private codebasePath: string;
@@ -71,6 +73,8 @@ export class ContextScout {
   private apiClient: Anthropic | null = null;
   private apiModel: string;
   private memoryEngine: MemoryEngine | null = null;
+  private useOllama: boolean = false;
+  private ollamaProvider: OllamaEngineerProvider | null = null;
 
   constructor(
     codebasePath: string,
@@ -82,15 +86,32 @@ export class ContextScout {
     this.codebasePath = codebasePath;
     this.polyglotContext = polyglotContext;
     this.memoryEngine = memoryEngine || null;
-    this.apiModel = apiModel || 'claude-sonnet-4-20250514';
 
-    // Initialize API client
-    const key = apiKey || process.env.ANTHROPIC_API_KEY;
-    if (key) {
-      this.apiClient = new Anthropic({ apiKey: key });
-      console.log(`[ContextScout] API client initialized (model: ${this.apiModel})`);
+    // Check if we should use Ollama instead of Claude
+    this.useOllama = apiModel === 'OLLAMA';
+
+    if (this.useOllama) {
+      // Initialize Ollama provider
+      const endpoint = process.env.OLLAMA_ENDPOINT || 'https://ollama.com/api';
+      const model = process.env.OLLAMA_MODEL || 'qwen3-coder:480b-cloud';
+      const ollamaApiKey = process.env.OLLAMA_API_KEY;
+      const timeout = parseInt(process.env.OLLAMA_TIMEOUT || '120000', 10);
+
+      this.ollamaProvider = new OllamaEngineerProvider(endpoint, model, ollamaApiKey, timeout);
+      this.apiModel = model;
+      console.log(`[ContextScout] Ollama provider initialized (model: ${this.apiModel}, endpoint: ${endpoint})`);
     } else {
-      console.warn('[ContextScout] No ANTHROPIC_API_KEY - context scouting will fail');
+      // Use Claude API
+      this.apiModel = apiModel || 'claude-sonnet-4-20250514';
+
+      // Initialize API client
+      const key = apiKey || process.env.ANTHROPIC_API_KEY;
+      if (key) {
+        this.apiClient = new Anthropic({ apiKey: key });
+        console.log(`[ContextScout] Claude API client initialized (model: ${this.apiModel})`);
+      } else {
+        console.warn('[ContextScout] No ANTHROPIC_API_KEY - context scouting will fail');
+      }
     }
   }
 
@@ -397,14 +418,24 @@ Provide your analysis now.`;
   }
 
   /**
-   * Execute Claude API with the scout prompt.
+   * Execute API with the scout prompt (Claude or Ollama).
    */
   private async executeApi(prompt: string): Promise<string> {
+    // Route to Ollama if configured
+    if (this.useOllama && this.ollamaProvider) {
+      console.log(`[ContextScout] Executing Ollama (${this.apiModel})...`);
+      const engineerFn = this.ollamaProvider.createEngineer();
+      const response = await engineerFn(prompt);
+      console.log(`[ContextScout] Ollama completed: ${response.length} chars`);
+      return response;
+    }
+
+    // Use Claude API
     if (!this.apiClient) {
       throw new Error('[ContextScout] API client not initialized - missing ANTHROPIC_API_KEY');
     }
 
-    console.log(`[ContextScout] Executing API Sonnet (${this.apiModel})...`);
+    console.log(`[ContextScout] Executing Claude API (${this.apiModel})...`);
 
     const response = await this.apiClient.messages.create({
       model: this.apiModel,
@@ -420,7 +451,7 @@ Provide your analysis now.`;
       throw new Error('[ContextScout] No text response from Claude API');
     }
 
-    console.log(`[ContextScout] API Sonnet completed: ${textBlock.text.length} chars`);
+    console.log(`[ContextScout] Claude API completed: ${textBlock.text.length} chars`);
     console.log(`[ContextScout] Usage: ${response.usage?.input_tokens || 0} in, ${response.usage?.output_tokens || 0} out`);
 
     return textBlock.text;

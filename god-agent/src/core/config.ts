@@ -26,22 +26,22 @@ const dotenvResult = loadDotenv({ path: envPath });
 console.log(`[Config] dotenv result: ${JSON.stringify(dotenvResult)}`);
 
 export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {
-  const rawDir = dataDir ?? process.env.GOD_AGENT_DATA_DIR ?? './data';
+  const rawDir = dataDir ?? process.env.RUBIX_DATA_DIR ?? './data';
   // Resolve relative paths against god-agent root, not process.cwd()
   const baseDir = rawDir.startsWith('.') ? resolve(godAgentRoot, rawDir) : rawDir;
 
   const hnswConfig: HNSWConfig = {
-    maxElements: parseInt(process.env.GOD_AGENT_HNSW_MAX_ELEMENTS ?? '100000', 10),
-    efConstruction: parseInt(process.env.GOD_AGENT_HNSW_EF_CONSTRUCTION ?? '200', 10),
-    efSearch: parseInt(process.env.GOD_AGENT_HNSW_EF_SEARCH ?? '100', 10),
-    M: parseInt(process.env.GOD_AGENT_HNSW_M ?? '16', 10),
+    maxElements: parseInt(process.env.RUBIX_HNSW_MAX_ELEMENTS ?? '100000', 10),
+    efConstruction: parseInt(process.env.RUBIX_HNSW_EF_CONSTRUCTION ?? '200', 10),
+    efSearch: parseInt(process.env.RUBIX_HNSW_EF_SEARCH ?? '100', 10),
+    M: parseInt(process.env.RUBIX_HNSW_M ?? '16', 10),
     spaceName: 'cosine'
   };
 
   const embeddingConfig: EmbeddingConfig = {
     provider: 'openai',
-    model: process.env.GOD_AGENT_EMBEDDING_MODEL ?? 'text-embedding-3-small',
-    dimensions: parseInt(process.env.GOD_AGENT_EMBEDDING_DIMENSIONS ?? '768', 10),
+    model: process.env.RUBIX_EMBEDDING_MODEL ?? 'text-embedding-3-small',
+    dimensions: parseInt(process.env.RUBIX_EMBEDDING_DIMENSIONS ?? '768', 10),
     apiKey: process.env.OPENAI_API_KEY,
     batchSize: 100
   };
@@ -53,10 +53,10 @@ export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {
   };
 
   const lScoreConfig: LScoreConfig = {
-    depthDecay: parseFloat(process.env.GOD_AGENT_LSCORE_DECAY ?? '0.9'),
-    minScore: parseFloat(process.env.GOD_AGENT_LSCORE_MIN ?? '0.01'),
-    threshold: parseFloat(process.env.GOD_AGENT_LSCORE_THRESHOLD ?? '0.3'),
-    enforceThreshold: process.env.GOD_AGENT_ENFORCE_LSCORE_THRESHOLD !== 'false'
+    depthDecay: parseFloat(process.env.RUBIX_LSCORE_DECAY ?? '0.9'),
+    minScore: parseFloat(process.env.RUBIX_LSCORE_MIN ?? '0.01'),
+    threshold: parseFloat(process.env.RUBIX_LSCORE_THRESHOLD ?? '0.3'),
+    enforceThreshold: process.env.RUBIX_ENFORCE_LSCORE_THRESHOLD !== 'false'
   };
 
   return {
