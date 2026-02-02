@@ -575,8 +575,17 @@ export class PhasedExecutor {
         result.phases.plan ? `plan_files: ${result.phases.plan.files.length}` : null
       ].filter(Boolean).join('\n');
 
+      // Build enriched summary with file paths and design decisions
+      const enrichedParts = [executionSummary];
+      if (result.phases.plan?.files?.length) {
+        enrichedParts.push(`files: ${result.phases.plan.files.map((f: any) => f.path || f).join(', ')}`);
+      }
+      if (result.phases.design?.complexity) {
+        enrichedParts.push(`complexity: ${result.phases.design.complexity}`);
+      }
+
       // Store in memory for future reference
-      const entry = await this.engine.store(executionSummary, {
+      const entry = await this.engine.store(enrichedParts.join('\n'), {
         source: MemorySource.AGENT_INFERENCE,
         tags: [
           'phased_execution',
@@ -588,20 +597,28 @@ export class PhasedExecutor {
 
       console.log(`[PhasedExecutor] Stored execution in memory: ${entry.id}`);
 
-      // Provide learning feedback via trajectory
+      // Provide learning feedback via proper Sona trajectory (not entry ID)
       const quality = result.success
         ? 1.0
         : result.fixAttempts > 0
           ? 0.1 + (0.2 * (5 - result.fixAttempts) / 5)
           : 0.2;
 
-      await this.engine.provideFeedback(
-        entry.id,
-        quality,
-        'phased_execution'
-      );
-
-      console.log(`[PhasedExecutor] Recorded learning feedback: quality=${quality.toFixed(2)}`);
+      try {
+        // Create a proper trajectory from the task description query
+        const { trajectoryId } = await this.engine.queryWithLearning(
+          description,
+          { topK: 5 }
+        );
+        await this.engine.provideFeedback(
+          trajectoryId,
+          quality,
+          'phased_execution'
+        );
+        console.log(`[PhasedExecutor] Recorded Sona feedback: trajectoryId=${trajectoryId}, quality=${quality.toFixed(2)}`);
+      } catch (feedbackErr) {
+        console.error('[PhasedExecutor] Sona feedback error (non-critical):', feedbackErr);
+      }
 
       // For failures, record causal relation (failure → error)
       if (!result.success && result.error) {

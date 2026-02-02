@@ -1053,6 +1053,30 @@ const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'god_session_store',
+    description: `Store a session summary with structured metadata.
+
+    Use this to capture significant session outcomes:
+    - Architecture decisions made
+    - Patterns discovered or applied
+    - Bug fixes and their root causes
+    - Files changed and why
+
+    Auto-tags with 'session' and today's date. Sets importance 0.8.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'Session summary text' },
+        decisions: { type: 'array', items: { type: 'string' }, description: 'Key decisions made' },
+        patterns: { type: 'array', items: { type: 'string' }, description: 'Patterns discovered or applied' },
+        filesChanged: { type: 'array', items: { type: 'string' }, description: 'Files modified' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Additional tags' },
+        relatedIds: { type: 'array', items: { type: 'string' }, description: 'Related memory IDs for causal links' }
+      },
+      required: ['summary']
+    }
+  },
+  {
     name: 'god_prune_patterns',
     description: `Prune patterns with low success rates.
 
@@ -4167,6 +4191,8 @@ class GodAgentMCPServer {
   private postExecGuardian: PostExecGuardian | null = null;
   // Memory distillation service
   private distillationService: MemoryDistillationService | null = null;
+  // Learning feedback tracking (for implicit feedback from god_store)
+  private lastQueryContext: { queryId: string | null; trajectoryId: string; query: string; timestamp: number } | null = null;
 
   constructor() {
     // Data directory: prefer RUBIX_DATA_DIR, fallback to GOD_AGENT_DATA_DIR for backwards compat
@@ -4516,6 +4542,8 @@ This is project-specific context that persists across sessions.`;
             return await this.handleShadowSearch(args);
           case 'god_learn':
             return await this.handleLearn(args);
+          case 'god_session_store':
+            return await this.handleSessionStore(args);
           case 'god_learning_stats':
             return await this.handleLearningStats();
           case 'god_prune_patterns':
@@ -5050,6 +5078,26 @@ This is project-specific context that persists across sessions.`;
       }
     });
 
+    // Implicit feedback: if a recent query led to this store, the results were useful
+    let implicitFeedback = false;
+    if (this.lastQueryContext && (Date.now() - this.lastQueryContext.timestamp) < 300000) {
+      // Within 5 minutes of last query — provide positive feedback
+      try {
+        await engine.provideCombinedFeedback(
+          this.lastQueryContext.queryId,
+          this.lastQueryContext.trajectoryId,
+          0.7, // Positive signal: user stored something after querying
+          'implicit_store'
+        );
+        implicitFeedback = true;
+        this.lastQueryContext = null; // Only fire once per query
+        console.log('[god_store] Implicit positive feedback sent to MemRL+Sona');
+      } catch (e) {
+        // Non-critical, don't fail the store
+        console.error('[god_store] Implicit feedback error:', e);
+      }
+    }
+
     return {
       content: [{
         type: 'text',
@@ -5062,6 +5110,7 @@ This is project-specific context that persists across sessions.`;
           compressionMethod,
           ratio: Math.round(ratio * 100) + '%',
           tokensSaved,
+          implicitFeedback,
           message: `Stored with ${compressionMethod} compression (${Math.round(ratio * 100)}% saved, ${tokensSaved} tokens)`
         }, null, 2)
       }]
@@ -5072,7 +5121,8 @@ This is project-specific context that persists across sessions.`;
     const input = QueryInputSchema.parse(args);
     const engine = await this.getEngine();
 
-    const results = await engine.query(input.query, {
+    // Use queryWithLearning to get trajectoryId for Sona feedback
+    const { results, trajectoryId } = await engine.queryWithLearning(input.query, {
       topK: input.topK ?? 10,
       includeProvenance: input.includeProvenance ?? true,
       filters: {
@@ -5081,6 +5131,15 @@ This is project-specific context that persists across sessions.`;
         sources: input.sources?.map(parseSource)
       }
     });
+
+    // Track last query for implicit feedback from god_store
+    const memrlQueryId = engine.getLastMemRLQueryId();
+    this.lastQueryContext = {
+      queryId: memrlQueryId,
+      trajectoryId,
+      query: input.query,
+      timestamp: Date.now()
+    };
 
     const formatted = results.map(r => ({
       id: r.entry.id,
@@ -5099,7 +5158,12 @@ This is project-specific context that persists across sessions.`;
         type: 'text',
         text: JSON.stringify({
           count: results.length,
-          results: formatted
+          results: formatted,
+          _learning: {
+            trajectoryId,
+            queryId: memrlQueryId,
+            hint: 'Call god_learn with these IDs to improve future results'
+          }
         }, null, 2)
       }]
     };
@@ -5501,6 +5565,61 @@ This is project-specific context that persists across sessions.`;
             driftInterpretation
           } : null,
           message: `Updated ${result.memrl?.entriesUpdated ?? 0} Q-values and ${result.sona?.weightsUpdated ?? 0} pattern weights`
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleSessionStore(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = z.object({
+      summary: z.string(),
+      decisions: z.array(z.string()).optional(),
+      patterns: z.array(z.string()).optional(),
+      filesChanged: z.array(z.string()).optional(),
+      tags: z.array(z.string()).optional(),
+      relatedIds: z.array(z.string()).optional()
+    }).parse(args);
+
+    const engine = await this.getEngine();
+    const dateTag = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // Build structured content
+    const parts = [input.summary];
+    if (input.decisions?.length) parts.push('DECISIONS: ' + input.decisions.join(' | '));
+    if (input.patterns?.length) parts.push('PATTERNS: ' + input.patterns.join(' | '));
+    if (input.filesChanged?.length) parts.push('FILES: ' + input.filesChanged.join(', '));
+    const content = parts.join('\n');
+
+    const tags = ['session', dateTag, ...(input.tags || [])];
+
+    const entry = await engine.store(content, {
+      source: MemorySource.AGENT_INFERENCE,
+      tags,
+      importance: 0.8
+    });
+
+    // Create causal links if related IDs provided
+    if (input.relatedIds?.length) {
+      for (const relId of input.relatedIds) {
+        try {
+          await engine.addCausalRelation(
+            [relId], [entry.id],
+            CausalRelationType.ENABLES, 0.7
+          );
+        } catch (e) {
+          // Non-critical
+        }
+      }
+    }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          id: entry.id,
+          tags,
+          message: `Session summary stored with ${tags.length} tags`
         }, null, 2)
       }]
     };

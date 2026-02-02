@@ -1,5 +1,22 @@
 # God-Agent Architecture
 
+> **PRODUCTION ENVIRONMENT**
+>
+> This is the **production** instance of God-Agent (`god-agent`).
+> - Stable code - test changes in `god-agent-dev` first
+> - Production data in `./data`
+> - MCP instance: `mcp__rubix__*` points to THIS production build
+
+---
+
+## DIRECTIVE: MEMORY FIRST (START OF EVERY SESSION)
+
+**At the start of every session, invoke `/recall` to load relevant memories before doing anything else.**
+
+This ensures prior context, decisions, patterns, and project knowledge are available from the first interaction. Never skip this step.
+
+---
+
 ## DIRECTIVE: PRIMARY PURPOSE
 
 **God-Agent is a development tool for building OTHER software projects.**
@@ -499,6 +516,55 @@ Users can still set `RUBIX_MODE=daemon` or `RUBIX_MODE=mcp-only` to force a spec
 
 ---
 
+## DIRECTIVE: SESSION LEARNING (MANDATORY)
+
+**Store significant outcomes during and after sessions using `god_session_store` or `god_store`.**
+
+### What to store:
+- Architecture decisions and their rationale
+- Bug root causes and fixes applied
+- Patterns discovered (coding patterns, project conventions, failure modes)
+- Cross-project insights (e.g., "this API contract works well")
+- Configuration or environment quirks
+
+### What NOT to store:
+- Routine file reads or minor edits
+- Obvious/trivial facts
+- Duplicate information already in memory
+
+### How:
+```typescript
+// After significant work in a session
+god_session_store({
+  summary: "Implemented JWT auth for backend API using passport-jwt",
+  decisions: ["Used RS256 over HS256 for key rotation support"],
+  patterns: ["Middleware chain: rateLimit → authenticate → authorize → handler"],
+  filesChanged: ["src/middleware/auth.ts", "src/routes/api.ts"],
+  tags: ["auth", "jwt"]
+});
+```
+
+### Feedback loop:
+- `god_query` now returns `_learning.trajectoryId` and `_learning.queryId`
+- Call `god_learn` with these IDs after evaluating query usefulness
+- Storing via `god_store` after a query automatically provides positive feedback
+- PhasedExecutor (codex) provides automatic feedback after every task
+
+---
+
+## DIRECTIVE: EASY DEPLOYMENT
+
+**Update god-agent on any machine:**
+```bash
+npm run update              # Local: git pull + rebuild
+bash scripts/update.sh      # Same thing, explicit
+
+# Remote server
+bash scripts/deploy-remote.sh user@host /path/to/god-agent
+```
+
+---
+
 ## DIRECTIVE: HOUSEKEEPING
 
 **Clean temp directories proactively:**
@@ -978,9 +1044,10 @@ TELEGRAM_BOT_TOKEN=... node dist/telegram/standalone.js  # Standalone
 
 ## DESIGN PRINCIPLES
 
-1. **Autonomous First** - Decides independently, escalates only when blocked
-2. **Self-Healing** - Analyzes failures, tries alternatives, learns
-3. **Provenance** - Every entry has L-Score reliability
-4. **Multi-Channel** - 6 channels, 5min timeout each, auto-fallback
-5. **Deep Work** - Batches notifications, minimizes interruptions
-6. **IDE Powers** - LSP, Git, AST, profiling built-in
+1. **Memory First** - Always query memory (`god_query`/`god_query_expanded`) before starting any task. Prior context, patterns, and decisions inform every action
+2. **Autonomous First** - Decides independently, escalates only when blocked
+3. **Self-Healing** - Analyzes failures, tries alternatives, learns
+4. **Provenance** - Every entry has L-Score reliability
+5. **Multi-Channel** - 6 channels, 5min timeout each, auto-fallback
+6. **Deep Work** - Batches notifications, minimizes interruptions
+7. **IDE Powers** - LSP, Git, AST, profiling built-in

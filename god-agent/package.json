@@ -15,7 +15,8 @@
     "launch:daemon": "node dist/launch/daemon.js",
     "launch:webhooks": "node dist/launch/webhooks.js",
     "assimilate": "node dist/cli/index.js assimilate",
-    "clean:temp": "node scripts/clean-temp.cjs"
+    "clean:temp": "node scripts/clean-temp.cjs",
+    "update": "bash scripts/update.sh"
   },
   "keywords": [
     "ai",
