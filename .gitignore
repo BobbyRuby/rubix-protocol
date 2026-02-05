@@ -29,14 +29,23 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Local config (keep examples)
+# Local config (keep examples, ignore actual configs with credentials)
+.claude/mcp.json
+god-agent/.claude/mcp.json
 god-agent/data/
+god-agent/site/
 
 # Runtime files
 god-agent/god-agent.pid
+
+# Development environment (working copy)
+god-agent-dev/
 
 # Temp
 nul
 
 tmpclaude-*-cwd/
 **/tmpclaude-*-cwd/
+
+# Invoice tool - real pricing config (internal use only)
+**/config-moezaick.xlsx

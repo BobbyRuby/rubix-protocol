@@ -1051,3 +1051,19 @@ TELEGRAM_BOT_TOKEN=... node dist/telegram/standalone.js  # Standalone
 5. **Multi-Channel** - 6 channels, 5min timeout each, auto-fallback
 6. **Deep Work** - Batches notifications, minimizes interruptions
 7. **IDE Powers** - LSP, Git, AST, profiling built-in
+
+---
+
+## DIRECTIVE: SKILLS AWARENESS
+
+Available skills (invoke or suggest proactively):
+- `/recall` — Load memories at session start (MANDATORY)
+- `/scsp` — Store session progress. Suggest before long sessions end.
+- `/stm` — Store specific messages as memory. Suggest when significant decisions are made.
+- `/learn-style` — Learn user preferences. Run periodically or when corrected.
+- `/skills` — List all skills.
+
+Self-invoke `/scsp` when:
+- Session has been productive (multiple changes made)
+- User says goodbye or seems to be wrapping up
+- Major milestone completed
