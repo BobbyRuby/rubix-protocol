@@ -122,6 +122,11 @@ async function main(): Promise<void> {
   // 5. Webhook Server
   const webhookPort = parseInt(process.env.WEBHOOK_PORT || '3456', 10);
   const webhooks = new WebhookServer(webhookPort);
+
+  // Wire MemoryEngine + CommunicationManager for API endpoints
+  webhooks.setMemoryEngine(engine);
+  webhooks.setCommunicationManager(comms);
+
   await webhooks.start();
   services.push({ name: 'Webhook Server', stop: () => webhooks.stop() });
   console.log(`[Launch] Webhook server started on port ${webhookPort}`);

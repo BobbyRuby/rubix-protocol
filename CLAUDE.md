@@ -552,6 +552,45 @@ god_session_store({
 
 ---
 
+## DIRECTIVE: Q-SCORE FEEDBACK (MANDATORY)
+
+When recalled memories are injected via `[LEARNING]` context:
+1. After using recalled memories in your response, ask the user to rate them
+2. Use `god_comms_escalate` with type "decision" to ask:
+   - Title: "Rate Recalled Memories"
+   - Message: list the recalled memories with numbers
+   - Options: 0-10 scale buttons (or free text)
+3. Map user rating: `god_learn(trajectoryId=<id>, quality=rating/10, memrlQueryId=<id>)`
+4. Hybrid rating: default rates entire batch; if user says "expand" or gives per-item ratings (e.g., "#1: 8, #3: 2"), call `god_learn` per-entry
+5. Don't ask for ratings on every prompt — batch them. Ask after:
+   - 3+ unrated recall batches accumulate
+   - End of a significant task/milestone
+   - User explicitly asks to rate (`/rate`)
+
+---
+
+## DIRECTIVE: AFK MODE (REMOTE CONTROL)
+
+**AFK mode turns Telegram into a full remote control for Claude Code.**
+
+When AFK is active (`god_afk action="on"` or `/afk` in Telegram):
+- **All** tool permission requests route through Telegram (Allow/Deny buttons)
+- **All** questions and escalations route through Telegram
+- **All** notifications forward to Telegram
+- User can walk away from keyboard and control Claude entirely from phone
+
+When AFK is OFF (default):
+- Everything stays in CLI (normal operation)
+- `god_comms_escalate` routes to AskUserQuestion
+- Permission hooks exit immediately
+
+**Toggle via:**
+- Telegram: `/afk` command
+- MCP: `god_afk action="toggle"`
+- API: `POST http://localhost:3456/api/afk`
+
+---
+
 ## DIRECTIVE: EASY DEPLOYMENT
 
 **Update god-agent on any machine:**

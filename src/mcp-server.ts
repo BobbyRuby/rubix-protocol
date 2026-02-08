@@ -14,7 +14,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { readdirSync, copyFileSync, existsSync, mkdirSync } from 'fs';
+import { readdirSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 
 import { MemoryEngine, MemorySource, CausalRelationType, ReasoningRoute } from './index.js';
@@ -3456,6 +3456,35 @@ const TOOLS: Tool[] = [
     }
   },
 
+  {
+    name: 'god_afk',
+    description: `Read or toggle AFK (Away From Keyboard) mode.
+
+    When AFK is ON, all interactions route through Telegram:
+    - Tool permission requests (Allow/Deny buttons)
+    - Questions and escalations
+    - Notifications
+
+    When AFK is OFF, everything stays in CLI (normal operation).
+
+    Actions:
+    - "status": Check current AFK state (default)
+    - "toggle": Toggle AFK on/off
+    - "on": Force AFK on
+    - "off": Force AFK off`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['status', 'toggle', 'on', 'off'],
+          description: 'Action to perform (default: status)'
+        }
+      },
+      required: []
+    }
+  },
+
   // ==========================================
   // Curiosity Tools
   // ==========================================
@@ -4802,6 +4831,8 @@ This is project-specific context that persists across sessions.`;
             return await this.handleCommsSetup(args);
           case 'god_comms_escalate':
             return await this.handleCommsEscalate(args);
+          case 'god_afk':
+            return await this.handleAfk(args);
 
           // Curiosity Tools
           case 'god_curiosity_list':
@@ -10764,8 +10795,40 @@ god_comms_setup mode="set" channel="email" config={
       };
     }
 
-    // Daemon is running - proceed with normal escalation
-    console.log(`[MCP] Daemon detected (${daemonStatus.method}), proceeding with escalation`);
+    // Daemon is running — check AFK state to decide routing
+    const afkState = this.readAfkState();
+
+    if (!afkState.afk) {
+      // Daemon running but user is at keyboard — route to CLI
+      const atKeyboardResponse: EscalationFallbackResponse = {
+        success: false,
+        daemonRequired: true,
+        fallbackAction: 'ask_user_question',
+        question: {
+          title: input.title,
+          message: input.message,
+          type: input.type,
+          options: input.options
+        },
+        instructions: 'User is at keyboard (AFK mode OFF). Use AskUserQuestion tool with the above question data.',
+        detectionDetails: {
+          method: daemonStatus.method,
+          details: 'Daemon running but AFK mode is OFF — routing to CLI'
+        }
+      };
+
+      console.log(`[MCP] Daemon detected but AFK OFF — routing to CLI (at_keyboard)`);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ ...atKeyboardResponse, routingReason: 'at_keyboard' }, null, 2)
+        }]
+      };
+    }
+
+    // AFK mode is ON — proceed with Telegram escalation
+    console.log(`[MCP] Daemon detected + AFK ON (${daemonStatus.method}), proceeding with Telegram escalation`);
 
     const comms = this.getCommunicationManager();
 
@@ -10833,6 +10896,76 @@ god_comms_setup mode="set" channel="email" config={
         }]
       };
     }
+  }
+
+  // ==========================================
+  // AFK Mode Handler
+  // ==========================================
+
+  private getAfkStatePath(): string {
+    return join(process.cwd(), 'data', 'afk-state.json');
+  }
+
+  private readAfkState(): { afk: boolean; since: string | null } {
+    try {
+      const p = this.getAfkStatePath();
+      if (existsSync(p)) {
+        return JSON.parse(readFileSync(p, 'utf8'));
+      }
+    } catch {
+      // ignore
+    }
+    return { afk: false, since: null };
+  }
+
+  private writeAfkState(state: { afk: boolean; since: string | null }): void {
+    const p = this.getAfkStatePath();
+    const dir = dirname(p);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(p, JSON.stringify(state, null, 2));
+  }
+
+  private async handleAfk(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = args as { action?: 'status' | 'toggle' | 'on' | 'off' };
+    const action = input.action || 'status';
+    const current = this.readAfkState();
+
+    if (action === 'status') {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(current, null, 2)
+        }]
+      };
+    }
+
+    let newAfk: boolean;
+    if (action === 'on') {
+      newAfk = true;
+    } else if (action === 'off') {
+      newAfk = false;
+    } else {
+      // toggle
+      newAfk = !current.afk;
+    }
+
+    const newState = {
+      afk: newAfk,
+      since: newAfk ? new Date().toISOString() : null
+    };
+
+    this.writeAfkState(newState);
+
+    const statusMsg = newAfk
+      ? 'AFK mode ON — all interactions will route through Telegram'
+      : 'AFK mode OFF — interactions return to CLI';
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ ...newState, message: statusMsg }, null, 2)
+      }]
+    };
   }
 
   // Deep Work Mode Handlers (Stage 8)

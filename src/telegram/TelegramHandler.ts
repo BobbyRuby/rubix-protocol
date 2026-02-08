@@ -1,5 +1,5 @@
 import TelegramBotAPI from 'node-telegram-bot-api';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { resolve, normalize } from 'path';
 import { TelegramMessage, TaskRequest } from './types.js';
@@ -361,6 +361,8 @@ export class TelegramHandler {
       await this.handleWhereAmICommand(chatId, bot);
     } else if (text === '/exit') {
       await this.handleExitCommand(msg, bot);
+    } else if (text === '/afk') {
+      await this.handleAfkCommand(msg, bot, chatId);
     } else if (text === '/conversation' || text.startsWith('/conversation ')) {
       await this.handleConversationCommand(msg, bot);
     } else {
@@ -1175,6 +1177,55 @@ All messages require an active mode. Use:
       `✅ Exited ${currentMode} mode.\n\n` +
       'Use /plan, /task, or /conversation to start a new session.'
     );
+  }
+
+  /**
+   * Handle /afk command — toggle AFK mode.
+   * When AFK, all Claude Code interactions route through Telegram.
+   */
+  private async handleAfkCommand(_msg: TelegramMessage, bot: TelegramBotAPI, chatId: number): Promise<void> {
+    const afkPath = resolve(process.cwd(), 'data', 'afk-state.json');
+    let current = { afk: false, since: null as string | null };
+
+    try {
+      if (existsSync(afkPath)) {
+        current = JSON.parse(readFileSync(afkPath, 'utf8'));
+      }
+    } catch {
+      // ignore
+    }
+
+    const newAfk = !current.afk;
+    const newState = {
+      afk: newAfk,
+      since: newAfk ? new Date().toISOString() : null
+    };
+
+    try {
+      const dir = resolve(process.cwd(), 'data');
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      writeFileSync(afkPath, JSON.stringify(newState, null, 2));
+    } catch (err) {
+      await bot.sendMessage(chatId, `Failed to update AFK state: ${err}`);
+      return;
+    }
+
+    if (newAfk) {
+      await bot.sendMessage(chatId,
+        '🚶 AFK mode ON\n\n' +
+        'All Claude Code interactions will now route through Telegram:\n' +
+        '• Tool permission requests (Allow/Deny)\n' +
+        '• Questions and escalations\n' +
+        '• Notifications\n\n' +
+        'Send /afk again to turn off.'
+      );
+    } else {
+      const since = current.since ? new Date(current.since).toLocaleString() : 'unknown';
+      await bot.sendMessage(chatId,
+        `⌨️ AFK mode OFF (was AFK since ${since})\n\n` +
+        'Claude Code interactions will return to normal CLI mode.'
+      );
+    }
   }
 
   /**
