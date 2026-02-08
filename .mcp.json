@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "rubix": {
-      "command": "node",
-      "args": ["D:\\rubix-protocol\\god-agent\\dist\\mcp-server.js"],
-      "cwd": "D:\\rubix-protocol\\god-agent"
-    }
-  }
-}

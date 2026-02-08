@@ -1,0 +1,408 @@
+================================================================================
+                         GOD-AGENT / RUBIX USER GUIDE
+================================================================================
+
+RUBIX is an autonomous AI agent system with multiple deployment modes.
+Double-click any .bat file to start the corresponding service.
+
+Press Ctrl+C to stop any running service.
+
+================================================================================
+                              LAUNCHERS
+================================================================================
+
+LAUNCH.BAT - Full Stack
+-----------------------
+Starts ALL services at once:
+  - MemoryEngine (vector database + provenance tracking)
+  - CODEX (autonomous code generation)
+  - Telegram Bot (if TELEGRAM_BOT_TOKEN is set)
+  - Scheduler Daemon (cron jobs, event triggers)
+  - Webhook Server (port 3456)
+  - Notification Service
+  - Communication Manager
+
+Use when: You want everything running together.
+
+
+LAUNCH-TELEGRAM.BAT - Telegram Bot + CODEX
+------------------------------------------
+Starts the Telegram bot connected to CODEX for mobile control.
+
+Telegram Commands:
+  /start              - Confirm bot is alive, show welcome
+  /help               - Show available commands
+  /task <description> - Submit a task to CODEX
+                        Example: /task Create a hello world React component
+  /status             - Check if a task is running and its progress
+  /wait               - Extend escalation timeout by 10 minutes
+
+Use when: You want to control CODEX from your phone via Telegram.
+Bot: @RubixProtocolBot
+
+
+LAUNCH-DAEMON.BAT - Scheduler Daemon
+------------------------------------
+Runs background tasks on schedules or triggers.
+
+Trigger Types:
+  - datetime : Execute at a specific time (ISO format)
+  - cron     : Recurring schedule (cron syntax: "0 9 * * 1-5" = 9am weekdays)
+  - event    : Execute when a named event is fired
+  - file     : Execute when a file changes
+  - manual   : Only runs when manually triggered
+
+Use when: You want automated background tasks without Telegram.
+
+
+LAUNCH-WEBHOOKS.BAT - Webhook Server Only
+-----------------------------------------
+Runs ONLY the webhook HTTP server on port 3456.
+No MemoryEngine, no CODEX - completely standalone.
+
+Endpoints:
+  POST http://localhost:3456/webhooks/sms     - Receive SMS callbacks
+  POST http://localhost:3456/webhooks/slack   - Receive Slack interactions
+  POST http://localhost:3456/webhooks/discord - Receive Discord interactions
+  POST http://localhost:3456/webhooks/phone   - Receive phone call callbacks
+  GET  http://localhost:3456/health           - Health check (returns 200 OK)
+
+Use when: You only need to receive webhook callbacks from external services.
+
+
+================================================================================
+                          ENVIRONMENT VARIABLES
+================================================================================
+
+Required variables are set in the .env file in this directory.
+
+OPENAI_API_KEY        - Required for embeddings (memory search)
+ANTHROPIC_API_KEY     - Required for CODEX code generation
+TELEGRAM_BOT_TOKEN    - Required for Telegram bot
+TELEGRAM_CHAT_ID      - Required for Telegram escalation channel
+GOD_AGENT_DATA_DIR    - Data directory (default: ./data)
+WEBHOOK_PORT          - Webhook server port (default: 3456)
+
+Optional:
+SLACK_WEBHOOK_URL     - For Slack notifications
+DISCORD_WEBHOOK_URL   - For Discord notifications
+TELEGRAM_ALLOWED_USERS - Comma-separated user IDs to restrict access
+RUBIX_MODEL           - Claude model (default: claude-opus-4-5-20250514)
+RUBIX_MAX_PARALLEL    - Parallel department heads (default: 5)
+RUBIX_ULTRATHINK      - Enable extended thinking (default: true)
+
+
+================================================================================
+                        RUBIX DEPARTMENT SYSTEM
+================================================================================
+
+RUBIX uses a 5-department organizational structure:
+
+                    +----------------+
+                    |     CLAUDE     |
+                    | (Head of Ops)  |
+                    +-------+--------+
+                            |
+        +--------+----------+----------+--------+
+        v        v          v          v        v
+  RESEARCHER  ARCHITECT  ENGINEER  VALIDATOR  GUARDIAN
+   (Discovery) (Design)  (Build)   (Quality)  (Reliability)
+
+Departments run in phases:
+  Phase 1: RESEARCHER - Analyze codebase, find patterns
+  Phase 2: ARCHITECT - Design solution structure
+  Phase 3: ENGINEER - Write code (parallel per file)
+  Phase 4: VALIDATOR + GUARDIAN - Test & review in parallel
+
+
+================================================================================
+                             CODEX CAPABILITIES
+================================================================================
+
+When you submit a task via Telegram (/task) or programmatically, CODEX:
+
+1. DECOMPOSES the task into subtasks:
+   - research   : Analyze existing codebase
+   - design     : Plan the architecture
+   - code       : Generate/modify code files
+   - test       : Write and run tests
+   - integrate  : Wire components together
+   - verify     : Browser verification (if URL provided)
+   - review     : Code quality check
+
+2. EXECUTES each subtask with up to 3 attempts:
+   - Attempt 1: Standard approach
+   - Attempt 2: Alternative approach + learning suggestions
+   - Attempt 3: Ultrathink mode (extended thinking, 16K budget)
+
+3. SELF-HEALS on failure:
+   - Analyzes error patterns
+   - Queries memory for similar past failures
+   - Tries alternative approaches
+
+4. ESCALATES only when genuinely blocked:
+   - Sends notification via Telegram
+   - Falls back through: Telegram -> Phone -> SMS -> Slack -> Discord -> Email
+
+
+================================================================================
+                          MEMORY SYSTEM (NEW)
+================================================================================
+
+RUBIX uses a compressed memory architecture for efficiency.
+
+Storage:
+  - ALL content is compressed to positional tokens
+  - Machine stores tokens, humans get decoded output
+  - 13 memory types with specialized compression schemas
+
+Memory Types:
+  - component     : RUBIX components (TaskExecutor, MemoryEngine, etc.)
+  - department    : RUBIX departments (RESEARCHER, ARCHITECT, etc.)
+  - mcp_tool      : MCP tool definitions (god_store, god_query, etc.)
+  - capability    : IDE capabilities (LSP, Git, AST, etc.)
+  - workflow      : Execution workflows (self_heal, decompose, etc.)
+  - config        : Configuration settings
+  - error_pattern : Common error patterns and fixes
+  - success_pattern : Successful approaches
+  - bug_fix       : Bug documentation with lessons learned
+  - dev_feature   : Feature implementations
+  - arch_insight  : Architecture lessons and patterns
+  - system        : System-level information
+  - generic       : Freeform content (auto-compressed)
+
+Querying:
+  - god_query         : Returns raw compressed tokens (for machines)
+  - god_query_expanded: Returns human-readable decoded output
+
+
+================================================================================
+                       SELF-KNOWLEDGE SYSTEM (NEW)
+================================================================================
+
+RUBIX can query its own architecture and capabilities:
+
+  god_self_query({ question: "What is TaskExecutor?" })
+  god_self_query({ question: "What departments does RUBIX have?" })
+  god_self_query({ question: "How does the memory system work?" })
+
+Output Formats:
+  - tokens   : Raw token format (efficient)
+  - readable : Human-readable summary (default)
+  - full     : Detailed formatted output
+
+Check bootstrap status:
+  god_bootstrap_status()              # Check if self-knowledge is loaded
+  god_bootstrap_status({ runBootstrap: true })  # Force reload
+
+
+================================================================================
+                       CURIOSITY SYSTEM (NEW)
+================================================================================
+
+RUBIX has an autonomous curiosity system that generates learning probes:
+
+Probe Origins (priority order):
+  - failure (1.0)            : Generated from task failures
+  - low_confidence (0.7)     : From uncertain decisions
+  - knowledge_gap (0.5)      : Detected missing knowledge
+  - success_confirmation (0.2): Verify what worked
+
+Commands:
+  god_curiosity_list()        # List pending/resolved probes
+  god_curiosity_explore()     # Run top-priority probe
+  god_budget_status()         # Check weekly token budget
+  god_budget_history()        # View exploration history
+
+Budget: 100K tokens/week, 3:1 ratio (high:moderate priority)
+
+
+================================================================================
+                            MCP TOOLS (90+)
+================================================================================
+
+Memory:
+  god_store              - Store with auto-compression
+  god_query              - Semantic search (raw tokens)
+  god_query_expanded     - Semantic search (human readable)
+  god_edit               - Edit existing entry
+  god_delete             - Delete entry
+  god_trace              - Trace provenance (L-Score)
+  god_stats              - Memory statistics
+  god_checkpoint         - Create database checkpoint
+
+Compression:
+  god_self_query         - Query RUBIX self-knowledge
+  god_compression_stats  - Compression statistics
+  god_bootstrap_status   - Bootstrap status
+
+Curiosity:
+  god_curiosity_list     - List probes
+  god_curiosity_explore  - Run exploration
+  god_budget_status      - Budget remaining
+  god_budget_history     - Exploration history
+
+Causal:
+  god_causal             - Create causal relation
+  god_find_paths         - Find causal paths
+  god_cleanup_expired    - Clean expired relations
+
+Learning:
+  god_learn              - Provide feedback
+  god_learning_stats     - Learning statistics
+  god_prune_patterns     - Prune bad patterns
+
+Routing:
+  god_route              - Route query to strategy
+  god_route_result       - Record route result
+  god_routing_stats      - Routing statistics
+  god_circuit_status     - Circuit breaker status
+  god_reset_circuit      - Reset circuit breaker
+
+CODEX:
+  god_codex_do           - Submit task
+  god_codex_status       - Check status
+  god_codex_cancel       - Cancel task
+  god_codex_answer       - Answer escalation
+  god_codex_decision     - Make decision
+  god_codex_log          - View work log
+  god_codex_wait         - Extend timeout
+
+Deep Work:
+  god_deepwork_start     - Start focus session
+  god_deepwork_pause     - Pause session
+  god_deepwork_resume    - Resume session
+  god_deepwork_status    - Session status
+  god_deepwork_checkpoint- Create checkpoint
+  god_deepwork_log       - Session log
+
+Playwright:
+  god_pw_launch          - Launch browser
+  god_pw_close           - Close browser
+  god_pw_navigate        - Navigate to URL
+  god_pw_screenshot      - Take screenshot
+  god_pw_action          - Perform action
+  god_pw_assert          - Assert element state
+  god_pw_console         - Get console logs
+  god_pw_verify          - Quick verification
+
+Code Review:
+  god_review             - Full review
+  god_quick_review       - Quick pre-commit
+  god_security_review    - Security scan
+  god_review_config      - Configure review
+
+Configuration:
+  god_config_get         - Get config
+  god_config_set         - Set config
+  god_config_load        - Load from file
+  god_config_save        - Save to file
+  god_config_reset       - Reset to defaults
+
+Notification:
+  god_notify             - Send notification
+  god_notify_slack       - Configure Slack
+  god_notify_discord     - Configure Discord
+  god_notify_preferences - Set preferences
+  god_notify_test        - Test notifications
+  god_notify_history     - View history
+
+Communication:
+  god_comms_setup        - Setup channels
+  god_comms_escalate     - Trigger escalation
+
+Failure Memory:
+  god_failure_record     - Record failure
+  god_failure_query      - Find similar failures
+  god_failure_resolve    - Mark resolved
+  god_failure_stats      - Failure statistics
+
+Partner:
+  god_partner_config     - Configure partner
+  god_partner_challenge  - Challenge approach
+  god_partner_status     - Partner status
+
+Containment:
+  god_containment_check  - Check path permission
+  god_containment_config - Configure containment
+  god_containment_add_rule    - Add rule
+  god_containment_remove_rule - Remove rule
+  god_containment_status - View status
+  god_containment_session- Session permissions
+
+
+================================================================================
+                            TROUBLESHOOTING
+================================================================================
+
+"OPENAI_API_KEY environment variable is required"
+  -> Check your .env file has OPENAI_API_KEY set
+
+"ANTHROPIC_API_KEY not set - CODEX in simulation mode"
+  -> CODEX won't generate real code without ANTHROPIC_API_KEY
+
+"SqliteError: no such column"
+  -> Database schema mismatch. Delete ./data/memory.db and restart.
+
+Telegram bot not responding:
+  -> Check TELEGRAM_BOT_TOKEN is correct
+  -> Make sure no other instance is running (only one can poll)
+
+Webhook server won't start:
+  -> Port 3456 may be in use. Set WEBHOOK_PORT to another port.
+
+Service crashes immediately:
+  -> Run from command prompt to see error messages:
+     cd D:\rubix-protocol
+     npm run launch:telegram
+
+Memory compression errors:
+  -> Run god_bootstrap_status({ runBootstrap: true }) to reload schemas
+
+
+================================================================================
+                              HOUSEKEEPING
+================================================================================
+
+Temp Directory Cleanup:
+  Claude Code creates tmpclaude-*-cwd directories during execution.
+  These get left behind when sessions crash or are force-killed.
+
+  Clean temp directories:
+    npm run clean:temp
+
+  Or dry-run to preview:
+    node scripts/clean-temp.cjs --dry-run
+
+  RUBIX automatically cleans these at session start.
+
+
+================================================================================
+                              FILE LOCATIONS
+================================================================================
+
+Batch Files:     D:\rubix-protocol\*.bat
+Source Code:     D:\rubix-protocol\src\
+Compiled:        D:\rubix-protocol\dist\
+Configuration:   D:\rubix-protocol\.env
+Database:        D:\rubix-protocol\data\memory.db
+Documentation:   D:\rubix-protocol\CLAUDE.md
+This Help:       D:\rubix-protocol\HELP.txt
+
+
+================================================================================
+                               QUICK START
+================================================================================
+
+1. Double-click launch-telegram.bat
+2. Open Telegram and message @RubixProtocolBot
+3. Send: /start
+4. Send: /task Create a hello world function in TypeScript
+5. Watch CODEX work!
+
+Or via MCP in Claude Code:
+1. Ensure .claude/mcp.json is configured
+2. Use: god_codex_do({ description: "Build a calculator", codebase: "." })
+3. Monitor: god_codex_status()
+
+================================================================================

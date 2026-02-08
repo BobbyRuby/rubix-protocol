@@ -4,7 +4,7 @@ node_modules/
 # Environment files
 .env
 .env.local
-.env.*.local
+.env.*local
 
 # Build output
 dist/
@@ -29,23 +29,25 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Local config (keep examples, ignore actual configs with credentials)
-.claude/mcp.json
-god-agent/.claude/mcp.json
-god-agent/data/
-god-agent/site/
+# Runtime / local data
+data/
+site/
+god-agent.pid
 
-# Runtime files
-god-agent/god-agent.pid
-
-# Development environment (working copy)
-god-agent-dev/
+# Secrets / local config
+.mcp.json
+.claude/settings.local.json
+.claude/cloud-servers.json
 
 # Temp
 nul
-
 tmpclaude-*-cwd/
 **/tmpclaude-*-cwd/
 
-# Invoice tool - real pricing config (internal use only)
+# Invoice tool
 **/config-moezaick.xlsx
+invoice-generator/
+install.sh
+
+# Development environment (working copy)
+god-agent-dev/

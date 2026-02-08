@@ -1,7 +1,0 @@
-invoice-generator/
-install.sh
-
-# Secrets / local config
-.mcp.json
-.claude/settings.local.json
-.claude/cloud-servers.json

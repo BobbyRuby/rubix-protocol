@@ -1,0 +1,87 @@
+{
+  "mcpServers": {
+    "rubix-core-brain": {
+      "comment": "Shared knowledge base - accumulates cross-project skills and patterns",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/core-brain",
+        "RUBIX_PROJECT_ROOT": "D:\\rubix-protocol",
+        "RUBIX_PROJECT_NAME": "Rubix Core Brain"
+      }
+    },
+    "rubix-backend-api": {
+      "comment": "Backend API project - queries local memory + core brain for skills",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/backend-api",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\backend-api",
+        "RUBIX_PROJECT_NAME": "Backend API",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    },
+    "rubix-frontend": {
+      "comment": "Frontend project - queries local memory + core brain for skills",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/frontend",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\frontend-app",
+        "RUBIX_PROJECT_NAME": "Frontend App",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    },
+    "rubix-mobile": {
+      "comment": "Mobile project - queries local memory + core brain for skills",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/mobile",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\mobile-app",
+        "RUBIX_PROJECT_NAME": "Mobile App",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    },
+    "rubix-infra": {
+      "comment": "Infrastructure project - queries local memory + core brain for skills",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/infra",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\infrastructure",
+        "RUBIX_PROJECT_NAME": "Infrastructure",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    },
+    "rubix-docs": {
+      "comment": "Documentation project - queries local memory + core brain for skills",
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "D:\\rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/docs",
+        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\documentation",
+        "RUBIX_PROJECT_NAME": "Documentation Site",
+        "RUBIX_CORE_BRAIN_DATA_DIR": "./data/core-brain"
+      }
+    }
+  }
+}

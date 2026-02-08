@@ -1,102 +1,87 @@
 #!/usr/bin/env node
 /**
- * Self-cleaning script for tmpclaude-* temporary entries (files and directories)
+ * Temp Directory/File Cleanup Script
  *
- * These are created by Claude Code during execution and should be
- * cleaned up automatically, but can get left behind when sessions crash or
- * are force-killed.
+ * Claude Code creates `tmpclaude-*-cwd` entries during execution.
+ * These should auto-cleanup but get left behind when sessions crash or are force-killed.
  *
  * Usage:
- *   node scripts/clean-temp.cjs           # Clean temp entries
- *   node scripts/clean-temp.cjs --dry-run # Show what would be deleted
- *   npm run clean:temp                    # Via npm script
+ *   node scripts/clean-temp.cjs           # Delete temp entries
+ *   node scripts/clean-temp.cjs --dry-run # Preview what would be deleted
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const DRY_RUN = process.argv.includes('--dry-run');
-const ROOT_DIR = path.resolve(__dirname, '..');
+const dryRun = process.argv.includes('--dry-run');
+const projectRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(__dirname, '../..');
 
-const TEMP_PATTERNS = [
-  /^tmpclaude-[a-f0-9]+-cwd$/,
-];
+const entriesToClean = [];
 
+/**
+ * Recursively find tmpclaude-*-cwd entries (files or directories).
+ * @param {string} dir - Directory to search
+ * @param {number} depth - Current depth (limit to 2)
+ */
 function findTempEntries(dir, depth = 0) {
-  if (depth > 2) return []; // Don't recurse too deep
-
-  const found = [];
+  if (depth > 2) return;
 
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
 
     for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      // Check if this entry matches temp patterns (files OR directories)
-      if (TEMP_PATTERNS.some(pattern => pattern.test(entry.name))) {
-        found.push({ path: fullPath, isDir: entry.isDirectory() });
-      } else if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'dist' && entry.name !== '.git') {
-        // Recurse into subdirectories (except node_modules, dist, .git)
-        found.push(...findTempEntries(fullPath, depth + 1));
+      // Match tmpclaude-XXXX-cwd pattern (hex chars of any length)
+      if (entry.name.match(/^tmpclaude-[a-f0-9]{4,}-cwd$/)) {
+        entriesToClean.push({
+          path: path.join(dir, entry.name),
+          isDirectory: entry.isDirectory()
+        });
+      } else if (entry.isDirectory() && depth < 2 && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+        // Recurse into subdirectories (skip hidden dirs and node_modules)
+        findTempEntries(path.join(dir, entry.name), depth + 1);
       }
     }
-  } catch (err) {
+  } catch (e) {
     // Ignore permission errors
   }
-
-  return found;
 }
 
-function rmrf(dir) {
-  if (!fs.existsSync(dir)) return;
+// Search from repo root
+findTempEntries(repoRoot);
 
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      rmrf(fullPath);
-    } else {
-      fs.unlinkSync(fullPath);
-    }
-  }
-
-  fs.rmdirSync(dir);
+if (entriesToClean.length === 0) {
+  console.log('No temp entries found.');
+  process.exit(0);
 }
 
-function main() {
-  console.log('Scanning for temporary Claude Code entries...\n');
+console.log(`Found ${entriesToClean.length} temp entries:`);
+entriesToClean.forEach(e => console.log(`  ${e.isDirectory ? '[DIR]' : '[FILE]'} ${e.path}`));
 
-  const tempEntries = findTempEntries(ROOT_DIR);
+if (dryRun) {
+  console.log('\nDry run - no entries deleted.');
+} else {
+  let deleted = 0;
+  let failed = 0;
 
-  if (tempEntries.length === 0) {
-    console.log('No temporary entries found.');
-    return;
-  }
-
-  console.log(`Found ${tempEntries.length} temporary entr${tempEntries.length === 1 ? 'y' : 'ies'}:\n`);
-
-  for (const entry of tempEntries) {
-    const relativePath = path.relative(ROOT_DIR, entry.path);
-
-    if (DRY_RUN) {
-      console.log(`  [DRY RUN] Would delete: ${relativePath} (${entry.isDir ? 'dir' : 'file'})`);
-    } else {
-      try {
-        if (entry.isDir) {
-          rmrf(entry.path);
-        } else {
-          fs.unlinkSync(entry.path);
-        }
-        console.log(`  Deleted: ${relativePath}`);
-      } catch (err) {
-        console.error(`  Failed to delete ${relativePath}: ${err.message}`);
+  for (const e of entriesToClean) {
+    try {
+      if (e.isDirectory) {
+        fs.rmSync(e.path, { recursive: true, force: true });
+      } else {
+        fs.unlinkSync(e.path);
       }
+      console.log(`Deleted: ${e.path}`);
+      deleted++;
+    } catch (err) {
+      console.error(`Failed to delete: ${e.path} - ${err.message}`);
+      failed++;
     }
   }
 
-  console.log('\nDone.');
+  console.log(`\nCleaned ${deleted} entries.`);
+  if (failed > 0) {
+    console.log(`Failed to clean ${failed} entries.`);
+    process.exit(1);
+  }
 }
-
-main();

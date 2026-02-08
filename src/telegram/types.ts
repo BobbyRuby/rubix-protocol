@@ -1,41 +1,36 @@
-import { Message, Update, CallbackQuery, InlineQuery } from 'node-telegram-bot-api';
-
-export interface TelegramContext {
-  update: Update;
-  message?: Message;
-  callbackQuery?: CallbackQuery;
-  inlineQuery?: InlineQuery;
+export interface TelegramMessage {
+  message_id: number;
+  from?: {
+    id: number;
+    is_bot: boolean;
+    first_name: string;
+    username?: string;
+  };
+  chat: {
+    id: number;
+    type: string;
+    first_name?: string;
+    username?: string;
+  };
+  date: number;
+  text?: string;
 }
 
-export interface BotCommand {
-  command: string;
-  description: string;
-  handler: (ctx: TelegramContext) => Promise<void>;
+export interface TelegramUpdate {
+  update_id: number;
+  message?: TelegramMessage;
 }
 
-export interface BotConfig {
+export interface TelegramBotConfig {
   token: string;
+  allowedUsers?: number[];
   webhookUrl?: string;
-  polling?: boolean;
 }
 
-export interface UserSession {
+export interface TaskRequest {
+  id: string;
+  description: string;
   userId: number;
   chatId: number;
-  username?: string;
-  state?: any;
-  lastActivity: Date;
-}
-
-// Dark Fantasy themed types for zombie integration
-export interface DarkFantasyUpdate {
-  type: 'zombie_spawn' | 'zombie_move' | 'zombie_attack';
-  position: { x: number; y: number };
-  animation?: string;
-  damage?: number;
-}
-
-export interface ZombieCommand extends BotCommand {
-  zombieAction?: 'spawn' | 'move' | 'attack' | 'idle';
-  animationTrigger?: string;
+  timestamp: number;
 }
