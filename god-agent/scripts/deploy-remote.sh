@@ -41,4 +41,18 @@ if [ -n "$KEY" ]; then
 fi
 
 echo "=== Deploying to ${HOST}:${REMOTE_PATH} ==="
-ssh $SSH_OPTS "$HOST" "cd ${REMOTE_PATH} && git pull origin main && npm install --production && npm run build && cp src/storage/schema.sql dist/storage/ 2>/dev/null; echo '=== Deploy complete ==='"
+# Find git root on remote (handles god-agent as repo root or subdirectory),
+# pull at root, then build from god-agent directory.
+ssh $SSH_OPTS "$HOST" bash -c "'
+  set -e
+  cd ${REMOTE_PATH}
+  GIT_ROOT=\$(git rev-parse --show-toplevel)
+  echo \"Git root: \$GIT_ROOT\"
+  cd \"\$GIT_ROOT\"
+  git pull origin main
+  cd ${REMOTE_PATH}
+  npm install --production
+  npm run build
+  cp src/storage/schema.sql dist/storage/ 2>/dev/null || true
+  echo \"=== Deploy complete ===\"
+'"
