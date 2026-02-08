@@ -33,11 +33,13 @@ async function main() {
   const cwd = input.cwd || process.cwd();
 
   // Smart skip: trivial or very short prompts
+  const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
+
   if (prompt.length < 10 || TRIVIAL_PATTERN.test(prompt.trim())) {
     // Still output project context for short prompts
     const project = detectProject(cwd);
     if (project) {
-      console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools}`);
+      console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
     }
     return;
   }
@@ -45,7 +47,7 @@ async function main() {
   // Detect project
   const project = detectProject(cwd);
   if (project) {
-    console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools}`);
+    console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
   }
 
   // Query memory — try HTTP fast path first, then CLI fallback
