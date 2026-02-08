@@ -1,0 +1,24 @@
+{
+  "servers": [
+    {
+      "name": "dev-server",
+      "host": "user@192.168.1.10",
+      "path": "/opt/god-agent",
+      "notes": "Development/staging server"
+    },
+    {
+      "name": "prod-1",
+      "host": "deploy@prod.example.com",
+      "path": "/home/deploy/god-agent",
+      "sshKey": "~/.ssh/prod_key",
+      "notes": "Main production server"
+    },
+    {
+      "name": "prod-2",
+      "host": "deploy@prod2.example.com",
+      "path": "/home/deploy/god-agent",
+      "sshKey": "~/.ssh/prod2_key",
+      "notes": "Secondary production - has passphrase, run ssh-add first"
+    }
+  ]
+}
