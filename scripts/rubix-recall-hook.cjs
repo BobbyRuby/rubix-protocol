@@ -22,6 +22,35 @@ const {
   httpPost
 } = require('./rubix-hook-utils.cjs');
 
+/**
+ * Check comms.db for unread messages.
+ * Returns { total, urgent, senders[] } or null if comms.db doesn't exist.
+ */
+function checkCommsInbox(dataDir) {
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = path.join(dataDir, 'comms.db');
+    const fs = require('fs');
+    if (!fs.existsSync(dbPath)) return null;
+
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const total = db.prepare("SELECT COUNT(*) as c FROM messages WHERE status = 'unread'").get();
+      const urgent = db.prepare("SELECT COUNT(*) as c FROM messages WHERE status = 'unread' AND priority >= 2").get();
+      const senders = db.prepare("SELECT DISTINCT from_instance FROM messages WHERE status = 'unread' LIMIT 5").all();
+      return {
+        total: total?.c || 0,
+        urgent: urgent?.c || 0,
+        senders: senders.map(r => r.from_instance)
+      };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 // Trivial prompts that don't need memory recall
 const TRIVIAL_PATTERN = /^(yes|no|ok|y|n|sure|thanks|thank you|continue|go ahead|do it|correct|right|yep|nope|done|good|great|fine|k|ty|thx|please|proceed|confirmed|approved|deny|denied|allow|reject)\b/i;
 
@@ -36,10 +65,20 @@ async function main() {
   const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
 
   if (prompt.length < 10 || TRIVIAL_PATTERN.test(prompt.trim())) {
-    // Still output project context for short prompts
+    // Still output project context + comms check for short prompts
     const project = detectProject(cwd);
     if (project) {
       console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
+    }
+    // Quick comms inbox check even on trivial prompts
+    const mcpCfg = resolveMcpConfig();
+    const dd = (mcpCfg && project) ? (mcpCfg[project.instance]?.dataDir || './data') : './data';
+    const ddResolved = path.isAbsolute(dd) ? dd : path.join(RUBIX_ROOT, dd);
+    const inboxCheck = checkCommsInbox(ddResolved);
+    if (inboxCheck && inboxCheck.total > 0) {
+      const urgTag = inboxCheck.urgent > 0 ? ` (${inboxCheck.urgent} URGENT)` : '';
+      const from = inboxCheck.senders.length > 0 ? ` from: ${inboxCheck.senders.join(', ')}` : '';
+      console.log(`[COMMS] ${inboxCheck.total} unread message(s)${urgTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
     }
     return;
   }
@@ -50,30 +89,65 @@ async function main() {
     console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
   }
 
+  // Check comms inbox for unread messages
+  const mcpConfigForComms = resolveMcpConfig();
+  const commsDataDir = (mcpConfigForComms && project)
+    ? (mcpConfigForComms[project.instance]?.dataDir || './data')
+    : './data';
+  const commsDataDirResolved = path.isAbsolute(commsDataDir)
+    ? commsDataDir
+    : path.join(RUBIX_ROOT, commsDataDir);
+  const inbox = checkCommsInbox(commsDataDirResolved);
+  if (inbox && inbox.total > 0) {
+    const urgentTag = inbox.urgent > 0 ? ` (${inbox.urgent} URGENT)` : '';
+    const from = inbox.senders.length > 0 ? ` from: ${inbox.senders.join(', ')}` : '';
+    console.log(`[COMMS] ${inbox.total} unread message(s)${urgentTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+  }
+
   // Query memory — try HTTP fast path first, then CLI fallback
   const queryText = prompt.substring(0, 500);
   let results = null;
   let learning = null;
+  let styleResults = null;
+  let usedHttpPath = false;
 
-  // Attempt 1: HTTP fast path via daemon
+  // Attempt 1: HTTP fast path via daemon (prompt query + style query in parallel)
   try {
-    const response = await httpPost('http://localhost:3456/api/query', {
+    // Query 1: prompt-based semantic recall (existing)
+    const promptQuery = httpPost('http://localhost:3456/api/query', {
       query: queryText,
       topK: 5,
       minScore: 0.4,
       includeProvenance: true
-    }, 3000); // 3s timeout for HTTP path
+    }, 3000);
 
-    if (response && response.results && response.results.length > 0) {
-      results = response.results;
-      learning = response._learning || null;
+    // Query 2: always_recall / core memories (style, directives, preferences)
+    const styleQuery = httpPost('http://localhost:3456/api/query', {
+      query: 'user working style preferences directives',
+      topK: 5,
+      tags: ['always_recall'],
+      minScore: 0.0,
+      includeProvenance: false
+    }, 3000);
+
+    const [promptResponse, styleResponse] = await Promise.all([promptQuery, styleQuery]);
+
+    if (promptResponse && promptResponse.results && promptResponse.results.length > 0) {
+      results = promptResponse.results;
+      learning = promptResponse._learning || null;
+      usedHttpPath = true;
+    }
+
+    if (styleResponse && styleResponse.results && styleResponse.results.length > 0) {
+      styleResults = styleResponse.results;
+      usedHttpPath = true;
     }
   } catch {
     // HTTP failed, try CLI
   }
 
-  // Attempt 2: CLI fallback
-  if (!results) {
+  // Attempt 2: CLI fallback (prompt query only — style query skipped for performance)
+  if (!results && !usedHttpPath) {
     try {
       const mcpConfig = resolveMcpConfig();
       const instanceConfig = mcpConfig && project ? mcpConfig[project.instance] : null;
@@ -115,7 +189,23 @@ async function main() {
     }
   }
 
-  // Format output
+  // Dedup: remove style entries that already appear in prompt results (by ID)
+  if (styleResults && styleResults.length > 0 && results && results.length > 0) {
+    const promptIds = new Set(results.map(r => r.id));
+    styleResults = styleResults.filter(r => !promptIds.has(r.id));
+  }
+
+  // Format output — style section first, then recalled memories
+  if (styleResults && styleResults.length > 0) {
+    console.log('');
+    console.log(`[STYLE] (${styleResults.length} core memories)`);
+    styleResults.forEach((r, i) => {
+      const tags = r.tags ? ` (tags: ${r.tags.join(', ')})` : '';
+      const content = (r.content || r.entry?.content || '').substring(0, 200).replace(/\n/g, ' ');
+      console.log(`${i + 1}. ${content}${tags}`);
+    });
+  }
+
   if (results && results.length > 0) {
     console.log('');
     console.log(`[RECALLED MEMORIES] (${results.length} results)`);

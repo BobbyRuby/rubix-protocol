@@ -17,6 +17,46 @@ This ensures prior context, decisions, patterns, and project knowledge are avail
 
 ---
 
+## DIRECTIVE: CHECK COMMS INBOX (START OF EVERY SESSION)
+
+**After `/recall`, check for inter-instance messages.**
+
+If the recall hook shows `[COMMS] N unread message(s)`, immediately:
+1. Call `god_comms_heartbeat` with your instance identity (e.g., `instanceId: "instance_1"`)
+2. Call `god_comms_inbox` to read pending messages
+3. Call `god_comms_ack` on messages you've processed
+
+### Inter-Instance Communication Protocol
+
+Instances communicate via shared `comms.db` (NOT memory.db). Use these tools:
+
+| Tool | Purpose |
+|------|---------|
+| `god_comms_heartbeat` | **Required first** — register your identity + presence |
+| `god_comms_send` | Send message to specific instance |
+| `god_comms_broadcast` | Send message to all instances |
+| `god_comms_inbox` | Check your unread messages |
+| `god_comms_read` | Mark message as read, get content |
+| `god_comms_ack` | Mark message as processed |
+| `god_comms_thread` | Get full conversation thread |
+| `god_comms_peers` | List known instances |
+
+### Usage Pattern
+```
+god_comms_heartbeat({ instanceId: "instance_N", role: "orchestrator" })
+god_comms_inbox()  → see unread messages
+god_comms_ack({ messageId: "..." })  → acknowledge processed messages
+god_comms_send({ to: "instance_2", type: "task", subject: "...", payload: {...} })
+```
+
+### Key Rules
+- **Always heartbeat first** — other comms tools require it
+- **Don't store coordination in memory.db** — use comms tools instead
+- **Ack messages after processing** — cleanup runs automatically after 48h
+- **Use threads** — set `threadId` to the original message ID for replies
+
+---
+
 ## DIRECTIVE: PRIMARY PURPOSE
 
 **God-Agent is a development tool for building OTHER software projects.**

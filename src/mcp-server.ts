@@ -39,6 +39,8 @@ import { ConfigurationManager } from './config/index.js';
 import type { CodexConfiguration, PartialCodexConfiguration } from './config/index.js';
 import { CommunicationManager } from './communication/index.js';
 import type { ChannelType, CommunicationConfig, EscalationResponse, EscalationFallbackResponse } from './communication/index.js';
+import { CommsStore } from './communication/CommsStore.js';
+import type { InboxFilters, MessageType, MessagePriority } from './communication/CommsStore.js';
 import { DaemonDetector } from './utils/DaemonDetector.js';
 import { getCodexLLMConfig, getCuriosityConfig } from './core/config.js';
 import { CuriosityTracker } from './curiosity/CuriosityTracker.js';
@@ -3486,6 +3488,161 @@ const TOOLS: Tool[] = [
   },
 
   // ==========================================
+  // Inter-Instance Communication Tools
+  // ==========================================
+
+  {
+    name: 'god_comms_heartbeat',
+    description: `Register this instance's identity and update presence.
+
+    MUST be called before any other god_comms_* tool (except god_comms_peers).
+    Sets the instance ID for the current MCP server process.
+
+    Call periodically to maintain presence in the instance registry.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instanceId: { type: 'string', description: 'Instance identifier (e.g., "instance_1", "instance_2")' },
+        role: { type: 'string', description: 'Instance role (e.g., "orchestrator", "worker")' },
+        metadata: { type: 'object', description: 'Arbitrary JSON metadata about this instance' }
+      },
+      required: ['instanceId']
+    }
+  },
+  {
+    name: 'god_comms_send',
+    description: `Send a message to a specific instance.
+
+    Requires god_comms_heartbeat to be called first.
+    Use god_comms_broadcast for messages to all instances.
+
+    Message types:
+    - task: Assign work to another instance
+    - status: Report progress or completion
+    - question: Ask another instance something
+    - response: Reply to a question
+    - notification: Informational alert
+    - handoff: Transfer responsibility`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient instance ID' },
+        type: {
+          type: 'string',
+          enum: ['task', 'status', 'question', 'response', 'notification', 'handoff'],
+          description: 'Message type'
+        },
+        priority: { type: 'number', enum: [0, 1, 2], description: '0=normal, 1=high, 2=urgent' },
+        subject: { type: 'string', description: 'Short subject line' },
+        payload: { description: 'Message content (any JSON-serializable value)' },
+        threadId: { type: 'string', description: 'Thread ID for reply threading (use original message ID)' },
+        expiresInMs: { type: 'number', description: 'Auto-expire after this many milliseconds' }
+      },
+      required: ['to', 'type', 'payload']
+    }
+  },
+  {
+    name: 'god_comms_broadcast',
+    description: `Broadcast a message to all instances.
+
+    Requires god_comms_heartbeat to be called first.
+    Each recipient tracks read/ack state independently.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['task', 'status', 'question', 'response', 'notification', 'handoff'],
+          description: 'Message type'
+        },
+        priority: { type: 'number', enum: [0, 1, 2], description: '0=normal, 1=high, 2=urgent' },
+        subject: { type: 'string', description: 'Short subject line' },
+        payload: { description: 'Message content (any JSON-serializable value)' },
+        expiresInMs: { type: 'number', description: 'Auto-expire after this many milliseconds' }
+      },
+      required: ['type', 'payload']
+    }
+  },
+  {
+    name: 'god_comms_inbox',
+    description: `Check inbox for unread messages (direct + broadcasts).
+
+    Requires god_comms_heartbeat to be called first.
+    Returns messages sorted by priority (desc) then time (newest first).
+    Does not include messages sent by this instance.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['task', 'status', 'question', 'response', 'notification', 'handoff'],
+          description: 'Filter by message type'
+        },
+        from: { type: 'string', description: 'Filter by sender instance ID' },
+        priority: { type: 'number', enum: [0, 1, 2], description: 'Minimum priority filter' },
+        threadId: { type: 'string', description: 'Filter by thread ID' },
+        limit: { type: 'number', description: 'Max messages to return (default: 50)' },
+        includeRead: { type: 'boolean', description: 'Include already-read messages (default: false)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'god_comms_read',
+    description: `Mark a message as read and return its contents.
+
+    Requires god_comms_heartbeat to be called first.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        messageId: { type: 'string', description: 'Message ID to mark as read' }
+      },
+      required: ['messageId']
+    }
+  },
+  {
+    name: 'god_comms_ack',
+    description: `Acknowledge a message (mark as processed).
+
+    Requires god_comms_heartbeat to be called first.
+    Acked messages are eligible for cleanup after 48 hours.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        messageId: { type: 'string', description: 'Message ID to acknowledge' }
+      },
+      required: ['messageId']
+    }
+  },
+  {
+    name: 'god_comms_thread',
+    description: `Get a full conversation thread.
+
+    Returns all messages in a thread, sorted chronologically.
+    Includes the original message and all replies.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        threadId: { type: 'string', description: 'Thread ID (usually the original message ID)' }
+      },
+      required: ['threadId']
+    }
+  },
+  {
+    name: 'god_comms_peers',
+    description: `List known instances and their status.
+
+    Shows all registered instances with their last heartbeat time,
+    role, and status. Instances with no heartbeat for 10+ minutes
+    are marked offline.`,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+
+  // ==========================================
   // Curiosity Tools
   // ==========================================
 
@@ -4220,6 +4377,9 @@ class GodAgentMCPServer {
   private postExecGuardian: PostExecGuardian | null = null;
   // Memory distillation service
   private distillationService: MemoryDistillationService | null = null;
+  // Inter-instance communication
+  private commsStore: CommsStore | null = null;
+  private instanceId: string | null = null;
   // Learning feedback tracking (for implicit feedback from god_store)
   private lastQueryContext: { queryId: string | null; trajectoryId: string; query: string; timestamp: number } | null = null;
 
@@ -4833,6 +4993,24 @@ This is project-specific context that persists across sessions.`;
             return await this.handleCommsEscalate(args);
           case 'god_afk':
             return await this.handleAfk(args);
+
+          // Inter-Instance Communication Tools
+          case 'god_comms_heartbeat':
+            return await this.handleCommsHeartbeat(args);
+          case 'god_comms_send':
+            return await this.handleCommsSend(args);
+          case 'god_comms_broadcast':
+            return await this.handleCommsBroadcast(args);
+          case 'god_comms_inbox':
+            return await this.handleCommsInbox(args);
+          case 'god_comms_read':
+            return await this.handleCommsRead(args);
+          case 'god_comms_ack':
+            return await this.handleCommsAck(args);
+          case 'god_comms_thread':
+            return await this.handleCommsThread(args);
+          case 'god_comms_peers':
+            return await this.handleCommsPeers();
 
           // Curiosity Tools
           case 'god_curiosity_list':
@@ -10968,6 +11146,274 @@ god_comms_setup mode="set" channel="email" config={
     };
   }
 
+  // ==========================================
+  // Inter-Instance Communication Handlers
+  // ==========================================
+
+  private getCommsStore(): CommsStore {
+    if (!this.commsStore) {
+      this.commsStore = new CommsStore(this.dataDir);
+      // Run cleanup on first init
+      const cleaned = this.commsStore.cleanup(48);
+      if (cleaned > 0) {
+        console.log(`[CommsStore] Cleaned ${cleaned} old messages on init`);
+      }
+    }
+    return this.commsStore;
+  }
+
+  private requireInstanceId(): string {
+    if (!this.instanceId) {
+      throw new Error('Call god_comms_heartbeat first to register your instance identity');
+    }
+    return this.instanceId;
+  }
+
+  private async handleCommsHeartbeat(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = args as { instanceId: string; role?: string; metadata?: unknown };
+    const store = this.getCommsStore();
+
+    this.instanceId = input.instanceId;
+    store.heartbeat(input.instanceId, input.role, input.metadata);
+
+    console.log(`[CommsStore] Instance registered: ${input.instanceId} (role: ${input.role ?? 'unset'})`);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          instanceId: input.instanceId,
+          role: input.role ?? null,
+          message: `Registered as ${input.instanceId}. Inter-instance comms ready.`
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsSend(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const fromInstance = this.requireInstanceId();
+    const input = args as {
+      to: string;
+      type: MessageType;
+      priority?: MessagePriority;
+      subject?: string;
+      payload: unknown;
+      threadId?: string;
+      expiresInMs?: number;
+    };
+    const store = this.getCommsStore();
+
+    const id = store.send(fromInstance, {
+      to: input.to,
+      type: input.type,
+      priority: input.priority,
+      subject: input.subject,
+      payload: input.payload,
+      threadId: input.threadId,
+      expiresInMs: input.expiresInMs
+    });
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          messageId: id,
+          to: input.to,
+          type: input.type,
+          subject: input.subject ?? null,
+          message: `Message sent to ${input.to}`
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsBroadcast(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const fromInstance = this.requireInstanceId();
+    const input = args as {
+      type: MessageType;
+      priority?: MessagePriority;
+      subject?: string;
+      payload: unknown;
+      expiresInMs?: number;
+    };
+    const store = this.getCommsStore();
+
+    const id = store.send(fromInstance, {
+      type: input.type,
+      priority: input.priority,
+      subject: input.subject,
+      payload: input.payload,
+      expiresInMs: input.expiresInMs
+    });
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          messageId: id,
+          broadcast: true,
+          type: input.type,
+          subject: input.subject ?? null,
+          message: `Broadcast sent to all instances`
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsInbox(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const instanceId = this.requireInstanceId();
+    const input = args as InboxFilters;
+    const store = this.getCommsStore();
+
+    const messages = store.inbox(instanceId, input);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          instanceId,
+          count: messages.length,
+          messages: messages.map(m => ({
+            id: m.id,
+            from: m.from_instance,
+            to: m.to_instance,
+            type: m.type,
+            priority: m.priority,
+            subject: m.subject,
+            payload: (() => { try { return JSON.parse(m.payload); } catch { return m.payload; } })(),
+            threadId: m.thread_id,
+            status: m.status,
+            createdAt: m.created_at,
+            expiresAt: m.expires_at
+          }))
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsRead(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const instanceId = this.requireInstanceId();
+    const input = args as { messageId: string };
+    const store = this.getCommsStore();
+
+    const msg = store.read(instanceId, input.messageId);
+    if (!msg) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ success: false, error: `Message not found: ${input.messageId}` }, null, 2)
+        }]
+      };
+    }
+
+    let parsedPayload: unknown;
+    try { parsedPayload = JSON.parse(msg.payload); } catch { parsedPayload = msg.payload; }
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          message: {
+            id: msg.id,
+            from: msg.from_instance,
+            to: msg.to_instance,
+            type: msg.type,
+            priority: msg.priority,
+            subject: msg.subject,
+            payload: parsedPayload,
+            threadId: msg.thread_id,
+            status: msg.status,
+            createdAt: msg.created_at,
+            readAt: msg.read_at,
+            expiresAt: msg.expires_at
+          }
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsAck(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const instanceId = this.requireInstanceId();
+    const input = args as { messageId: string };
+    const store = this.getCommsStore();
+
+    const success = store.ack(instanceId, input.messageId);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success,
+          messageId: input.messageId,
+          message: success ? 'Message acknowledged' : `Message not found: ${input.messageId}`
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsThread(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = args as { threadId: string };
+    const store = this.getCommsStore();
+
+    const messages = store.thread(input.threadId);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          threadId: input.threadId,
+          count: messages.length,
+          messages: messages.map(m => ({
+            id: m.id,
+            from: m.from_instance,
+            to: m.to_instance,
+            type: m.type,
+            priority: m.priority,
+            subject: m.subject,
+            payload: (() => { try { return JSON.parse(m.payload); } catch { return m.payload; } })(),
+            threadId: m.thread_id,
+            status: m.status,
+            createdAt: m.created_at
+          }))
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsPeers(): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const store = this.getCommsStore();
+    const instances = store.listInstances();
+    const stats = store.stats();
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          currentInstance: this.instanceId ?? '(not registered — call god_comms_heartbeat)',
+          peers: instances.map(i => ({
+            instanceId: i.instance_id,
+            role: i.role,
+            status: i.status,
+            lastHeartbeat: i.last_heartbeat,
+            metadata: i.metadata ? (() => { try { return JSON.parse(i.metadata!); } catch { return i.metadata; } })() : null
+          })),
+          stats: {
+            totalMessages: stats.totalMessages,
+            unread: stats.unread,
+            activeInstances: stats.activeInstances
+          }
+        }, null, 2)
+      }]
+    };
+  }
+
   // Deep Work Mode Handlers (Stage 8)
   private async handleDeepWorkStart(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
     const input = DeepWorkStartInputSchema.parse(args);
@@ -12123,6 +12569,10 @@ god_comms_setup mode="set" channel="email" config={
     // Stop scheduler
     if (this.scheduler) {
       this.scheduler.stop('Server shutdown');
+    }
+    // Close inter-instance comms
+    if (this.commsStore) {
+      this.commsStore.close();
     }
     // Close memory engine
     if (this.engine) {

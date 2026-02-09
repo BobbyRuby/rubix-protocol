@@ -466,6 +466,20 @@ export type {
   SecurityPattern
 } from './guardian/index.js';
 
+// Inter-Instance Communication exports
+export { CommsStore } from './communication/CommsStore.js';
+export type {
+  CommsMessage,
+  InstanceInfo,
+  SendMessageInput,
+  InboxFilters,
+  CommsStats,
+  MessageType,
+  MessageStatus,
+  MessagePriority,
+  InstanceStatus
+} from './communication/CommsStore.js';
+
 // Memory Distillation exports (Proactive Lesson Extraction)
 export {
   MemoryDistillationService,

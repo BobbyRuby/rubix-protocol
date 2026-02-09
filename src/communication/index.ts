@@ -19,3 +19,17 @@ export { EmailChannel } from './channels/EmailChannel.js';
 // Webhook server
 export { WebhookServer } from './server/WebhookServer.js';
 export type { WebhookHandler } from './server/WebhookServer.js';
+
+// Inter-instance communication
+export { CommsStore } from './CommsStore.js';
+export type {
+  CommsMessage,
+  InstanceInfo,
+  SendMessageInput,
+  InboxFilters,
+  CommsStats,
+  MessageType,
+  MessageStatus,
+  MessagePriority,
+  InstanceStatus
+} from './CommsStore.js';
