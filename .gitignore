@@ -36,6 +36,7 @@ god-agent.pid
 
 # Secrets / local config
 .mcp.json
+.claude/mcp.json
 .claude/settings.local.json
 .claude/cloud-servers.json
 
