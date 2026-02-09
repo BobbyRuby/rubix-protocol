@@ -69,11 +69,11 @@ export async function discoverLegacyDatabases(currentDbPath: string): Promise<st
     join(home, 'Projects', '*', 'rubix', 'data', 'memory.db'),
     join(home, 'projects', '*', 'god-agent', 'data', 'memory.db'),
     join(home, 'projects', '*', 'rubix', 'data', 'memory.db'),
-    // Windows common locations
-    'C:\\Projects\\*\\god-agent\\data\\memory.db',
-    'C:\\Projects\\*\\rubix\\data\\memory.db',
-    'D:\\*\\god-agent\\data\\memory.db',
-    'D:\\*\\rubix\\data\\memory.db',
+    // Linux common locations
+    '/var/www/html/*/god-agent/data/memory.db',
+    '/var/www/html/*/rubix/data/memory.db',
+    '/opt/*/god-agent/data/memory.db',
+    '/opt/*/rubix/data/memory.db',
   ];
 
   for (const pattern of patterns) {

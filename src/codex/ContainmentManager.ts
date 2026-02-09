@@ -122,8 +122,10 @@ export const DEFAULT_CONTAINMENT_CONFIG: ContainmentConfig = {
     { pattern: '/etc/**', permission: 'read', reason: 'System config (read-only)', priority: 80, immutable: true },
     { pattern: '/var/**', permission: 'deny', reason: 'System data', priority: 80, immutable: true },
     { pattern: '/usr/**', permission: 'read', reason: 'System binaries (read-only)', priority: 80, immutable: true },
-    { pattern: 'C:\\Windows/**', permission: 'deny', reason: 'Windows system', priority: 80, immutable: true },
-    { pattern: 'C:\\Program Files/**', permission: 'read', reason: 'Program files (read-only)', priority: 80, immutable: true },
+    { pattern: '/boot/**', permission: 'deny', reason: 'Boot partition', priority: 80, immutable: true },
+    { pattern: '/sbin/**', permission: 'deny', reason: 'System binaries', priority: 80, immutable: true },
+    { pattern: '/proc/**', permission: 'deny', reason: 'Process filesystem', priority: 80, immutable: true },
+    { pattern: '/sys/**', permission: 'deny', reason: 'Kernel filesystem', priority: 80, immutable: true },
 
     // === DEVELOPMENT PATHS (controlled access - NOT immutable, can be adjusted) ===
     { pattern: '**/node_modules/**', permission: 'read', reason: 'Dependencies (read-only)', priority: 50 },

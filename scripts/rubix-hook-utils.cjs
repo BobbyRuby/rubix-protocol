@@ -19,31 +19,14 @@ const AFK_STATE_PATH = path.join(RUBIX_ROOT, 'data', 'afk-state.json');
 const PROJECT_MAPPINGS = [
   {
     patterns: [
-      /androidstudioprojects[/\\]oneshotproai/i,
-      /oneshotpro.*android/i
-    ],
-    instance: 'oneshotpro-android',
-    name: 'OneShotPro AI (Android)',
-    tools: 'mcp__oneshotpro-android__*'
-  },
-  {
-    patterns: [
-      /phpstormprojects[/\\]oneshotproai/i,
-      /oneshotpro.*web/i
-    ],
-    instance: 'oneshotpro-web',
-    name: 'OneShotPro AI (Web)',
-    tools: 'mcp__oneshotpro-web__*'
-  },
-  {
-    patterns: [
       /rubix-protocol[/\\]god-agent/i,
       /rubix-protocol$/i,
-      /god-agent/i
+      /god-agent/i,
+      /\/var\/www\/html\/rubix/i
     ],
-    instance: 'rubix',
+    instance: 'rubix-frm-brain',
     name: 'God-Agent',
-    tools: 'mcp__rubix__*'
+    tools: 'mcp__rubix-frm-brain__*'
   }
 ];
 

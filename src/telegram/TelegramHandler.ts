@@ -217,7 +217,7 @@ export class TelegramHandler {
     if (!this.explicitlySetProjects.has(chatId)) {
       return `❌ *No Project Set*\n\n` +
         `Before using /task, /plan, or /conversation, you must set a project:\n` +
-        `\`/setproject D:\\path\\to\\your\\project\`\n\n` +
+        `\`/setproject /path/to/your/project\`\n\n` +
         `This prevents accidentally modifying the wrong codebase.\n\n` +
         `Default (blocked): \`${this.defaultCodebase}\``;
     }
@@ -1663,7 +1663,7 @@ All messages require an active mode. Use:
           `📂 *No Project Set*\n\n` +
           `Default: \`${this.defaultCodebase}\`\n\n` +
           `Use \`/setproject <path>\` to set a project directory.\n` +
-          `Example: \`/setproject D:\\my-project\``,
+          `Example: \`/setproject /home/user/my-project\``,
           { parse_mode: 'Markdown' }
         );
       }

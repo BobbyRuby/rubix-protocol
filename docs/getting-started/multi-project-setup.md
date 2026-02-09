@@ -73,7 +73,7 @@ Before setting up multi-project support, ensure:
 
 ```bash
 # Navigate to rubix-protocol directory
-cd D:\rubix-protocol
+cd /var/www/html/rubix-protocol
 
 # Run the interactive configuration tool
 node scripts/configure-projects.js
@@ -83,7 +83,7 @@ node scripts/configure-projects.js
 
 1. Enter number of projects (1-10)
 2. For each project:
-   - Enter absolute path (e.g., `D:\my-projects\backend-api`)
+   - Enter absolute path (e.g., `/home/user/projects/backend-api`)
    - Enter project name (e.g., `Backend API`)
    - Enter project ID (e.g., `backend-api`)
    - Enter description (optional)
@@ -113,8 +113,8 @@ Check that `.claude/mcp.json` was created:
 # View the generated configuration
 cat .claude/mcp.json
 
-# Or on Windows
-type .claude\mcp.json
+# View contents
+cat .claude/mcp.json
 ```
 
 Expected structure:
@@ -125,12 +125,12 @@ Expected structure:
     "rubix-backend-api": {
       "command": "node",
       "args": ["dist/mcp-server.js"],
-      "cwd": "D:\\rubix-protocol",
+      "cwd": "/var/www/html/rubix-protocol",
       "env": {
         "OPENAI_API_KEY": "...",
         "ANTHROPIC_API_KEY": "...",
         "RUBIX_DATA_DIR": "./data/projects/backend-api",
-        "RUBIX_PROJECT_ROOT": "D:\\my-projects\\backend-api",
+        "RUBIX_PROJECT_ROOT": "/home/user/projects/backend-api",
         "RUBIX_PROJECT_NAME": "Backend API"
       }
     }
@@ -284,12 +284,12 @@ node scripts/configure-projects.js
     "rubix-new-project": {
       "command": "node",
       "args": ["dist/mcp-server.js"],
-      "cwd": "D:\\rubix-protocol",
+      "cwd": "/var/www/html/rubix-protocol",
       "env": {
         "OPENAI_API_KEY": "...",
         "ANTHROPIC_API_KEY": "...",
         "RUBIX_DATA_DIR": "./data/projects/new-project",
-        "RUBIX_PROJECT_ROOT": "D:\\path\\to\\new-project",
+        "RUBIX_PROJECT_ROOT": "/home/user/projects/new-project",
         "RUBIX_PROJECT_NAME": "New Project"
       }
     }
@@ -329,10 +329,10 @@ To share a project configuration:
   "rubix-team-project": {
     "command": "node",
     "args": ["dist/mcp-server.js"],
-    "cwd": "D:\\rubix-protocol",
+    "cwd": "/var/www/html/rubix-protocol",
     "env": {
       "RUBIX_DATA_DIR": "./data/projects/team-project",
-      "RUBIX_PROJECT_ROOT": "D:\\team\\shared-project",
+      "RUBIX_PROJECT_ROOT": "/home/user/projects/shared-project",
       "RUBIX_PROJECT_NAME": "Team Project"
     }
   }
@@ -370,9 +370,8 @@ To share a project configuration:
 **Solutions:**
 
 1. Use **absolute paths** for `RUBIX_PROJECT_ROOT`
-2. Check path exists: `test -d "D:\path\to\project" && echo "exists"`
+2. Check path exists: `test -d "/path/to/project" && echo "exists"`
 3. Verify path permissions (readable by Node.js)
-4. On Windows, use double backslashes: `"D:\\path\\to\\project"`
 
 ### Cross-Contamination
 
@@ -424,7 +423,7 @@ To share a project configuration:
 "RUBIX_DATA_DIR": "./data/projects/backend-api"
 
 // Bad - absolute path (breaks on different machines)
-"RUBIX_DATA_DIR": "D:\\rubix-protocol\\data\\projects\\backend-api"
+"RUBIX_DATA_DIR": "/var/www/html/rubix-protocol/data/projects/backend-api"
 ```
 
 ### 3. Configure Only Active Projects

@@ -81,7 +81,7 @@ Create `.claude/mcp.json` in your project root:
     "rubix": {
       "command": "node",
       "args": ["dist/mcp-server.js"],
-      "cwd": "D:\\rubix-protocol",
+      "cwd": "/var/www/html/rubix-protocol",
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "ANTHROPIC_API_KEY": "sk-ant-...",
@@ -200,7 +200,7 @@ Control file system access:
 // Configure containment
 await mcp__rubix__god_containment_config({
   enabled: true,
-  projectRoot: "D:/my-project",
+  projectRoot: "/home/user/my-project",
   defaultPermission: "deny"
 });
 
