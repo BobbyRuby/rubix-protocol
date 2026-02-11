@@ -22,7 +22,8 @@ const {
   httpPost,
   detectPromptSkills,
   getPolyglotEntries,
-  readHookIdentity
+  readHookIdentity,
+  writePendingRating
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -120,18 +121,22 @@ async function main() {
     // Still output project context + comms check for short prompts
     const project = detectProject(cwd);
     if (project) {
-      console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
-    }
-    console.log(COORD_DIRECTIVE);
-    // Quick comms inbox check even on trivial prompts
-    const mcpCfg = resolveMcpConfig();
-    const dd = (mcpCfg && project) ? (mcpCfg[project.instance]?.dataDir || './data') : './data';
-    const ddResolved = path.isAbsolute(dd) ? dd : path.join(RUBIX_ROOT, dd);
-    const inboxCheck = checkCommsInbox(ddResolved);
-    if (inboxCheck && inboxCheck.total > 0) {
-      const urgTag = inboxCheck.urgent > 0 ? ` (${inboxCheck.urgent} URGENT)` : '';
-      const from = inboxCheck.senders.length > 0 ? ` from: ${inboxCheck.senders.join(', ')}` : '';
-      console.log(`[COMMS] ${inboxCheck.total} unread message(s)${urgTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+      const mcpCfg = resolveMcpConfig();
+      const dd = (mcpCfg && project) ? (mcpCfg[project.instance]?.dataDir || './data') : './data';
+      const ddResolved = path.isAbsolute(dd) ? dd : path.join(RUBIX_ROOT, dd);
+      const identity = readHookIdentity(ddResolved);
+      const instanceLabel = identity?.name ? `${identity.name} (${project.instance})` : project.instance;
+      console.log(`[PROJECT] Active: ${project.name} | Instance: ${instanceLabel} | Tools: ${project.tools} | Time: ${now}`);
+      console.log(COORD_DIRECTIVE);
+      // Quick comms inbox check even on trivial prompts
+      const inboxCheck = checkCommsInbox(ddResolved);
+      if (inboxCheck && inboxCheck.total > 0) {
+        const urgTag = inboxCheck.urgent > 0 ? ` (${inboxCheck.urgent} URGENT)` : '';
+        const from = inboxCheck.senders.length > 0 ? ` from: ${inboxCheck.senders.join(', ')}` : '';
+        console.log(`[COMMS] ${inboxCheck.total} unread message(s)${urgTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+      }
+    } else {
+      console.log(COORD_DIRECTIVE);
     }
     return;
   }
@@ -139,7 +144,12 @@ async function main() {
   // Detect project
   const project = detectProject(cwd);
   if (project) {
-    console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
+    const mcpCfgEarly = resolveMcpConfig();
+    const ddEarly = (mcpCfgEarly && project) ? (mcpCfgEarly[project.instance]?.dataDir || './data') : './data';
+    const ddEarlyResolved = path.isAbsolute(ddEarly) ? ddEarly : path.join(RUBIX_ROOT, ddEarly);
+    const identityEarly = readHookIdentity(ddEarlyResolved);
+    const instanceLabel = identityEarly?.name ? `${identityEarly.name} (${project.instance})` : project.instance;
+    console.log(`[PROJECT] Active: ${project.name} | Instance: ${instanceLabel} | Tools: ${project.tools} | Time: ${now}`);
   }
   console.log(COORD_DIRECTIVE);
 
@@ -303,10 +313,14 @@ async function main() {
       console.log(`${i + 1}. [score: ${score}${lScore}] ${content}${tags}`);
     });
 
-    if (learning) {
-      console.log('');
-      console.log(`[LEARNING] trajectoryId=${learning.trajectoryId || 'none'} queryId=${learning.queryId || 'none'}`);
-      console.log('Rate these recalls 0-10 when appropriate. Use god_comms_escalate for rating, then god_learn(trajectoryId, quality=score/10, memrlQueryId).');
+    // Write pending-rating.json for the Stop hook to enforce rating
+    if (learning && (learning.trajectoryId || learning.queryId)) {
+      writePendingRating(dataDirResolved, {
+        trajectoryId: learning.trajectoryId || null,
+        queryId: learning.queryId || null,
+        recallCount: results.length,
+        timestamp: new Date().toISOString()
+      });
     }
   }
 }

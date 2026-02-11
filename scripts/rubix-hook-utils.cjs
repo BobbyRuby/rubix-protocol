@@ -350,7 +350,7 @@ function getPolyglotEntries(dataDir, tags, limit = 3) {
 /**
  * Read persisted instance identity from data/hook-identity.json.
  * Written by MCP server on god_comms_heartbeat.
- * Returns { instanceId, role, timestamp } or null.
+ * Returns { instanceId, name?, role, timestamp } or null.
  */
 function readHookIdentity(dataDir) {
   try {
@@ -362,6 +362,286 @@ function readHookIdentity(dataDir) {
     return null;
   } catch {
     return null;
+  }
+}
+
+// ─── Rating helpers (pending-rating.json + rating-counter.json) ───
+
+/**
+ * Read pending rating data from {dataDir}/pending-rating.json.
+ * Returns { trajectoryId, queryId, recallCount, timestamp } or null.
+ */
+function readPendingRating(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'pending-rating.json');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write pending rating data to {dataDir}/pending-rating.json.
+ */
+function writePendingRating(dataDir, data) {
+  try {
+    const dir = dataDir;
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pending-rating.json'), JSON.stringify(data, null, 2));
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Delete pending rating file.
+ */
+function deletePendingRating(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'pending-rating.json');
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Read the persistent rating counter from {dataDir}/rating-counter.json.
+ * Returns the current count (number).
+ */
+function readRatingCounter(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'rating-counter.json');
+    if (!fs.existsSync(filePath)) return 0;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed.count || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Increment the persistent rating counter. Returns the new count.
+ * Odd = should rate, even = skip.
+ */
+function incrementRatingCounter(dataDir) {
+  const current = readRatingCounter(dataDir);
+  const next = current + 1;
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'rating-counter.json'), JSON.stringify({ count: next }));
+  } catch {
+    // silent
+  }
+  return next;
+}
+
+// ─── STM helpers (stm-journal.json) ───
+
+/**
+ * Read the STM journal from {dataDir}/stm-journal.json.
+ * Returns { signals: [...], manualStmCalled: bool } or null.
+ */
+function readStmJournal(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'stm-journal.json');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write/overwrite the STM journal.
+ */
+function writeStmJournal(dataDir, data) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'stm-journal.json'), JSON.stringify(data, null, 2));
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Delete the STM journal file.
+ */
+function deleteStmJournal(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'stm-journal.json');
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Compute importance score for accumulated STM signals.
+ *
+ * importance = clamp(0.1, 1.0,
+ *   breadth  * 0.25 +    // min(1.0, uniqueFiles / 5)
+ *   depth    * 0.25 +    // min(1.0, totalEdits / 8)
+ *   risk     * 0.20 +    // failedCmds > 0 ? min(1.0, 0.5+fails*0.1) : 0
+ *   scope    * 0.15 +    // min(1.0, bashCommands / 6)
+ *   duration * 0.15      // min(1.0, timeSpan / 15min)
+ * )
+ */
+function computeStmImportance(signals) {
+  if (!signals || signals.length === 0) return 0;
+
+  const uniqueFiles = new Set();
+  let totalEdits = 0;
+  let failedCmds = 0;
+  let bashCommands = 0;
+  let firstTime = Infinity;
+  let lastTime = 0;
+
+  for (const s of signals) {
+    const ts = new Date(s.timestamp).getTime();
+    if (ts < firstTime) firstTime = ts;
+    if (ts > lastTime) lastTime = ts;
+
+    if (s.type === 'edit' || s.type === 'write') {
+      if (s.file) uniqueFiles.add(s.file);
+      totalEdits++;
+    } else if (s.type === 'bash') {
+      bashCommands++;
+      if (s.file) uniqueFiles.add(s.file); // files created by bash
+      if (s.failed) failedCmds++;
+    }
+  }
+
+  const breadth = Math.min(1.0, uniqueFiles.size / 5);
+  const depth = Math.min(1.0, totalEdits / 8);
+  const risk = failedCmds > 0 ? Math.min(1.0, 0.5 + failedCmds * 0.1) : 0;
+  const scope = Math.min(1.0, bashCommands / 6);
+  const timeSpanMin = (lastTime - firstTime) / 60000;
+  const duration = Math.min(1.0, timeSpanMin / 15);
+
+  const raw = breadth * 0.25 + depth * 0.25 + risk * 0.20 + scope * 0.15 + duration * 0.15;
+  return Math.max(0.1, Math.min(1.0, raw));
+}
+
+/**
+ * Synthesize human-readable content from STM signals for memory storage.
+ */
+function synthesizeStmContent(signals) {
+  const filesModified = new Set();
+  const filesCreated = new Set();
+  const commands = [];
+  let firstTime = null;
+  let lastTime = null;
+
+  for (const s of signals) {
+    if (!firstTime) firstTime = s.timestamp;
+    lastTime = s.timestamp;
+
+    if (s.type === 'edit') {
+      filesModified.add(s.file);
+    } else if (s.type === 'write') {
+      filesCreated.add(s.file);
+    } else if (s.type === 'bash') {
+      const status = s.failed ? 'FAIL' : 'ok';
+      commands.push(`${s.command} (${status})`);
+    }
+  }
+
+  // Remove created files from modified (if file was created then edited, show as created)
+  for (const f of filesCreated) {
+    filesModified.delete(f);
+  }
+
+  const startTime = firstTime ? new Date(firstTime).toISOString().substring(0, 16).replace('T', ' ') : '?';
+  const endTime = lastTime ? new Date(lastTime).toISOString().substring(0, 16).replace('T', ' ') : '?';
+
+  const lines = [`[Auto-STM] Session activity (${startTime} – ${endTime})`];
+  if (filesModified.size > 0) lines.push(`FILES MODIFIED: ${[...filesModified].join(', ')}`);
+  if (filesCreated.size > 0) lines.push(`FILES CREATED: ${[...filesCreated].join(', ')}`);
+  if (commands.length > 0) lines.push(`COMMANDS: ${commands.slice(0, 10).join(', ')}`);
+
+  const editCount = [...filesModified].length;
+  const createCount = [...filesCreated].length;
+  const failCount = signals.filter(s => s.type === 'bash' && s.failed).length;
+  lines.push(`STATS: ${editCount} edits, ${createCount} creates, ${commands.length} commands (${failCount} failures)`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Map file extensions to polyglot skill tags for auto-tagging.
+ */
+const EXT_SKILL_MAP = {
+  '.js': 'polyglot:javascript', '.jsx': 'polyglot:javascript', '.ts': 'polyglot:javascript', '.tsx': 'polyglot:javascript',
+  '.php': 'polyglot:php',
+  '.py': 'polyglot:python',
+  '.css': 'polyglot:css', '.scss': 'polyglot:css', '.less': 'polyglot:css',
+  '.sql': 'polyglot:database',
+  '.sh': 'polyglot:bash', '.bash': 'polyglot:bash',
+  '.json': 'polyglot:config', '.yaml': 'polyglot:config', '.yml': 'polyglot:config', '.toml': 'polyglot:config',
+  '.html': 'polyglot:html', '.htm': 'polyglot:html',
+  '.go': 'polyglot:go',
+  '.rs': 'polyglot:rust',
+  '.java': 'polyglot:java',
+  '.rb': 'polyglot:ruby',
+};
+
+/**
+ * Extract polyglot skill tags from a file path based on extension.
+ */
+function filePathToSkillTags(filePath) {
+  if (!filePath) return [];
+  const ext = path.extname(filePath).toLowerCase();
+  const tag = EXT_SKILL_MAP[ext];
+  return tag ? [tag] : [];
+}
+
+/**
+ * Detect if a bash command is read-only (should not be tracked).
+ * Matches: git status, git log, git diff, ls, cat, head, tail, echo, pwd, whoami, etc.
+ */
+const READ_ONLY_BASH_PATTERNS = [
+  /^\s*(git\s+(status|log|diff|show|branch|remote|describe|rev-parse|tag\b))/i,
+  /^\s*(ls|cat|head|tail|echo|pwd|whoami|which|where|type|file|wc|du|df|uname|date|hostname)\b/i,
+  /^\s*(node\s+.*--version|npm\s+(list|ls|view|info|show)|npx\s+--version)/i,
+  /^\s*(grep|rg|find|ag|fd)\b/i,
+];
+
+function isReadOnlyBash(command) {
+  if (!command) return true;
+  const trimmed = command.trim();
+  if (trimmed.length === 0) return true;
+  return READ_ONLY_BASH_PATTERNS.some(p => p.test(trimmed));
+}
+
+/**
+ * Read the last auto-store timestamp from {dataDir}/stm-last-store.json.
+ * Returns epoch ms or 0.
+ */
+function readLastStmStore(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'stm-last-store.json');
+    if (!fs.existsSync(filePath)) return 0;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw).timestamp || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Write the last auto-store timestamp.
+ */
+function writeLastStmStore(dataDir) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'stm-last-store.json'), JSON.stringify({ timestamp: Date.now() }));
+  } catch {
+    // silent
   }
 }
 
@@ -378,5 +658,21 @@ module.exports = {
   httpGet,
   detectPromptSkills,
   getPolyglotEntries,
-  readHookIdentity
+  readHookIdentity,
+  // Rating helpers
+  readPendingRating,
+  writePendingRating,
+  deletePendingRating,
+  readRatingCounter,
+  incrementRatingCounter,
+  // STM helpers
+  readStmJournal,
+  writeStmJournal,
+  deleteStmJournal,
+  computeStmImportance,
+  synthesizeStmContent,
+  filePathToSkillTags,
+  isReadOnlyBash,
+  readLastStmStore,
+  writeLastStmStore
 };

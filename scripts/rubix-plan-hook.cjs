@@ -135,6 +135,8 @@ async function main() {
   // Read persisted instance identity (written by god_comms_heartbeat)
   const identity = readHookIdentity(dataDirResolved);
   const instanceId = identity?.instanceId || 'unknown';
+  const instanceName = identity?.name || null;
+  const instanceLabel = instanceName ? `${instanceName} (${instanceId})` : instanceId;
   const projectName = project?.name || 'Unknown';
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
@@ -146,7 +148,7 @@ async function main() {
   const unread = getUnreadSummary(dataDirResolved, identity ? instanceId : null);
 
   // Output context block
-  console.log(`[PLAN MODE] Instance: ${instanceId} | Project: ${projectName} | Time: ${timeStr}`);
+  console.log(`[PLAN MODE] Instance: ${instanceLabel} | Project: ${projectName} | Time: ${timeStr}`);
 
   if (broadcasted) {
     console.log(`[COMMS] Broadcasted plan_start to all instances`);

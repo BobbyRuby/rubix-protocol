@@ -16,12 +16,24 @@
  */
 
 const path = require('path');
+const { execFileSync } = require('child_process');
 const {
   RUBIX_ROOT,
   readStdin,
   detectProject,
   resolveMcpConfig,
-  readHookIdentity
+  readHookIdentity,
+  readPendingRating,
+  deletePendingRating,
+  readRatingCounter,
+  incrementRatingCounter,
+  readStmJournal,
+  deleteStmJournal,
+  computeStmImportance,
+  synthesizeStmContent,
+  filePathToSkillTags,
+  readLastStmStore,
+  writeLastStmStore
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -133,43 +145,138 @@ async function main() {
   const dbExists = require('fs').existsSync(dbPath);
   process.stderr.write(`[comms-stop] input keys: ${JSON.stringify(Object.keys(input))}, cwd: ${cwd}, project: ${project?.instance || 'null'}, dataDir: ${dataDirResolved}, comms.db exists: ${dbExists}\n`);
 
-  // Check for unread messages
+  let needsContinue = false;
+
+  // ─── Phase 1: Check for unread inter-instance messages ───
   const messages = getUnreadMessages(dataDirResolved);
   process.stderr.write(`[comms-stop] messages found: ${messages.length}\n`);
 
-  if (messages.length === 0) {
-    // No messages — Claude stops normally
+  if (messages.length > 0) {
+    const urgentCount = messages.filter(m => m.priority >= 2).length;
+    const senders = [...new Set(messages.map(m => m.from_instance))];
+
+    console.log('');
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`[INTER-INSTANCE COMMS] ${messages.length} unread message(s) detected`);
+    if (urgentCount > 0) {
+      console.log(`  ⚠ ${urgentCount} URGENT message(s)`);
+    }
+    console.log(`  From: ${senders.join(', ')}`);
+    console.log('───────────────────────────────────────────────────');
+
+    messages.forEach((msg, i) => {
+      console.log(formatMessage(msg, i + 1));
+    });
+
+    console.log('───────────────────────────────────────────────────');
+    console.log('ACTION REQUIRED: Process these messages now.');
+    console.log('1. Call god_comms_heartbeat with your instance identity');
+    console.log('2. Call god_comms_inbox to retrieve messages via MCP');
+    console.log('3. Call god_comms_ack for each message after processing');
+    console.log('═══════════════════════════════════════════════════');
+    console.log('');
+    needsContinue = true;
+  }
+
+  // ─── Phase 2: Mandatory query rating (50% enforcement) ───
+  const pendingRating = readPendingRating(dataDirResolved);
+  if (pendingRating) {
+    const ratingAge = Date.now() - new Date(pendingRating.timestamp).getTime();
+    const isStale = ratingAge > 10 * 60 * 1000; // 10 min
+
+    if (!isStale && pendingRating.trajectoryId) {
+      const counter = incrementRatingCounter(dataDirResolved);
+      const shouldRate = (counter % 2 === 1); // odd = rate
+
+      if (shouldRate) {
+        const tid = pendingRating.trajectoryId;
+        const qid = pendingRating.queryId || 'none';
+        console.log('');
+        console.log('═══════════════════════════════════════════════════');
+        console.log('[RATE RECALLS] Rate the memories recalled for your last prompt.');
+        console.log('Use AskUserQuestion:');
+        console.log('  Question: "How relevant were the recalled memories?"');
+        console.log('  Options: "9-10 Spot on" / "7-8 Helpful" / "4-6 Okay" / "1-3 Barely" / "0 Useless"');
+        console.log(`Then call: god_learn(trajectoryId="${tid}", quality=<score>/10, memrlQueryId="${qid}")`);
+        console.log('═══════════════════════════════════════════════════');
+        console.log('');
+        needsContinue = true;
+      }
+    }
+
+    // Always delete pending rating to prevent stale buildup
+    deletePendingRating(dataDirResolved);
+  }
+
+  // ─── Phase 3: Auto-STM store from journal ───
+  const journal = readStmJournal(dataDirResolved);
+  if (journal && journal.signals && journal.signals.length > 0 && !journal.manualStmCalled) {
+    const importance = computeStmImportance(journal.signals);
+    process.stderr.write(`[comms-stop] STM journal: ${journal.signals.length} signals, importance=${importance.toFixed(2)}\n`);
+
+    if (importance >= 0.3) {
+      // Check 5-min cooldown
+      const lastStore = readLastStmStore(dataDirResolved);
+      const cooldownOk = (Date.now() - lastStore) > 5 * 60 * 1000;
+
+      if (cooldownOk) {
+        const content = synthesizeStmContent(journal.signals);
+        const today = new Date().toISOString().split('T')[0];
+
+        // Collect skill tags from file extensions
+        const skillTags = new Set();
+        for (const s of journal.signals) {
+          if (s.file) {
+            for (const tag of filePathToSkillTags(s.file)) {
+              skillTags.add(tag);
+            }
+          }
+        }
+        const tags = ['auto_stm', today, ...skillTags].join(',');
+
+        // Resolve CLI env
+        const mcpCfgForStore = resolveMcpConfig();
+        const instanceCfg = mcpCfgForStore && project ? mcpCfgForStore[project.instance] : null;
+        const storeDataDir = instanceCfg ? instanceCfg.dataDir : './data';
+        const storeOpenaiKey = instanceCfg ? instanceCfg.openaiKey : '';
+        const storeCwd = instanceCfg ? instanceCfg.cwd : RUBIX_ROOT;
+
+        const storeEnv = { ...process.env, RUBIX_DATA_DIR: storeDataDir };
+        if (storeOpenaiKey) storeEnv.OPENAI_API_KEY = storeOpenaiKey;
+
+        try {
+          execFileSync('node', [
+            path.join(RUBIX_ROOT, 'dist', 'cli', 'index.js'),
+            'store',
+            content,
+            '-t', tags,
+            '-i', importance.toFixed(2),
+            '-d', storeDataDir
+          ], {
+            env: storeEnv,
+            cwd: storeCwd,
+            timeout: 8000,
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe']
+          });
+          writeLastStmStore(dataDirResolved);
+          process.stderr.write(`[comms-stop] Auto-STM stored (importance=${importance.toFixed(2)})\n`);
+        } catch (err) {
+          process.stderr.write(`[comms-stop] Auto-STM store failed: ${err.message}\n`);
+        }
+      }
+    }
+
+    // Clear the journal regardless
+    deleteStmJournal(dataDirResolved);
+  }
+
+  // ─── Final exit ───
+  if (needsContinue) {
+    process.exit(2);
+  } else {
     process.exit(0);
-    return;
   }
-
-  // Unread messages found — format and output them
-  const urgentCount = messages.filter(m => m.priority >= 2).length;
-  const senders = [...new Set(messages.map(m => m.from_instance))];
-
-  console.log('');
-  console.log('═══════════════════════════════════════════════════');
-  console.log(`[INTER-INSTANCE COMMS] ${messages.length} unread message(s) detected`);
-  if (urgentCount > 0) {
-    console.log(`  ⚠ ${urgentCount} URGENT message(s)`);
-  }
-  console.log(`  From: ${senders.join(', ')}`);
-  console.log('───────────────────────────────────────────────────');
-
-  messages.forEach((msg, i) => {
-    console.log(formatMessage(msg, i + 1));
-  });
-
-  console.log('───────────────────────────────────────────────────');
-  console.log('ACTION REQUIRED: Process these messages now.');
-  console.log('1. Call god_comms_heartbeat with your instance identity');
-  console.log('2. Call god_comms_inbox to retrieve messages via MCP');
-  console.log('3. Call god_comms_ack for each message after processing');
-  console.log('═══════════════════════════════════════════════════');
-  console.log('');
-
-  // Exit code 2 = force Claude to continue and process the messages
-  process.exit(2);
 }
 
 main().catch(() => {

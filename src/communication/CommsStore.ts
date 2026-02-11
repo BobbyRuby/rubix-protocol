@@ -43,6 +43,7 @@ export interface CommsMessage {
 
 export interface InstanceInfo {
   instance_id: string;
+  name: string | null;
   role: string | null;
   last_heartbeat: string;
   status: InstanceStatus;
@@ -97,6 +98,15 @@ export class CommsStore {
     const schemaPath = join(__dirname, 'comms-schema.sql');
     const schema = readFileSync(schemaPath, 'utf-8');
     this.db.exec(schema);
+    this.migrateSchema();
+  }
+
+  private migrateSchema(): void {
+    // Add name column to instances table if missing (added 2026-02-11)
+    const cols = this.db.prepare("PRAGMA table_info(instances)").all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'name')) {
+      this.db.exec("ALTER TABLE instances ADD COLUMN name TEXT");
+    }
   }
 
   // ==========================================
@@ -300,22 +310,23 @@ export class CommsStore {
   /**
    * Register or update instance presence.
    */
-  heartbeat(instanceId: string, role?: string, metadata?: unknown): void {
+  heartbeat(instanceId: string, role?: string, metadata?: unknown, name?: string): void {
     const now = new Date().toISOString();
     const metaJson = metadata ? JSON.stringify(metadata) : null;
 
     this.db.prepare(`
-      INSERT INTO instances (instance_id, role, last_heartbeat, status, metadata)
-      VALUES (?, ?, ?, 'active', ?)
+      INSERT INTO instances (instance_id, name, role, last_heartbeat, status, metadata)
+      VALUES (?, ?, ?, ?, 'active', ?)
       ON CONFLICT (instance_id)
       DO UPDATE SET
+        name = COALESCE(?, name),
         role = COALESCE(?, role),
         last_heartbeat = ?,
         status = 'active',
         metadata = COALESCE(?, metadata)
     `).run(
-      instanceId, role ?? null, now, metaJson,
-      role ?? null, now, metaJson
+      instanceId, name ?? null, role ?? null, now, metaJson,
+      name ?? null, role ?? null, now, metaJson
     );
   }
 

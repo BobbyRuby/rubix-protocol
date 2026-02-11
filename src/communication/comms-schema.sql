@@ -40,6 +40,7 @@ CREATE INDEX IF NOT EXISTS idx_reads_instance ON message_reads(instance_id, stat
 
 CREATE TABLE IF NOT EXISTS instances (
     instance_id TEXT PRIMARY KEY,
+    name TEXT,                      -- display name (e.g., "Forge", "Axis")
     role TEXT,
     last_heartbeat TEXT NOT NULL,
     status TEXT DEFAULT 'active',   -- active|idle|busy|offline

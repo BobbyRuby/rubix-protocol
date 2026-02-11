@@ -3503,6 +3503,7 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {
         instanceId: { type: 'string', description: 'Instance identifier (e.g., "instance_1", "instance_2")' },
+        name: { type: 'string', description: 'Display name for this instance (e.g., "Forge", "Axis", "Trace", "Loom")' },
         role: { type: 'string', description: 'Instance role (e.g., "orchestrator", "worker")' },
         metadata: { type: 'object', description: 'Arbitrary JSON metadata about this instance' }
       },
@@ -4380,6 +4381,7 @@ class GodAgentMCPServer {
   // Inter-instance communication
   private commsStore: CommsStore | null = null;
   private instanceId: string | null = null;
+  private instanceName: string | null = null;
   // Learning feedback tracking (for implicit feedback from god_store)
   private lastQueryContext: { queryId: string | null; trajectoryId: string; query: string; timestamp: number } | null = null;
 
@@ -11194,11 +11196,12 @@ god_comms_setup mode="set" channel="email" config={
   }
 
   private async handleCommsHeartbeat(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
-    const input = args as { instanceId: string; role?: string; metadata?: unknown };
+    const input = args as { instanceId: string; name?: string; role?: string; metadata?: unknown };
     const store = this.getCommsStore();
 
     this.instanceId = input.instanceId;
-    store.heartbeat(input.instanceId, input.role, input.metadata);
+    this.instanceName = input.name ?? this.instanceName;
+    store.heartbeat(input.instanceId, input.role, input.metadata, input.name);
 
     // Persist identity for hooks (recall, stop, plan) that need to filter self-sent messages
     try {
@@ -11208,13 +11211,14 @@ god_comms_setup mode="set" channel="email" config={
       if (!existsSync(resolvedDataDir)) mkdirSync(resolvedDataDir, { recursive: true });
       writeFileSync(
         join(resolvedDataDir, 'hook-identity.json'),
-        JSON.stringify({ instanceId: input.instanceId, role: input.role ?? null, timestamp: new Date().toISOString() })
+        JSON.stringify({ instanceId: input.instanceId, name: input.name ?? null, role: input.role ?? null, timestamp: new Date().toISOString() })
       );
     } catch {
       // Non-critical — hooks will fall back to counting all messages
     }
 
-    console.log(`[CommsStore] Instance registered: ${input.instanceId} (role: ${input.role ?? 'unset'})`);
+    const displayName = input.name ? `${input.name} (${input.instanceId})` : input.instanceId;
+    console.log(`[CommsStore] Instance registered: ${displayName} (role: ${input.role ?? 'unset'})`);
 
     return {
       content: [{
@@ -11222,8 +11226,9 @@ god_comms_setup mode="set" channel="email" config={
         text: JSON.stringify({
           success: true,
           instanceId: input.instanceId,
+          name: input.name ?? null,
           role: input.role ?? null,
-          message: `Registered as ${input.instanceId}. Inter-instance comms ready.`
+          message: `Registered as ${displayName}. Inter-instance comms ready.`
         }, null, 2)
       }]
     };
@@ -11429,14 +11434,19 @@ god_comms_setup mode="set" channel="email" config={
     const instances = store.listInstances();
     const stats = store.stats();
 
+    const currentDisplay = this.instanceName
+      ? `${this.instanceName} (${this.instanceId})`
+      : this.instanceId ?? '(not registered — call god_comms_heartbeat)';
+
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
           success: true,
-          currentInstance: this.instanceId ?? '(not registered — call god_comms_heartbeat)',
+          currentInstance: currentDisplay,
           peers: instances.map(i => ({
             instanceId: i.instance_id,
+            name: i.name,
             role: i.role,
             status: i.status,
             lastHeartbeat: i.last_heartbeat,
