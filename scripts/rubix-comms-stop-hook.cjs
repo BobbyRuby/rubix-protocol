@@ -20,11 +20,13 @@ const {
   RUBIX_ROOT,
   readStdin,
   detectProject,
-  resolveMcpConfig
+  resolveMcpConfig,
+  readHookIdentity
 } = require('./rubix-hook-utils.cjs');
 
 /**
- * Fetch full unread messages from comms.db.
+ * Fetch unread messages relevant to this instance from comms.db.
+ * If instance identity is known, filters out self-sent and already-acked broadcasts.
  * Returns array of message objects or empty array.
  */
 function getUnreadMessages(dataDir) {
@@ -34,8 +36,28 @@ function getUnreadMessages(dataDir) {
     const dbPath = path.join(dataDir, 'comms.db');
     if (!fs.existsSync(dbPath)) return [];
 
+    const identity = readHookIdentity(dataDir);
     const db = new Database(dbPath, { readonly: true });
     try {
+      if (identity && identity.instanceId) {
+        const iid = identity.instanceId;
+        // Instance-aware: direct messages to me + broadcasts not from me and not yet acked
+        const rows = db.prepare(`
+          SELECT id, from_instance, to_instance, type, priority, subject, payload, thread_id, created_at FROM (
+            SELECT * FROM messages
+              WHERE to_instance = ? AND status = 'unread' AND from_instance != ?
+            UNION ALL
+            SELECT m.* FROM messages m
+              LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.instance_id = ?
+              WHERE m.to_instance IS NULL AND mr.message_id IS NULL
+              AND m.from_instance != ? AND m.status != 'expired'
+          )
+          ORDER BY priority DESC, created_at ASC
+          LIMIT 20
+        `).all(iid, iid, iid, iid);
+        return rows;
+      }
+      // Fallback: no identity — return all unread (old behavior)
       const rows = db.prepare(`
         SELECT id, from_instance, to_instance, type, priority, subject, payload, thread_id, created_at
         FROM messages

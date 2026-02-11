@@ -1,0 +1,1161 @@
+# RUBIX LIBRARY: A_FRAME
+# VERSION: 1.5.x (2024)
+# SITE: aframe.io
+# REPO: github.com/aframevr/aframe
+# USE_FOR: WebVR|WebXR|quick_prototypes|360_experiences|VR_games|education
+# PHILOSOPHY: html_based|declarative|beginner_friendly|vr_first|entity_component
+
+==============================================================================
+SETUP_INSTALLATION
+==============================================================================
+# CDN (simplest)
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+
+# NPM
+npm install aframe
+
+# Import (ES modules)
+import 'aframe';
+
+# Basic scene
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+</head>
+<body>
+    <a-scene>
+        <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"></a-box>
+        <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E"></a-sphere>
+        <a-cylinder position="1 0.75 -3" radius="0.5" height="1.5" color="#FFC65D"></a-cylinder>
+        <a-plane position="0 0 -4" rotation="-90 0 0" width="4" height="4" color="#7BC8A4"></a-plane>
+        <a-sky color="#ECECEC"></a-sky>
+    </a-scene>
+</body>
+</html>
+
+==============================================================================
+SCENE
+==============================================================================
+# a-scene (root element)
+<a-scene
+    background="color: #000"
+    fog="type: linear; color: #AAA; near: 1; far: 100"
+    stats
+    vr-mode-ui="enabled: true"
+    embedded
+    loading-screen="dotsColor: white; backgroundColor: black"
+    renderer="antialias: true; colorManagement: true; sortObjects: true; physicallyCorrectLights: true"
+    shadow="type: pcfsoft"
+>
+    <!-- Scene contents -->
+</a-scene>
+
+# Scene attributes
+embedded                    # Removes fullscreen styles
+vr-mode-ui="enabled: false" # Hide VR button
+stats                       # Show performance stats
+inspector="url: https://..."  # Custom inspector URL
+
+# Renderer settings
+renderer="
+    antialias: true;
+    colorManagement: true;
+    highRefreshRate: true;
+    foveationLevel: 0;
+    sortObjects: true;
+    physicallyCorrectLights: true;
+    maxCanvasWidth: 1920;
+    maxCanvasHeight: 1920;
+"
+
+# Access Three.js scene
+const scene = document.querySelector('a-scene');
+const threeScene = scene.object3D;
+const renderer = scene.renderer;
+const camera = scene.camera;
+
+# Scene events
+scene.addEventListener('loaded', () => console.log('Scene loaded'));
+scene.addEventListener('enter-vr', () => console.log('Entered VR'));
+scene.addEventListener('exit-vr', () => console.log('Exited VR'));
+scene.addEventListener('renderstart', () => console.log('Render started'));
+
+==============================================================================
+PRIMITIVES
+==============================================================================
+# Box
+<a-box
+    position="0 0.5 -3"
+    rotation="0 45 0"
+    scale="1 1 1"
+    color="#4CC3D9"
+    width="1"
+    height="1"
+    depth="1"
+    segments-width="1"
+    segments-height="1"
+    segments-depth="1"
+></a-box>
+
+# Sphere
+<a-sphere
+    position="0 1.25 -5"
+    radius="1.25"
+    color="#EF2D5E"
+    segments-width="18"
+    segments-height="36"
+    phi-start="0"
+    phi-length="360"
+    theta-start="0"
+    theta-length="180"
+></a-sphere>
+
+# Cylinder
+<a-cylinder
+    position="1 0.75 -3"
+    radius="0.5"
+    height="1.5"
+    color="#FFC65D"
+    segments-radial="36"
+    segments-height="1"
+    open-ended="false"
+    theta-start="0"
+    theta-length="360"
+></a-cylinder>
+
+# Cone
+<a-cone
+    position="0 1 -3"
+    radius-bottom="1"
+    radius-top="0"
+    height="2"
+    color="#FFC65D"
+    segments-radial="36"
+    segments-height="1"
+></a-cone>
+
+# Plane
+<a-plane
+    position="0 0 -4"
+    rotation="-90 0 0"
+    width="4"
+    height="4"
+    color="#7BC8A4"
+    segments-width="1"
+    segments-height="1"
+    side="double"
+></a-plane>
+
+# Circle
+<a-circle
+    position="0 1 -3"
+    radius="1"
+    color="#CCC"
+    segments="32"
+    theta-start="0"
+    theta-length="360"
+></a-circle>
+
+# Ring
+<a-ring
+    position="0 1 -3"
+    radius-inner="0.5"
+    radius-outer="1"
+    color="#CCC"
+    segments-theta="32"
+    segments-phi="8"
+    theta-start="0"
+    theta-length="360"
+></a-ring>
+
+# Torus
+<a-torus
+    position="0 1 -3"
+    radius="1"
+    radius-tubular="0.2"
+    segments-radial="36"
+    segments-tubular="32"
+    arc="360"
+    color="#43A367"
+></a-torus>
+
+# Torus Knot
+<a-torus-knot
+    position="0 1 -3"
+    radius="1"
+    radius-tubular="0.2"
+    segments-radial="36"
+    segments-tubular="32"
+    p="2"
+    q="3"
+    color="#43A367"
+></a-torus-knot>
+
+# Dodecahedron
+<a-dodecahedron
+    position="0 1 -3"
+    radius="1"
+    color="#FF926B"
+></a-dodecahedron>
+
+# Octahedron
+<a-octahedron
+    position="0 1 -3"
+    radius="1"
+    color="#FF926B"
+></a-octahedron>
+
+# Tetrahedron
+<a-tetrahedron
+    position="0 1 -3"
+    radius="1"
+    color="#FF926B"
+></a-tetrahedron>
+
+# Icosahedron
+<a-icosahedron
+    position="0 1 -3"
+    radius="1"
+    color="#FF926B"
+></a-icosahedron>
+
+# Triangle
+<a-triangle
+    position="0 1 -3"
+    vertex-a="0 0.5 0"
+    vertex-b="-0.5 -0.5 0"
+    vertex-c="0.5 -0.5 0"
+    color="#FF926B"
+></a-triangle>
+
+# Sky (environment background)
+<a-sky color="#ECECEC"></a-sky>
+<a-sky src="#sky-texture"></a-sky>
+<a-sky src="sky.jpg"></a-sky>
+
+# Cursor entity (gaze-based interaction)
+<a-cursor
+    color="#FAFAFA"
+    fuse="true"
+    fuse-timeout="1500"
+></a-cursor>
+
+# Image
+<a-image
+    src="image.jpg"
+    position="0 2 -4"
+    width="4"
+    height="3"
+></a-image>
+
+# Video
+<a-video
+    src="video.mp4"
+    position="0 2 -4"
+    width="4"
+    height="2.25"
+    autoplay
+    loop
+></a-video>
+
+# Text
+<a-text
+    value="Hello World"
+    position="0 2 -3"
+    color="#FFF"
+    align="center"
+    width="6"
+    font="roboto"
+></a-text>
+
+# Link (portal to another scene)
+<a-link
+    href="other-page.html"
+    title="Other Scene"
+    position="0 1.6 -4"
+    image="#preview-image"
+></a-link>
+
+==============================================================================
+ENTITY_COMPONENT_SYSTEM
+==============================================================================
+# Entity (base element)
+<a-entity
+    id="myEntity"
+    position="0 1.6 -3"
+    rotation="0 45 0"
+    scale="2 2 2"
+    visible="true"
+></a-entity>
+
+# Adding components to entity
+<a-entity
+    geometry="primitive: box; width: 1; height: 1; depth: 1"
+    material="color: red; metalness: 0.5; roughness: 0.5"
+    position="0 1 -3"
+    animation="property: rotation; to: 0 360 0; loop: true; dur: 2000"
+></a-entity>
+
+# Same as primitive
+<a-box position="0 1 -3" color="red"></a-box>
+<!-- Is equivalent to -->
+<a-entity geometry="primitive: box" material="color: red" position="0 1 -3"></a-entity>
+
+# Accessing entity in JavaScript
+const entity = document.querySelector('#myEntity');
+
+// Get/set components
+entity.getAttribute('position');
+entity.setAttribute('position', { x: 1, y: 2, z: 3 });
+entity.setAttribute('position', '1 2 3');
+
+// Get Three.js object
+const mesh = entity.object3D;
+const geometry = entity.getObject3D('mesh').geometry;
+
+// Add/remove components
+entity.setAttribute('animation', 'property: rotation; to: 0 360 0; loop: true; dur: 2000');
+entity.removeAttribute('animation');
+
+# Entity events
+entity.addEventListener('loaded', () => console.log('Entity loaded'));
+entity.addEventListener('click', () => console.log('Clicked'));
+entity.addEventListener('mouseenter', () => console.log('Mouse enter'));
+entity.addEventListener('mouseleave', () => console.log('Mouse leave'));
+
+==============================================================================
+COMPONENTS
+==============================================================================
+# Position
+position="x y z"
+position="0 1.6 -3"
+
+# Rotation (degrees)
+rotation="x y z"
+rotation="0 45 0"
+
+# Scale
+scale="x y z"
+scale="2 2 2"
+
+# Visible
+visible="true"
+visible="false"
+
+# Geometry
+geometry="
+    primitive: box;
+    width: 1;
+    height: 2;
+    depth: 0.5;
+    segmentsWidth: 2;
+    segmentsHeight: 2;
+    segmentsDepth: 2;
+"
+
+geometry="primitive: sphere; radius: 1; segmentsWidth: 18; segmentsHeight: 36"
+geometry="primitive: cylinder; radius: 0.5; height: 2"
+geometry="primitive: plane; width: 4; height: 4"
+geometry="primitive: torus; radius: 1; radiusTubular: 0.2"
+
+# Material
+material="
+    color: #FFF;
+    opacity: 1;
+    transparent: false;
+    shader: standard;
+    metalness: 0;
+    roughness: 0.5;
+    src: #texture;
+    repeat: 1 1;
+    side: front;
+    flatShading: false;
+    wireframe: false;
+    emissive: #000;
+    emissiveIntensity: 1;
+"
+
+# Shaders
+shader: flat       # No lighting
+shader: standard   # PBR (default)
+shader: phong      # Phong shading
+
+# Light
+light="type: ambient; color: #FFF; intensity: 0.5"
+light="type: directional; color: #FFF; intensity: 1; castShadow: true"
+light="type: point; color: #FFF; intensity: 1; distance: 50; decay: 2"
+light="type: spot; color: #FFF; intensity: 1; angle: 60; penumbra: 0.5"
+light="type: hemisphere; color: #FFF; groundColor: #444; intensity: 1"
+
+<a-entity light="type: directional" position="1 2 1"></a-entity>
+
+# Camera
+<a-entity camera position="0 1.6 0" look-controls wasd-controls></a-entity>
+
+# Or use a-camera primitive
+<a-camera position="0 1.6 0"></a-camera>
+
+# Sound
+<a-entity
+    sound="src: #audio; autoplay: true; loop: true; volume: 0.5; positional: true"
+    position="0 1 -3"
+></a-entity>
+
+# Animation
+animation="
+    property: rotation;
+    from: 0 0 0;
+    to: 0 360 0;
+    dur: 2000;
+    easing: linear;
+    loop: true;
+    dir: normal;
+    delay: 0;
+    startEvents: click;
+    pauseEvents: mouseleave;
+    resumeEvents: mouseenter;
+"
+
+# Multiple animations
+animation__rotate="property: rotation; to: 0 360 0; loop: true; dur: 2000"
+animation__scale="property: scale; to: 2 2 2; dur: 1000; startEvents: click"
+
+# Animation properties
+property: position, rotation, scale, visible, components.material.color, etc.
+from: starting value
+to: ending value
+dur: duration in ms
+delay: delay before start in ms
+easing: linear, easeInQuad, easeOutQuad, easeInOutQuad, easeInCubic, easeOutCubic, etc.
+loop: true/false/number
+dir: normal, alternate, reverse
+startEvents: event names to start
+pauseEvents: event names to pause
+resumeEvents: event names to resume
+
+# Shadow
+shadow="cast: true; receive: true"
+
+# Raycaster
+raycaster="objects: .clickable; far: 100; interval: 100; showLine: true"
+
+# Cursor
+cursor="fuse: true; fuseTimeout: 1500; rayOrigin: mouse"
+
+==============================================================================
+CAMERA_CONTROLS
+==============================================================================
+# Default camera (added automatically if not specified)
+<a-entity camera look-controls wasd-controls position="0 1.6 0"></a-entity>
+
+# Camera with specific controls
+<a-entity
+    camera
+    position="0 1.6 0"
+    look-controls="pointerLockEnabled: true; reverseMouseDrag: false"
+    wasd-controls="acceleration: 65; fly: false"
+></a-entity>
+
+# Third-person camera
+<a-entity id="rig" position="0 0 0">
+    <a-entity camera look-controls position="0 1.6 -3"></a-entity>
+</a-entity>
+
+# Orbit controls (external component)
+<script src="https://unpkg.com/aframe-orbit-controls@1.3.0/dist/aframe-orbit-controls.min.js"></script>
+
+<a-entity
+    camera
+    orbit-controls="
+        target: 0 1.6 0;
+        initialPosition: 0 5 10;
+        minDistance: 2;
+        maxDistance: 100;
+        enableDamping: true;
+        dampingFactor: 0.1;
+        rotateSpeed: 0.5;
+        enableZoom: true;
+        enablePan: true;
+    "
+></a-entity>
+
+# Look-controls options
+look-controls="
+    enabled: true;
+    pointerLockEnabled: false;
+    reverseMouseDrag: false;
+    reverseTouchDrag: false;
+    touchEnabled: true;
+    mouseEnabled: true;
+    magicWindowTrackingEnabled: true;
+"
+
+# WASD-controls options
+wasd-controls="
+    acceleration: 65;
+    adAxis: x;
+    adInverted: false;
+    enabled: true;
+    fly: false;
+    wsAxis: z;
+    wsInverted: false;
+"
+
+==============================================================================
+INTERACTION
+==============================================================================
+# Click/gaze interaction
+<a-entity
+    class="clickable"
+    geometry="primitive: box"
+    material="color: red"
+    event-set__click="_target: #text; visible: true"
+    event-set__mouseenter="_target: #this; material.color: blue"
+    event-set__mouseleave="_target: #this; material.color: red"
+></a-entity>
+
+# Cursor (gaze-based for VR)
+<a-camera>
+    <a-cursor
+        color="white"
+        fuse="true"
+        fuse-timeout="1500"
+        raycaster="objects: .clickable"
+    ></a-cursor>
+</a-camera>
+
+# Raycaster for mouse
+<a-entity
+    cursor="rayOrigin: mouse"
+    raycaster="objects: .clickable"
+></a-entity>
+
+# JavaScript event handling
+const box = document.querySelector('#myBox');
+
+box.addEventListener('click', (evt) => {
+    console.log('Clicked!', evt.detail.intersection);
+});
+
+box.addEventListener('mouseenter', () => {
+    box.setAttribute('material', 'color', 'blue');
+});
+
+box.addEventListener('mouseleave', () => {
+    box.setAttribute('material', 'color', 'red');
+});
+
+box.addEventListener('mousedown', () => {});
+box.addEventListener('mouseup', () => {});
+
+# Laser controls (VR controllers)
+<a-entity
+    laser-controls="hand: left"
+    raycaster="objects: .clickable; far: 100"
+></a-entity>
+
+<a-entity
+    laser-controls="hand: right"
+    raycaster="objects: .clickable; far: 100"
+></a-entity>
+
+==============================================================================
+VR_CONTROLLERS
+==============================================================================
+# Hand controls (generic)
+<a-entity
+    id="leftHand"
+    hand-controls="hand: left; handModelStyle: lowPoly; color: #ffcccc"
+></a-entity>
+
+<a-entity
+    id="rightHand"
+    hand-controls="hand: right; handModelStyle: lowPoly; color: #ccccff"
+></a-entity>
+
+# Laser controls
+<a-entity laser-controls="hand: left"></a-entity>
+<a-entity laser-controls="hand: right"></a-entity>
+
+# Tracked controls (specific hardware)
+<a-entity oculus-touch-controls="hand: left"></a-entity>
+<a-entity oculus-touch-controls="hand: right"></a-entity>
+
+<a-entity vive-controls="hand: left"></a-entity>
+<a-entity vive-controls="hand: right"></a-entity>
+
+<a-entity windows-motion-controls="hand: left"></a-entity>
+<a-entity windows-motion-controls="hand: right"></a-entity>
+
+# Controller events
+const controller = document.querySelector('#rightHand');
+
+controller.addEventListener('triggerdown', () => console.log('Trigger pressed'));
+controller.addEventListener('triggerup', () => console.log('Trigger released'));
+controller.addEventListener('gripdown', () => console.log('Grip pressed'));
+controller.addEventListener('gripup', () => console.log('Grip released'));
+controller.addEventListener('thumbstickdown', () => console.log('Thumbstick pressed'));
+controller.addEventListener('thumbstickmoved', (evt) => {
+    console.log('Thumbstick:', evt.detail.x, evt.detail.y);
+});
+controller.addEventListener('abuttondown', () => console.log('A button pressed'));
+controller.addEventListener('bbuttondown', () => console.log('B button pressed'));
+controller.addEventListener('xbuttondown', () => console.log('X button pressed'));
+controller.addEventListener('ybuttondown', () => console.log('Y button pressed'));
+
+# Full VR rig
+<a-entity id="rig" movement-controls="fly: true">
+    <a-entity camera position="0 1.6 0" look-controls></a-entity>
+    <a-entity laser-controls="hand: left" raycaster="objects: .clickable"></a-entity>
+    <a-entity laser-controls="hand: right" raycaster="objects: .clickable"></a-entity>
+</a-entity>
+
+==============================================================================
+CUSTOM_COMPONENTS
+==============================================================================
+# Register component
+AFRAME.registerComponent('my-component', {
+    // Schema defines properties
+    schema: {
+        color: { type: 'color', default: '#FFF' },
+        speed: { type: 'number', default: 1 },
+        enabled: { type: 'boolean', default: true },
+        target: { type: 'selector' },
+        array: { type: 'array', default: [1, 2, 3] },
+        vec3: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }
+    },
+
+    // Lifecycle methods
+    init: function() {
+        // Called once when component is attached
+        console.log('Component initialized');
+        this.el;          // Reference to entity
+        this.data;        // Component data (from schema)
+        this.el.object3D; // Three.js object
+    },
+
+    update: function(oldData) {
+        // Called when component data changes
+        console.log('Data changed from', oldData, 'to', this.data);
+    },
+
+    tick: function(time, deltaTime) {
+        // Called every frame
+        this.el.object3D.rotation.y += this.data.speed * deltaTime / 1000;
+    },
+
+    tock: function(time, deltaTime) {
+        // Called after scene render
+    },
+
+    remove: function() {
+        // Called when component is removed
+    },
+
+    pause: function() {
+        // Called when entity/scene pauses
+    },
+
+    play: function() {
+        // Called when entity/scene resumes
+    },
+
+    // Custom methods
+    myMethod: function() {
+        // Custom functionality
+    }
+});
+
+// Usage
+<a-entity my-component="color: red; speed: 2"></a-entity>
+
+# Accessing component from JavaScript
+const el = document.querySelector('[my-component]');
+el.components['my-component'].myMethod();
+el.setAttribute('my-component', 'speed', 5);
+
+# Simple rotate component example
+AFRAME.registerComponent('rotate', {
+    schema: {
+        speed: { type: 'number', default: 1 }
+    },
+
+    tick: function(time, deltaTime) {
+        this.el.object3D.rotation.y += this.data.speed * deltaTime / 1000;
+    }
+});
+
+<a-box rotate="speed: 2"></a-box>
+
+# Follow component example
+AFRAME.registerComponent('follow', {
+    schema: {
+        target: { type: 'selector' },
+        speed: { type: 'number', default: 1 }
+    },
+
+    tick: function(time, deltaTime) {
+        if (!this.data.target) return;
+
+        const targetPos = this.data.target.object3D.position;
+        const currentPos = this.el.object3D.position;
+
+        currentPos.lerp(targetPos, this.data.speed * deltaTime / 1000);
+    }
+});
+
+<a-sphere follow="target: #player; speed: 2"></a-sphere>
+
+# Click handler component
+AFRAME.registerComponent('click-handler', {
+    init: function() {
+        this.el.addEventListener('click', () => {
+            this.el.setAttribute('material', 'color', 'red');
+        });
+    }
+});
+
+==============================================================================
+CUSTOM_SYSTEMS
+==============================================================================
+# Register system (shared across entities)
+AFRAME.registerSystem('my-system', {
+    schema: {
+        gravity: { type: 'number', default: -9.8 }
+    },
+
+    init: function() {
+        this.entities = [];
+    },
+
+    registerEntity: function(entity) {
+        this.entities.push(entity);
+    },
+
+    unregisterEntity: function(entity) {
+        const index = this.entities.indexOf(entity);
+        if (index !== -1) {
+            this.entities.splice(index, 1);
+        }
+    },
+
+    tick: function(time, deltaTime) {
+        // Update all registered entities
+        this.entities.forEach(entity => {
+            entity.object3D.position.y += this.data.gravity * deltaTime / 1000;
+        });
+    }
+});
+
+// Component that uses system
+AFRAME.registerComponent('gravity-affected', {
+    init: function() {
+        this.system = this.el.sceneEl.systems['my-system'];
+        this.system.registerEntity(this.el);
+    },
+
+    remove: function() {
+        this.system.unregisterEntity(this.el);
+    }
+});
+
+==============================================================================
+LOADING_ASSETS
+==============================================================================
+# Asset management system
+<a-assets>
+    <!-- Images -->
+    <img id="sky-texture" src="sky.jpg">
+    <img id="ground-texture" src="ground.jpg">
+
+    <!-- Audio -->
+    <audio id="background-music" src="music.mp3"></audio>
+    <audio id="click-sound" src="click.wav"></audio>
+
+    <!-- Video -->
+    <video id="my-video" src="video.mp4" autoplay loop></video>
+
+    <!-- 3D Models -->
+    <a-asset-item id="tree-model" src="tree.gltf"></a-asset-item>
+    <a-asset-item id="car-model" src="car.glb"></a-asset-item>
+
+    <!-- Mixins (reusable component bundles) -->
+    <a-mixin
+        id="red-material"
+        material="color: red; roughness: 0.5"
+    ></a-mixin>
+    <a-mixin
+        id="spin"
+        animation="property: rotation; to: 0 360 0; loop: true; dur: 2000"
+    ></a-mixin>
+</a-assets>
+
+# Using assets
+<a-sky src="#sky-texture"></a-sky>
+<a-plane src="#ground-texture" repeat="10 10"></a-plane>
+<a-entity sound="src: #background-music; autoplay: true; loop: true"></a-entity>
+<a-entity gltf-model="#tree-model"></a-entity>
+
+# Using mixins
+<a-box mixin="red-material spin"></a-box>
+
+# Asset events
+<a-assets
+    timeout="10000"
+    @loaded="assetsLoaded"
+>
+    <!-- assets -->
+</a-assets>
+
+const assets = document.querySelector('a-assets');
+assets.addEventListener('loaded', () => {
+    console.log('All assets loaded');
+});
+
+# Loading screen
+<a-scene loading-screen="dotsColor: white; backgroundColor: black">
+    <a-assets>
+        <!-- Heavy assets -->
+    </a-assets>
+</a-scene>
+
+==============================================================================
+GLTF_MODELS
+==============================================================================
+# Basic GLTF loading
+<a-entity gltf-model="url(model.gltf)"></a-entity>
+<a-entity gltf-model="url(model.glb)"></a-entity>
+
+# With asset
+<a-assets>
+    <a-asset-item id="model" src="model.glb"></a-asset-item>
+</a-assets>
+
+<a-entity gltf-model="#model" position="0 0 -5" scale="0.5 0.5 0.5"></a-entity>
+
+# Animation from GLTF
+<a-entity
+    gltf-model="#character"
+    animation-mixer="clip: walk; loop: repeat"
+></a-entity>
+
+# animation-mixer component (external)
+<script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
+
+<a-entity
+    gltf-model="#model"
+    animation-mixer="clip: *; loop: repeat; timeScale: 1"
+></a-entity>
+
+# Accessing model parts
+const model = document.querySelector('[gltf-model]');
+
+model.addEventListener('model-loaded', () => {
+    const mesh = model.getObject3D('mesh');
+
+    mesh.traverse((node) => {
+        if (node.isMesh) {
+            console.log('Mesh:', node.name);
+            node.material.color.set('red');
+        }
+    });
+});
+
+==============================================================================
+ENVIRONMENT
+==============================================================================
+# aframe-environment-component (external)
+<script src="https://unpkg.com/aframe-environment-component@1.3.2/dist/aframe-environment-component.min.js"></script>
+
+<a-entity environment="
+    preset: forest;
+    skyType: gradient;
+    skyColor: #24b59f;
+    horizonColor: #eff9b7;
+    lighting: distant;
+    shadow: true;
+    fog: 0.8;
+    flatShading: false;
+    playArea: 1;
+    ground: flat;
+    groundColor: #445;
+    groundColor2: #556;
+    groundTexture: walkernoise;
+    groundYScale: 3;
+    dressing: trees;
+    dressingAmount: 500;
+    dressingColor: #795449;
+    dressingScale: 5;
+    dressingVariance: 1 1 1;
+    grid: none;
+"></a-entity>
+
+# Presets
+preset: default, contact, egypt, checkerboard, forest, goaland, yavapai,
+        goldmine, threetowers, poison, arches, tron, japan, dream,
+        volcano, starry, osiris
+
+# Custom sky
+<a-sky src="sky.jpg"></a-sky>
+<a-sky color="#87CEEB"></a-sky>
+
+# Gradient sky
+<a-sky
+    material="shader: gradient; topColor: 1 0.5 0; bottomColor: 0 0 0.5"
+></a-sky>
+
+# 360 photo/video
+<a-sky src="360-photo.jpg"></a-sky>
+<a-videosphere src="360-video.mp4"></a-videosphere>
+
+# Fog
+<a-scene fog="type: linear; color: #AAA; near: 1; far: 100"></a-scene>
+<a-scene fog="type: exponential; color: #AAA; density: 0.05"></a-scene>
+
+==============================================================================
+PHYSICS
+==============================================================================
+# aframe-physics-system (Cannon.js)
+<script src="https://cdn.jsdelivr.net/gh/n5ro/aframe-physics-system@v4.0.1/dist/aframe-physics-system.min.js"></script>
+
+<a-scene physics="debug: true; gravity: 0 -9.8 0">
+    <!-- Dynamic body (affected by physics) -->
+    <a-sphere
+        dynamic-body="mass: 1; shape: sphere"
+        position="0 5 -3"
+        radius="0.5"
+        color="red"
+    ></a-sphere>
+
+    <!-- Static body (doesn't move) -->
+    <a-plane
+        static-body
+        position="0 0 -3"
+        rotation="-90 0 0"
+        width="10"
+        height="10"
+        color="green"
+    ></a-plane>
+</a-scene>
+
+# Body types
+dynamic-body="mass: 1; shape: auto"    # Affected by physics
+static-body                             # Fixed, doesn't move
+kinematic-body                          # Controlled by code, affects others
+
+# Shapes
+shape: auto      # Auto-detect
+shape: box
+shape: sphere
+shape: cylinder
+shape: hull      # Convex hull
+
+# Collision events
+const sphere = document.querySelector('[dynamic-body]');
+
+sphere.addEventListener('collide', (evt) => {
+    console.log('Collided with:', evt.detail.body.el);
+});
+
+# Apply force
+sphere.body.applyImpulse(
+    new CANNON.Vec3(0, 10, 0),
+    sphere.body.position
+);
+
+# Constraints
+<a-entity constraint="type: lock; target: #otherBody"></a-entity>
+<a-entity constraint="type: distance; target: #otherBody; distance: 2"></a-entity>
+<a-entity constraint="type: hinge; target: #otherBody; pivot: 0 1 0; axis: 0 1 0"></a-entity>
+
+==============================================================================
+NETWORKING_MULTIPLAYER
+==============================================================================
+# Networked A-Frame (NAF)
+<script src="https://unpkg.com/networked-aframe@^0.11.0/dist/networked-aframe.min.js"></script>
+<script src="https://unpkg.com/easyrtc/api/easyrtc.js"></script>
+
+<a-scene
+    networked-scene="
+        room: my-room;
+        debug: true;
+        adapter: easyrtc;
+        audio: true;
+        video: false;
+    "
+>
+    <a-assets>
+        <template id="avatar-template">
+            <a-entity class="avatar">
+                <a-sphere class="head" scale="0.45 0.5 0.4"></a-sphere>
+                <a-entity class="face" position="0 0.05 -0.1">
+                    <a-sphere class="eye" position="-0.16 0.1 -0.35" scale="0.12 0.12 0.12"></a-sphere>
+                    <a-sphere class="eye" position="0.16 0.1 -0.35" scale="0.12 0.12 0.12"></a-sphere>
+                </a-entity>
+            </a-entity>
+        </template>
+    </a-assets>
+
+    <!-- Local player -->
+    <a-entity
+        id="player"
+        networked="template: #avatar-template; attachTemplateToLocal: false"
+        camera
+        position="0 1.6 0"
+        wasd-controls
+        look-controls
+    >
+        <a-sphere class="head" visible="false"></a-sphere>
+    </a-entity>
+</a-scene>
+
+# Networked objects
+<a-entity
+    id="shared-box"
+    networked="template: #box-template; networkId: shared-box; persistent: true; owner: scene"
+    geometry="primitive: box"
+    material="color: red"
+    position="0 1 -3"
+></a-entity>
+
+==============================================================================
+USEFUL_EXTERNAL_COMPONENTS
+==============================================================================
+# aframe-extras (movement, animation, etc.)
+<script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
+
+# Movement controls
+<a-entity movement-controls="fly: true; speed: 0.3">
+    <a-entity camera position="0 1.6 0" look-controls></a-entity>
+</a-entity>
+
+# Pathfinding
+<a-entity nav-mesh="src: navmesh.gltf"></a-entity>
+<a-entity nav-agent="speed: 1.5; destination: 5 0 5"></a-entity>
+
+# Super hands (grabbing in VR)
+<script src="https://unpkg.com/super-hands@^3.0.0/dist/super-hands.min.js"></script>
+
+<a-entity
+    hand-controls="hand: right"
+    super-hands
+></a-entity>
+
+<a-box
+    hoverable
+    grabbable
+    stretchable
+    draggable
+></a-box>
+
+# Particle system
+<script src="https://unpkg.com/aframe-particle-system-component@1.0.x/dist/aframe-particle-system-component.min.js"></script>
+
+<a-entity
+    particle-system="
+        preset: snow;
+        particleCount: 5000;
+        color: #ffffff;
+        size: 0.1;
+    "
+></a-entity>
+
+# Text geometry (3D text)
+<script src="https://unpkg.com/aframe-text-geometry-component@^0.5.0/dist/aframe-text-geometry-component.min.js"></script>
+
+<a-entity
+    text-geometry="value: Hello; font: #font; size: 0.5"
+    material="color: red"
+></a-entity>
+
+# Teleport controls
+<script src="https://unpkg.com/aframe-teleport-controls@^0.3.0/dist/aframe-teleport-controls.min.js"></script>
+
+<a-entity
+    teleport-controls="cameraRig: #rig; teleportOrigin: #head"
+    hand-controls="hand: left"
+></a-entity>
+
+==============================================================================
+INSPECTOR
+==============================================================================
+# Open inspector
+Press Ctrl + Alt + I (or Cmd + Option + I on Mac)
+
+# Or via JavaScript
+document.querySelector('a-scene').components.inspector.openInspector();
+
+# Custom inspector URL
+<a-scene inspector="url: https://aframe.io/aframe-inspector/dist/aframe-inspector.min.js">
+
+# Inspector features
+- Visual scene editing
+- Component editing
+- Entity hierarchy
+- Export scene HTML
+- Copy entity HTML
+
+==============================================================================
+PERFORMANCE
+==============================================================================
+# Stats panel
+<a-scene stats></a-scene>
+
+# Optimize rendering
+<a-scene renderer="antialias: false"></a-scene>
+
+# Reduce draw calls
+- Use geometry merging
+- Use instancing
+- Reduce unique materials
+
+# Geometry instancing component
+<script src="https://unpkg.com/aframe-instanced-mesh@^1.0.0/dist/aframe-instanced-mesh.min.js"></script>
+
+<a-entity
+    instanced-mesh="
+        src: #tree-model;
+        positions: positions.json;
+        capacity: 1000;
+    "
+></a-entity>
+
+# LOD (Level of Detail)
+AFRAME.registerComponent('lod', {
+    schema: {
+        near: { type: 'selector' },
+        far: { type: 'selector' },
+        distance: { type: 'number', default: 10 }
+    },
+
+    tick: function() {
+        const camera = this.el.sceneEl.camera;
+        const distance = this.el.object3D.position.distanceTo(camera.position);
+
+        if (distance < this.data.distance) {
+            this.data.near.object3D.visible = true;
+            this.data.far.object3D.visible = false;
+        } else {
+            this.data.near.object3D.visible = false;
+            this.data.far.object3D.visible = true;
+        }
+    }
+});
+
+# Object pooling
+<a-scene pool="mixin: bullet; size: 10">
+    <a-mixin id="bullet" geometry="primitive: sphere; radius: 0.1" material="color: yellow"></a-mixin>
+</a-scene>
+
+// Get from pool
+const bullet = document.querySelector('a-scene').components.pool.requestEntity();
+
+// Return to pool
+document.querySelector('a-scene').components.pool.returnEntity(bullet);
+
+# Frustum culling (automatic, but can force)
+<a-entity
+    geometry="primitive: box"
+    frustum-culled="false"
+></a-entity>

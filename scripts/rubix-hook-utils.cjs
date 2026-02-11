@@ -26,7 +26,8 @@ const PROJECT_MAPPINGS = [
     ],
     instance: 'rubix-frm-brain',
     name: 'God-Agent',
-    tools: 'mcp__rubix-frm-brain__*'
+    tools: 'mcp__rubix-frm-brain__*',
+    coreSkills: ['polyglot:wordpress', 'polyglot:javascript', 'polyglot:leaflet']
   }
 ];
 
@@ -112,7 +113,8 @@ function detectProject(cwd) {
     instance: matched.instance,
     name: matched.name,
     tools: matched.tools,
-    dataDir
+    dataDir,
+    coreSkills: matched.coreSkills || []
   };
 }
 
@@ -225,6 +227,144 @@ function httpGet(url, timeoutMs = 200) {
   });
 }
 
+/**
+ * Keyword → polyglot tag mapping for prompt-level skill detection.
+ * Lightweight version of SkillDetector.ts for CJS hooks.
+ */
+const PROMPT_SKILL_MAP = {
+  'wordpress': 'polyglot:wordpress',
+  'wp': 'polyglot:wordpress',
+  'plugin': 'polyglot:wordpress',
+  'hook': 'polyglot:wordpress',
+  'php': 'polyglot:php',
+  'javascript': 'polyglot:javascript',
+  'js': 'polyglot:javascript',
+  'typescript': 'polyglot:javascript',
+  'jquery': 'polyglot:javascript',
+  'react': 'polyglot:javascript',
+  'vue': 'polyglot:javascript',
+  'leaflet': 'polyglot:leaflet',
+  'map': 'polyglot:leaflet',
+  'marker': 'polyglot:leaflet',
+  'geojson': 'polyglot:leaflet',
+  'tile': 'polyglot:leaflet',
+  'three.js': 'polyglot:threejs',
+  'threejs': 'polyglot:threejs',
+  'three js': 'polyglot:threejs',
+  'babylon': 'polyglot:babylonjs',
+  'babylonjs': 'polyglot:babylonjs',
+  'babylon.js': 'polyglot:babylonjs',
+  'r3f': 'polyglot:r3f',
+  'react-three-fiber': 'polyglot:r3f',
+  'react three fiber': 'polyglot:r3f',
+  'drei': 'polyglot:r3f',
+  'fiber': 'polyglot:r3f',
+  'aframe': 'polyglot:aframe',
+  'a-frame': 'polyglot:aframe',
+  'a frame': 'polyglot:aframe',
+  'webvr': 'polyglot:aframe',
+  'webxr': 'polyglot:aframe',
+  'webgl': 'polyglot:js3d',
+  '3d': 'polyglot:js3d',
+  'laravel': 'polyglot:laravel',
+  'api': 'polyglot:api',
+  'rest': 'polyglot:api',
+  'database': 'polyglot:database',
+  'sql': 'polyglot:database',
+  'mysql': 'polyglot:database',
+  'auth': 'polyglot:auth',
+  'docker': 'polyglot:deployment',
+  'deploy': 'polyglot:deployment',
+  'test': 'polyglot:testing',
+  'jest': 'polyglot:testing',
+  'git': 'polyglot:git',
+  'vite': 'polyglot:vite_build',
+  'webpack': 'polyglot:vite_build',
+  'node.js': 'polyglot:nodejs',
+  'nodejs': 'polyglot:nodejs',
+  'python': 'polyglot:python',
+};
+
+/**
+ * Detect polyglot skills from prompt text.
+ * Returns unique polyglot tags found in the text.
+ */
+function detectPromptSkills(text) {
+  if (!text || text.length < 5) return [];
+  const lower = text.toLowerCase();
+  const detected = new Set();
+
+  for (const [keyword, tag] of Object.entries(PROMPT_SKILL_MAP)) {
+    if (keyword.length <= 3) {
+      // Word boundary match for short keywords
+      const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (regex.test(lower)) {
+        detected.add(tag);
+      }
+    } else {
+      if (lower.includes(keyword)) {
+        detected.add(tag);
+      }
+    }
+  }
+
+  return Array.from(detected);
+}
+
+/**
+ * Query polyglot entries directly from memory.db via SQLite.
+ * No daemon needed — reads the DB file directly (readonly).
+ *
+ * @param {string} dataDir - Resolved absolute path to data directory
+ * @param {string[]} tags - Polyglot tags to match (OR logic)
+ * @param {number} limit - Max entries to return (default 3)
+ * @returns {Array<{id: string, content: string, importance: number, all_tags: string}>}
+ */
+function getPolyglotEntries(dataDir, tags, limit = 3) {
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = path.join(dataDir, 'memory.db');
+    if (!fs.existsSync(dbPath)) return [];
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const placeholders = tags.map(() => '?').join(',');
+      return db.prepare(`
+        SELECT DISTINCT me.id, me.content, me.importance,
+               GROUP_CONCAT(mt2.tag) as all_tags
+        FROM memory_entries me
+        JOIN memory_tags mt ON me.id = mt.entry_id
+        LEFT JOIN memory_tags mt2 ON me.id = mt2.entry_id
+        WHERE mt.tag IN (${placeholders})
+        GROUP BY me.id
+        ORDER BY me.importance DESC
+        LIMIT ?
+      `).all(...tags, limit);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read persisted instance identity from data/hook-identity.json.
+ * Written by MCP server on god_comms_heartbeat.
+ * Returns { instanceId, role, timestamp } or null.
+ */
+function readHookIdentity(dataDir) {
+  try {
+    const identityPath = path.join(dataDir, 'hook-identity.json');
+    if (!fs.existsSync(identityPath)) return null;
+    const raw = fs.readFileSync(identityPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.instanceId) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   RUBIX_ROOT,
   AFK_STATE_PATH,
@@ -235,5 +375,8 @@ module.exports = {
   detectProject,
   resolveMcpConfig,
   httpPost,
-  httpGet
+  httpGet,
+  detectPromptSkills,
+  getPolyglotEntries,
+  readHookIdentity
 };

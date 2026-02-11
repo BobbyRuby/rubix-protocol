@@ -256,7 +256,12 @@ export class VectorDB {
       throw new Error(`Index file not found: ${this.config.indexPath}`);
     }
 
-    const content = readFileSync(this.config.indexPath, 'utf-8');
+    const content = readFileSync(this.config.indexPath, 'utf-8').trim();
+    if (!content) {
+      // Empty file - treat as no data (will be recreated on next save)
+      console.warn(`VectorDB: Index file is empty, will rebuild: ${this.config.indexPath}`);
+      return;
+    }
     const parsed = JSON.parse(content);
 
     // Handle legacy format (array of StoredVector)
@@ -296,7 +301,11 @@ export class VectorDB {
       return;
     }
 
-    const content = readFileSync(this.config.indexPath, 'utf-8');
+    const content = readFileSync(this.config.indexPath, 'utf-8').trim();
+    if (!content) {
+      console.warn(`VectorDB: Index file is empty, skipping brute-force load: ${this.config.indexPath}`);
+      return;
+    }
     const parsed = JSON.parse(content);
 
     // Handle both legacy and new formats

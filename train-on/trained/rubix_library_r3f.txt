@@ -1,0 +1,1224 @@
+# RUBIX LIBRARY: REACT_THREE_FIBER
+# VERSION: 8.x (2024)
+# SITE: docs.pmnd.rs/react-three-fiber
+# REPO: github.com/pmndrs/react-three-fiber
+# USE_FOR: react_3D_apps|data_viz|product_viewers|games|creative_coding
+# PHILOSOPHY: declarative|react_paradigm|hooks_based|drei_ecosystem
+
+==============================================================================
+SETUP_INSTALLATION
+==============================================================================
+# Core packages
+npm install @react-three/fiber three
+npm install @types/three  # TypeScript
+
+# Essential companion libraries
+npm install @react-three/drei       # Helpers and abstractions
+npm install @react-three/postprocessing  # Post-processing effects
+npm install @react-three/rapier     # Physics (Rapier)
+npm install @react-three/cannon     # Physics (Cannon.js)
+npm install @react-three/xr         # VR/AR support
+npm install @react-three/a11y       # Accessibility
+
+# Animation
+npm install @react-spring/three     # Spring animations
+npm install maath                   # Math utilities
+
+# State management
+npm install zustand                 # Recommended for R3F
+npm install leva                    # GUI controls
+
+# Basic imports
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Environment } from '@react-three/drei';
+import * as THREE from 'three';
+
+==============================================================================
+CANVAS_SETUP
+==============================================================================
+# Basic Canvas
+function App() {
+    return (
+        <Canvas>
+            <mesh>
+                <boxGeometry />
+                <meshStandardMaterial color="orange" />
+            </mesh>
+        </Canvas>
+    );
+}
+
+# Canvas with options
+<Canvas
+    // Renderer settings
+    gl={{ 
+        antialias: true,
+        alpha: false,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 1
+    }}
+    
+    // Camera settings
+    camera={{ 
+        position: [0, 5, 10],
+        fov: 75,
+        near: 0.1,
+        far: 1000
+    }}
+    
+    // Or orthographic
+    orthographic
+    camera={{ zoom: 50, position: [0, 0, 100] }}
+    
+    // Scene settings
+    scene={{ background: new THREE.Color('#000000') }}
+    
+    // Shadows
+    shadows
+    shadows="soft"  // or "basic", "percentage", "soft", "variance"
+    
+    // Performance
+    dpr={[1, 2]}  // Pixel ratio range
+    performance={{ min: 0.5 }}
+    frameloop="demand"  // or "always", "never"
+    
+    // Events
+    onCreated={({ gl, scene, camera }) => {
+        console.log('Canvas created');
+    }}
+    onPointerMissed={() => {
+        console.log('Clicked outside objects');
+    }}
+    
+    // Raycaster settings
+    raycaster={{ params: { Line: { threshold: 0.1 } } }}
+    
+    // Misc
+    flat  // No tone mapping
+    linear  // Linear color space
+    legacy  // Enable THREE.ColorManagement.legacyMode
+    style={{ width: '100%', height: '100vh' }}
+>
+    {/* Scene contents */}
+</Canvas>
+
+# Multiple scenes
+<Canvas>
+    <Scene1 />
+</Canvas>
+<Canvas>
+    <Scene2 />
+</Canvas>
+
+==============================================================================
+HOOKS
+==============================================================================
+# useFrame (animation loop)
+import { useFrame } from '@react-three/fiber';
+
+function AnimatedBox() {
+    const meshRef = useRef();
+    
+    useFrame((state, delta) => {
+        // state contains: clock, camera, scene, gl, size, viewport, etc.
+        meshRef.current.rotation.x += delta;
+        meshRef.current.rotation.y += delta * 0.5;
+        
+        // Access time
+        const t = state.clock.getElapsedTime();
+        meshRef.current.position.y = Math.sin(t) * 2;
+    });
+    
+    return (
+        <mesh ref={meshRef}>
+            <boxGeometry />
+            <meshStandardMaterial />
+        </mesh>
+    );
+}
+
+# useFrame with priority (order of execution)
+useFrame((state, delta) => {
+    // Runs first
+}, -1);
+
+useFrame((state, delta) => {
+    // Runs last
+}, 1);
+
+# useThree (access Three.js objects)
+import { useThree } from '@react-three/fiber';
+
+function Component() {
+    const {
+        gl,           // WebGLRenderer
+        scene,        // Scene
+        camera,       // Camera
+        raycaster,    // Raycaster
+        pointer,      // Normalized pointer position
+        mouse,        // Deprecated, use pointer
+        clock,        // THREE.Clock
+        size,         // { width, height }
+        viewport,     // { width, height, factor, distance, aspect }
+        set,          // Setter for state
+        get,          // Getter for state
+        invalidate,   // Trigger re-render (for frameloop="demand")
+        advance,      // Advance one frame
+        setSize,      // Resize
+        setDpr,       // Set pixel ratio
+        setFrameloop, // Change frameloop mode
+        events,       // Event manager
+        performance,  // Performance info
+    } = useThree();
+    
+    return null;
+}
+
+# Selective subscription (performance)
+const camera = useThree((state) => state.camera);
+const viewport = useThree((state) => state.viewport);
+
+# useLoader (load assets)
+import { useLoader } from '@react-three/fiber';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import { TextureLoader } from 'three';
+
+function Model() {
+    const gltf = useLoader(GLTFLoader, '/model.glb');
+    return <primitive object={gltf.scene} />;
+}
+
+function TexturedMesh() {
+    const texture = useLoader(TextureLoader, '/texture.jpg');
+    return (
+        <mesh>
+            <boxGeometry />
+            <meshStandardMaterial map={texture} />
+        </mesh>
+    );
+}
+
+// Multiple textures
+const [colorMap, normalMap, roughnessMap] = useLoader(TextureLoader, [
+    '/color.jpg',
+    '/normal.jpg', 
+    '/roughness.jpg'
+]);
+
+// With Suspense for loading
+function App() {
+    return (
+        <Canvas>
+            <Suspense fallback={<LoadingSpinner />}>
+                <Model />
+            </Suspense>
+        </Canvas>
+    );
+}
+
+# useGraph (traverse loaded model)
+import { useGraph } from '@react-three/fiber';
+
+function Model() {
+    const { scene } = useLoader(GLTFLoader, '/model.glb');
+    const { nodes, materials } = useGraph(scene);
+    
+    return (
+        <mesh geometry={nodes.MeshName.geometry} material={materials.MaterialName} />
+    );
+}
+
+==============================================================================
+JSX_ELEMENTS
+==============================================================================
+# Mesh
+<mesh
+    position={[0, 0, 0]}
+    rotation={[0, Math.PI / 4, 0]}
+    scale={[1, 1, 1]}
+    castShadow
+    receiveShadow
+    visible={true}
+    frustumCulled={true}
+    renderOrder={0}
+    onClick={(e) => console.log('clicked', e.point)}
+    onPointerOver={(e) => console.log('hover')}
+    onPointerOut={(e) => console.log('unhover')}
+>
+    <boxGeometry args={[1, 1, 1]} />
+    <meshStandardMaterial color="red" />
+</mesh>
+
+# Geometries (args = constructor parameters)
+<boxGeometry args={[width, height, depth, widthSegments, heightSegments, depthSegments]} />
+<sphereGeometry args={[radius, widthSegments, heightSegments]} />
+<planeGeometry args={[width, height]} />
+<cylinderGeometry args={[radiusTop, radiusBottom, height, radialSegments]} />
+<coneGeometry args={[radius, height, radialSegments]} />
+<torusGeometry args={[radius, tube, radialSegments, tubularSegments]} />
+<torusKnotGeometry args={[radius, tube, tubularSegments, radialSegments]} />
+<ringGeometry args={[innerRadius, outerRadius, thetaSegments]} />
+<circleGeometry args={[radius, segments]} />
+<capsuleGeometry args={[radius, length, capSegments, radialSegments]} />
+
+# BufferGeometry
+<bufferGeometry>
+    <bufferAttribute
+        attach="attributes-position"
+        count={vertices.length / 3}
+        array={vertices}
+        itemSize={3}
+    />
+</bufferGeometry>
+
+# Materials
+<meshBasicMaterial color="red" wireframe />
+<meshStandardMaterial 
+    color="red"
+    metalness={0.5}
+    roughness={0.5}
+    map={texture}
+    normalMap={normalTexture}
+    envMapIntensity={1}
+/>
+<meshPhysicalMaterial
+    transmission={1}
+    thickness={0.5}
+    roughness={0}
+    clearcoat={1}
+/>
+<meshLambertMaterial color="green" />
+<meshPhongMaterial color="blue" shininess={100} />
+<meshToonMaterial color="purple" />
+<meshNormalMaterial />
+<meshDepthMaterial />
+<meshMatcapMaterial matcap={matcapTexture} />
+
+# Custom shader material
+<shaderMaterial
+    uniforms={{
+        time: { value: 0 },
+        color: { value: new THREE.Color('red') }
+    }}
+    vertexShader={vertexShader}
+    fragmentShader={fragmentShader}
+    transparent
+/>
+
+# Lights
+<ambientLight intensity={0.5} />
+<directionalLight 
+    position={[10, 10, 5]} 
+    intensity={1}
+    castShadow
+    shadow-mapSize={[2048, 2048]}
+    shadow-camera-far={50}
+    shadow-camera-left={-10}
+    shadow-camera-right={10}
+    shadow-camera-top={10}
+    shadow-camera-bottom={-10}
+/>
+<pointLight position={[0, 10, 0]} intensity={1} distance={100} decay={2} />
+<spotLight 
+    position={[0, 10, 0]}
+    angle={Math.PI / 6}
+    penumbra={0.5}
+    intensity={1}
+    castShadow
+/>
+<hemisphereLight skyColor="white" groundColor="brown" intensity={0.5} />
+<rectAreaLight width={4} height={4} intensity={5} position={[0, 5, 0]} />
+
+# Camera (override default)
+<perspectiveCamera makeDefault position={[0, 5, 10]} fov={75} />
+<orthographicCamera makeDefault zoom={50} position={[0, 0, 100]} />
+
+# Groups
+<group position={[0, 0, 0]} rotation={[0, 0, 0]}>
+    <mesh position={[1, 0, 0]}>...</mesh>
+    <mesh position={[-1, 0, 0]}>...</mesh>
+</group>
+
+# Primitive (use existing Three.js object)
+const geometry = new THREE.BoxGeometry();
+const material = new THREE.MeshStandardMaterial();
+const mesh = new THREE.Mesh(geometry, material);
+
+<primitive object={mesh} position={[0, 0, 0]} />
+
+# Nested properties (dash syntax)
+<mesh position-x={5} rotation-y={Math.PI} scale-x={2} />
+<directionalLight shadow-mapSize-width={2048} />
+
+# Attach (custom attachment point)
+<mesh>
+    <boxGeometry />
+    <meshStandardMaterial attach="material-0" />  {/* For multi-material */}
+</mesh>
+
+# Args (constructor arguments)
+<boxGeometry args={[1, 2, 3]} />
+
+# Object spread
+const props = { position: [0, 1, 0], rotation: [0, Math.PI, 0] };
+<mesh {...props} />
+
+==============================================================================
+EVENTS
+==============================================================================
+# Pointer events
+<mesh
+    onClick={(e) => {
+        e.stopPropagation();
+        console.log('point', e.point);       // Intersection point
+        console.log('distance', e.distance); // Distance from camera
+        console.log('face', e.face);         // Intersected face
+        console.log('faceIndex', e.faceIndex);
+        console.log('uv', e.uv);             // UV coordinates
+        console.log('object', e.object);     // Intersected object
+        console.log('eventObject', e.eventObject); // Object with handler
+    }}
+    onContextMenu={(e) => console.log('right click')}
+    onDoubleClick={(e) => console.log('double click')}
+    onPointerUp={(e) => console.log('pointer up')}
+    onPointerDown={(e) => console.log('pointer down')}
+    onPointerOver={(e) => console.log('pointer over')}
+    onPointerOut={(e) => console.log('pointer out')}
+    onPointerEnter={(e) => console.log('pointer enter')}
+    onPointerLeave={(e) => console.log('pointer leave')}
+    onPointerMove={(e) => console.log('pointer move')}
+    onPointerMissed={() => console.log('clicked outside')}
+    onUpdate={(self) => console.log('object updated')}
+/>
+
+# Wheel event
+<mesh onWheel={(e) => console.log('wheel', e.delta)} />
+
+# Event propagation
+<mesh onClick={(e) => {
+    e.stopPropagation();  // Stop bubbling
+}}>
+    <mesh onClick={(e) => {
+        // This won't fire if parent stops propagation
+    }} />
+</mesh>
+
+# Disable events on specific mesh
+<mesh raycast={() => null} />
+
+==============================================================================
+DREI_HELPERS
+==============================================================================
+import {
+    OrbitControls,
+    TransformControls,
+    PivotControls,
+    Environment,
+    useGLTF,
+    useTexture,
+    useFBX,
+    Html,
+    Text,
+    Text3D,
+    Float,
+    PresentationControls,
+    Stage,
+    ContactShadows,
+    Sky,
+    Stars,
+    Cloud,
+    Sparkles,
+    useHelper,
+    Stats,
+    GizmoHelper,
+    GizmoViewport,
+    Grid,
+    Center,
+    Bounds,
+    useBounds,
+    Billboard,
+    ScreenSpace,
+    Loader,
+    useProgress,
+    Preload,
+    BakeShadows,
+    softShadows,
+    AccumulativeShadows,
+    RandomizedLight,
+    Lightformer,
+    useAnimations,
+    useCursor,
+    useIntersect,
+    MeshReflectorMaterial,
+    MeshTransmissionMaterial,
+    MeshDistortMaterial,
+    MeshWobbleMaterial,
+    shaderMaterial,
+    useDetectGPU,
+    Detailed,
+    Instances,
+    Instance,
+    Merged,
+    Points,
+    Point,
+    Line,
+    QuadraticBezierLine,
+    CubicBezierLine,
+    CatmullRomLine,
+    Edges,
+    Outlines,
+    Trail,
+    useTrail,
+    Sampler,
+    ComputedAttribute,
+    Clone,
+    useBoxProjectedEnv,
+    CameraShake,
+    MotionPathControls,
+    ScrollControls,
+    useScroll,
+    Scroll,
+    Image,
+    useVideoTexture,
+    useAspect,
+    useCubeTexture,
+    useEnvironment,
+    Reflector,
+    Shadow,
+    Caustics,
+    PositionalAudio,
+    Hud,
+    View,
+    RenderTexture,
+    Mask,
+    useMask,
+    PerformanceMonitor,
+    usePerformanceMonitor,
+    Bvh,
+    meshBounds,
+    shapecast,
+    Decal,
+    useDecal,
+    Wireframe,
+    ScreenQuad,
+    FaceControls,
+    KeyboardControls,
+    useKeyboardControls,
+    PointerLockControls,
+    FirstPersonControls,
+    ArcballControls,
+    MapControls,
+    TrackballControls,
+    FlyControls,
+    DeviceOrientationControls,
+    CameraControls
+} from '@react-three/drei';
+
+# OrbitControls
+<OrbitControls
+    makeDefault
+    enableDamping
+    dampingFactor={0.05}
+    enableZoom={true}
+    enablePan={true}
+    enableRotate={true}
+    minDistance={2}
+    maxDistance={100}
+    minPolarAngle={0}
+    maxPolarAngle={Math.PI / 2}
+    target={[0, 0, 0]}
+    autoRotate
+    autoRotateSpeed={2}
+/>
+
+# TransformControls (move/rotate/scale objects)
+const meshRef = useRef();
+
+<TransformControls object={meshRef} mode="translate" />
+<mesh ref={meshRef}>...</mesh>
+
+# Environment
+<Environment
+    preset="sunset"  // apartment, city, dawn, forest, lobby, night, park, studio, sunset, warehouse
+    background
+    blur={0}
+/>
+
+// Or custom HDR
+<Environment files="/hdr/environment.hdr" background />
+
+// Or cube texture
+<Environment files={['px.jpg', 'nx.jpg', 'py.jpg', 'ny.jpg', 'pz.jpg', 'nz.jpg']} />
+
+# useGLTF (load GLTF/GLB)
+const { scene, nodes, materials, animations } = useGLTF('/model.glb');
+
+return <primitive object={scene} />;
+
+// Or selective
+return (
+    <mesh geometry={nodes.Mesh.geometry} material={materials.Material} />
+);
+
+// Preload
+useGLTF.preload('/model.glb');
+
+# useTexture
+const texture = useTexture('/texture.jpg');
+const [colorMap, normalMap] = useTexture(['/color.jpg', '/normal.jpg']);
+
+// With options
+const props = useTexture({
+    map: '/color.jpg',
+    normalMap: '/normal.jpg',
+    roughnessMap: '/roughness.jpg'
+});
+
+<meshStandardMaterial {...props} />
+
+# Html (DOM elements in 3D)
+<Html
+    position={[0, 2, 0]}
+    center
+    distanceFactor={10}  // Scale based on distance
+    occlude={[meshRef]}  // Hide when occluded
+    transform            // Use CSS3D transform
+    sprite               // Always face camera
+    style={{ color: 'white' }}
+>
+    <div className="label">Hello World</div>
+</Html>
+
+# Text (SDF text)
+<Text
+    position={[0, 2, 0]}
+    fontSize={0.5}
+    color="white"
+    anchorX="center"
+    anchorY="middle"
+    font="/fonts/inter.woff"
+    maxWidth={10}
+    lineHeight={1}
+    letterSpacing={0}
+    textAlign="center"
+>
+    Hello World
+</Text>
+
+# Text3D (extruded 3D text)
+<Text3D
+    font="/fonts/helvetiker_regular.typeface.json"
+    size={1}
+    height={0.2}
+    curveSegments={12}
+    bevelEnabled
+    bevelThickness={0.02}
+    bevelSize={0.02}
+    bevelSegments={5}
+>
+    Hello
+    <meshStandardMaterial color="white" />
+</Text3D>
+
+# Float (hovering animation)
+<Float
+    speed={2}
+    rotationIntensity={1}
+    floatIntensity={2}
+    floatingRange={[-0.1, 0.1]}
+>
+    <mesh>...</mesh>
+</Float>
+
+# Stage (lighting setup)
+<Stage
+    environment="city"
+    intensity={0.5}
+    contactShadow={{ blur: 2, far: 4 }}
+    shadows="contact"
+>
+    <Model />
+</Stage>
+
+# ContactShadows
+<ContactShadows
+    position={[0, 0, 0]}
+    opacity={0.5}
+    scale={10}
+    blur={2}
+    far={4}
+    resolution={256}
+    color="#000000"
+/>
+
+# Sky
+<Sky
+    distance={450000}
+    sunPosition={[0, 1, 0]}
+    inclination={0}
+    azimuth={0.25}
+    turbidity={8}
+    rayleigh={6}
+/>
+
+# Stars
+<Stars
+    radius={100}
+    depth={50}
+    count={5000}
+    factor={4}
+    saturation={0}
+    fade
+    speed={1}
+/>
+
+# Grid
+<Grid
+    args={[10, 10]}
+    cellSize={0.5}
+    cellThickness={0.5}
+    cellColor="#6f6f6f"
+    sectionSize={3}
+    sectionThickness={1}
+    sectionColor="#9d4b4b"
+    fadeDistance={25}
+    fadeStrength={1}
+    followCamera
+    infiniteGrid
+/>
+
+# useHelper
+const lightRef = useRef();
+useHelper(lightRef, THREE.DirectionalLightHelper, 1, 'red');
+
+<directionalLight ref={lightRef} />
+
+# Center (auto-center geometry)
+<Center>
+    <mesh>
+        <torusKnotGeometry />
+        <meshStandardMaterial />
+    </mesh>
+</Center>
+
+# Bounds (auto-fit camera)
+<Bounds fit clip observe margin={1.2}>
+    <Model />
+</Bounds>
+
+# Billboard (always face camera)
+<Billboard follow={true} lockX={false} lockY={false} lockZ={false}>
+    <Text>Label</Text>
+</Billboard>
+
+# ScrollControls (scroll-based animation)
+<ScrollControls pages={3} damping={0.1}>
+    <Scroll>
+        <Model />
+    </Scroll>
+    <Scroll html>
+        <h1 style={{ position: 'absolute', top: '100vh' }}>Page 2</h1>
+    </Scroll>
+</ScrollControls>
+
+// Inside component
+const scroll = useScroll();
+useFrame(() => {
+    const offset = scroll.offset;  // 0 to 1
+});
+
+# Loading progress
+function Loader() {
+    const { progress } = useProgress();
+    return <Html center>{progress} % loaded</Html>;
+}
+
+<Suspense fallback={<Loader />}>
+    <Model />
+</Suspense>
+
+# Performance monitor
+<PerformanceMonitor
+    onIncline={() => setDpr(2)}
+    onDecline={() => setDpr(1)}
+>
+    <Scene />
+</PerformanceMonitor>
+
+# Keyboard controls
+<KeyboardControls
+    map={[
+        { name: 'forward', keys: ['ArrowUp', 'KeyW'] },
+        { name: 'backward', keys: ['ArrowDown', 'KeyS'] },
+        { name: 'left', keys: ['ArrowLeft', 'KeyA'] },
+        { name: 'right', keys: ['ArrowRight', 'KeyD'] },
+        { name: 'jump', keys: ['Space'] }
+    ]}
+>
+    <Canvas>
+        <Player />
+    </Canvas>
+</KeyboardControls>
+
+// Inside component
+const [subscribeKeys, getKeys] = useKeyboardControls();
+
+useFrame(() => {
+    const { forward, backward, left, right, jump } = getKeys();
+});
+
+// Or subscribe to specific key
+useEffect(() => {
+    return subscribeKeys(
+        (state) => state.jump,
+        (pressed) => {
+            if (pressed) console.log('Jump!');
+        }
+    );
+}, []);
+
+==============================================================================
+DREI_MATERIALS
+==============================================================================
+# MeshReflectorMaterial
+<mesh rotation={[-Math.PI / 2, 0, 0]}>
+    <planeGeometry args={[10, 10]} />
+    <MeshReflectorMaterial
+        blur={[300, 100]}
+        resolution={2048}
+        mixBlur={1}
+        mixStrength={50}
+        roughness={1}
+        depthScale={1.2}
+        minDepthThreshold={0.4}
+        maxDepthThreshold={1.4}
+        color="#151515"
+        metalness={0.5}
+    />
+</mesh>
+
+# MeshTransmissionMaterial (glass)
+<mesh>
+    <sphereGeometry />
+    <MeshTransmissionMaterial
+        backside
+        samples={16}
+        resolution={512}
+        transmission={1}
+        roughness={0}
+        thickness={0.5}
+        ior={1.5}
+        chromaticAberration={0.06}
+        anisotropy={0.1}
+        distortion={0.1}
+        distortionScale={0.3}
+        temporalDistortion={0.5}
+    />
+</mesh>
+
+# MeshDistortMaterial
+<mesh>
+    <sphereGeometry args={[1, 64, 64]} />
+    <MeshDistortMaterial
+        color="#ff0000"
+        distort={0.5}
+        speed={2}
+        roughness={0}
+    />
+</mesh>
+
+# MeshWobbleMaterial
+<mesh>
+    <torusGeometry args={[1, 0.4, 64, 64]} />
+    <MeshWobbleMaterial
+        color="#ff0000"
+        factor={1}
+        speed={2}
+    />
+</mesh>
+
+# Custom shader material (drei helper)
+const MyMaterial = shaderMaterial(
+    // Uniforms
+    {
+        time: 0,
+        color: new THREE.Color(0.2, 0.0, 0.1)
+    },
+    // Vertex shader
+    `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    // Fragment shader
+    `
+        uniform float time;
+        uniform vec3 color;
+        varying vec2 vUv;
+        void main() {
+            gl_FragColor = vec4(color * sin(time + vUv.x * 10.0), 1.0);
+        }
+    `
+);
+
+extend({ MyMaterial });
+
+function Mesh() {
+    const materialRef = useRef();
+    
+    useFrame((state) => {
+        materialRef.current.time = state.clock.elapsedTime;
+    });
+    
+    return (
+        <mesh>
+            <boxGeometry />
+            <myMaterial ref={materialRef} color="hotpink" />
+        </mesh>
+    );
+}
+
+==============================================================================
+PHYSICS_RAPIER
+==============================================================================
+import { Physics, RigidBody, CuboidCollider, BallCollider, CapsuleCollider } from '@react-three/rapier';
+
+# Basic setup
+<Physics gravity={[0, -9.81, 0]} debug>
+    {/* Physics objects */}
+</Physics>
+
+# RigidBody types
+// Dynamic (affected by physics)
+<RigidBody>
+    <mesh>
+        <boxGeometry />
+        <meshStandardMaterial />
+    </mesh>
+</RigidBody>
+
+// Fixed (static, doesn't move)
+<RigidBody type="fixed">
+    <mesh>
+        <boxGeometry args={[10, 0.5, 10]} />
+        <meshStandardMaterial />
+    </mesh>
+</RigidBody>
+
+// Kinematic (controlled by code, affects others)
+<RigidBody type="kinematicPosition">
+    <mesh>...</mesh>
+</RigidBody>
+
+# RigidBody props
+<RigidBody
+    position={[0, 5, 0]}
+    rotation={[0, 0, 0]}
+    scale={1}
+    mass={1}
+    restitution={0.5}     // Bounciness
+    friction={0.5}
+    linearDamping={0}
+    angularDamping={0}
+    gravityScale={1}
+    canSleep={true}
+    ccd={false}           // Continuous collision detection
+    colliders="cuboid"    // Auto collider: cuboid, ball, hull, trimesh, false
+    sensor={false}        // Trigger only, no physics
+    onCollisionEnter={(e) => console.log('collision', e.other)}
+    onCollisionExit={(e) => console.log('exit')}
+    onSleep={() => console.log('sleeping')}
+    onWake={() => console.log('awake')}
+>
+    <mesh>...</mesh>
+</RigidBody>
+
+# Manual colliders
+<RigidBody colliders={false}>
+    <CuboidCollider args={[0.5, 0.5, 0.5]} />
+    <mesh>
+        <boxGeometry />
+        <meshStandardMaterial />
+    </mesh>
+</RigidBody>
+
+<RigidBody colliders={false}>
+    <BallCollider args={[0.5]} />
+    <mesh>
+        <sphereGeometry args={[0.5]} />
+        <meshStandardMaterial />
+    </mesh>
+</RigidBody>
+
+<RigidBody colliders={false}>
+    <CapsuleCollider args={[0.5, 0.5]} />
+    <mesh>
+        <capsuleGeometry args={[0.5, 1]} />
+        <meshStandardMaterial />
+    </mesh>
+</RigidBody>
+
+# Apply forces/impulses
+const rigidBodyRef = useRef();
+
+useFrame(() => {
+    // Apply force
+    rigidBodyRef.current.applyImpulse({ x: 0, y: 5, z: 0 });
+    
+    // Apply torque
+    rigidBodyRef.current.applyTorqueImpulse({ x: 0, y: 1, z: 0 });
+    
+    // Set velocity
+    rigidBodyRef.current.setLinvel({ x: 0, y: 5, z: 0 });
+    rigidBodyRef.current.setAngvel({ x: 0, y: 1, z: 0 });
+    
+    // Get position/rotation
+    const position = rigidBodyRef.current.translation();
+    const rotation = rigidBodyRef.current.rotation();
+});
+
+<RigidBody ref={rigidBodyRef}>...</RigidBody>
+
+# Joints
+import { useSphericalJoint, useRevoluteJoint, usePrismaticJoint, useFixedJoint } from '@react-three/rapier';
+
+const bodyA = useRef();
+const bodyB = useRef();
+
+useSphericalJoint(bodyA, bodyB, [
+    [0, 0, 0],  // Anchor on A
+    [0, 2, 0]   // Anchor on B
+]);
+
+==============================================================================
+POSTPROCESSING
+==============================================================================
+import { EffectComposer, Bloom, DepthOfField, Noise, Vignette, ChromaticAberration, SSAO } from '@react-three/postprocessing';
+
+<EffectComposer>
+    <Bloom 
+        intensity={1}
+        luminanceThreshold={0.9}
+        luminanceSmoothing={0.025}
+    />
+    <DepthOfField
+        focusDistance={0}
+        focalLength={0.02}
+        bokehScale={2}
+    />
+    <Noise opacity={0.02} />
+    <Vignette eskil={false} offset={0.1} darkness={1.1} />
+    <ChromaticAberration offset={[0.002, 0.002]} />
+    <SSAO
+        blendFunction={BlendFunction.MULTIPLY}
+        samples={30}
+        radius={18}
+        intensity={20}
+    />
+</EffectComposer>
+
+# Selective bloom
+import { Selection, Select, EffectComposer, Bloom } from '@react-three/postprocessing';
+
+<Selection>
+    <EffectComposer>
+        <Bloom luminanceThreshold={0} intensity={2} />
+    </EffectComposer>
+    
+    <Select enabled>
+        <mesh>...</mesh>  {/* Will bloom */}
+    </Select>
+    
+    <mesh>...</mesh>  {/* Won't bloom */}
+</Selection>
+
+==============================================================================
+ANIMATION
+==============================================================================
+# useFrame animation
+const meshRef = useRef();
+
+useFrame((state, delta) => {
+    meshRef.current.rotation.y += delta;
+    meshRef.current.position.y = Math.sin(state.clock.elapsedTime) * 2;
+});
+
+# React Spring
+import { useSpring, animated } from '@react-spring/three';
+
+function AnimatedBox() {
+    const [active, setActive] = useState(false);
+    
+    const { scale, color } = useSpring({
+        scale: active ? 1.5 : 1,
+        color: active ? 'hotpink' : 'orange'
+    });
+    
+    return (
+        <animated.mesh scale={scale} onClick={() => setActive(!active)}>
+            <boxGeometry />
+            <animated.meshStandardMaterial color={color} />
+        </animated.mesh>
+    );
+}
+
+# GLTF animations
+import { useAnimations } from '@react-three/drei';
+
+function Model() {
+    const group = useRef();
+    const { scene, animations } = useGLTF('/model.glb');
+    const { actions, names } = useAnimations(animations, group);
+    
+    useEffect(() => {
+        actions[names[0]]?.play();
+    }, []);
+    
+    return <primitive ref={group} object={scene} />;
+}
+
+# Animation controls
+actions['walk'].play();
+actions['walk'].stop();
+actions['walk'].reset();
+actions['walk'].fadeIn(0.5);
+actions['walk'].fadeOut(0.5);
+actions['walk'].crossFadeFrom(actions['idle'], 0.5);
+actions['walk'].setEffectiveTimeScale(2);
+actions['walk'].setEffectiveWeight(0.5);
+
+==============================================================================
+STATE_MANAGEMENT
+==============================================================================
+# Zustand (recommended)
+import { create } from 'zustand';
+
+const useStore = create((set) => ({
+    count: 0,
+    selectedObject: null,
+    increment: () => set((state) => ({ count: state.count + 1 })),
+    setSelected: (object) => set({ selectedObject: object })
+}));
+
+function Counter() {
+    const count = useStore((state) => state.count);
+    const increment = useStore((state) => state.increment);
+    
+    return (
+        <mesh onClick={increment}>
+            <boxGeometry />
+            <meshStandardMaterial color={count > 5 ? 'red' : 'blue'} />
+        </mesh>
+    );
+}
+
+# Leva (GUI controls)
+import { useControls } from 'leva';
+
+function Box() {
+    const { color, scale, position } = useControls({
+        color: '#ff0000',
+        scale: { value: 1, min: 0.1, max: 3, step: 0.1 },
+        position: { value: [0, 0, 0], step: 0.1 }
+    });
+    
+    return (
+        <mesh position={position} scale={scale}>
+            <boxGeometry />
+            <meshStandardMaterial color={color} />
+        </mesh>
+    );
+}
+
+// Folders
+const { color } = useControls('Material', {
+    color: '#ff0000'
+});
+
+const { intensity } = useControls('Light', {
+    intensity: { value: 1, min: 0, max: 5 }
+});
+
+==============================================================================
+PERFORMANCE_PATTERNS
+==============================================================================
+# Instancing (many identical meshes)
+import { Instances, Instance } from '@react-three/drei';
+
+function Particles({ count = 1000 }) {
+    const positions = useMemo(() => {
+        return Array.from({ length: count }, () => ({
+            position: [Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5],
+            scale: Math.random() * 0.5 + 0.5
+        }));
+    }, [count]);
+    
+    return (
+        <Instances>
+            <sphereGeometry args={[0.1]} />
+            <meshStandardMaterial />
+            {positions.map((props, i) => (
+                <Instance key={i} position={props.position} scale={props.scale} />
+            ))}
+        </Instances>
+    );
+}
+
+# Merged meshes
+import { Merged } from '@react-three/drei';
+
+function Scene() {
+    const { nodes } = useGLTF('/model.glb');
+    
+    return (
+        <Merged meshes={nodes}>
+            {(models) => (
+                <>
+                    <models.Mesh1 position={[0, 0, 0]} />
+                    <models.Mesh1 position={[1, 0, 0]} />
+                    <models.Mesh2 position={[2, 0, 0]} />
+                </>
+            )}
+        </Merged>
+    );
+}
+
+# Level of Detail
+import { Detailed } from '@react-three/drei';
+
+<Detailed distances={[0, 50, 100]}>
+    <HighDetailModel />   {/* Distance 0-50 */}
+    <MediumDetailModel /> {/* Distance 50-100 */}
+    <LowDetailModel />    {/* Distance 100+ */}
+</Detailed>
+
+# BVH (faster raycasting)
+import { Bvh } from '@react-three/drei';
+
+<Bvh firstHitOnly>
+    <mesh>...</mesh>
+</Bvh>
+
+# Demand rendering (static scenes)
+<Canvas frameloop="demand">
+    <OrbitControls onChange={() => invalidate()} />
+</Canvas>
+
+// Trigger render manually
+const invalidate = useThree((state) => state.invalidate);
+invalidate();
+
+# Suspense boundaries
+<Suspense fallback={<Loader />}>
+    <HeavyModel />
+</Suspense>
+
+# Preload assets
+useGLTF.preload('/model.glb');
+useTexture.preload('/texture.jpg');
+
+<Preload all />

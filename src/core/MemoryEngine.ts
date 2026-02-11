@@ -15,6 +15,8 @@ import { EmbeddingService } from '../vector/EmbeddingService.js';
 import { EmbeddingQueue } from '../vector/EmbeddingQueue.js';
 import { ProvenanceStore } from '../provenance/ProvenanceStore.js';
 import { CausalMemory } from '../causal/CausalMemory.js';
+import { CausalDetector } from '../causal/CausalDetector.js';
+import type { CausalDetectorResult } from '../causal/CausalDetector.js';
 import { PatternMatcher } from '../pattern/PatternMatcher.js';
 import { ShadowSearch } from '../adversarial/ShadowSearch.js';
 import { SonaEngine } from '../learning/SonaEngine.js';
@@ -133,6 +135,9 @@ export class MemoryEngine {
   // OPTIMIZED: LRU query cache to prevent repeated queries during task execution
   private queryCache: QueryCache;
 
+  // Auto-detect causal relations on store
+  private causalDetector: CausalDetector;
+
   constructor(configOverrides?: Partial<MemoryEngineConfig>) {
     const defaultConfig = getDefaultConfig();
     this.config = configOverrides
@@ -234,6 +239,9 @@ export class MemoryEngine {
 
     // OPTIMIZED: Initialize query cache (100 entries, 60s TTL)
     this.queryCache = new QueryCache(100, 60000);
+
+    // Initialize causal auto-detector (uses this engine for queries)
+    this.causalDetector = new CausalDetector(this);
   }
 
   /**
@@ -408,7 +416,29 @@ export class MemoryEngine {
       }
     }
 
+    // Auto-detect causal relations (non-blocking, non-critical)
+    const tags = options.tags ?? [];
+    if (tags.length > 0) {
+      this.detectCausalRelationsAsync(entry.id, tags, content);
+    }
+
     return entry;
+  }
+
+  /**
+   * Run causal detection asynchronously without blocking store().
+   * Errors are logged but never propagated.
+   */
+  private detectCausalRelationsAsync(entryId: string, tags: string[], content: string): void {
+    this.causalDetector.detectAndLink(entryId, tags, content).then(result => {
+      if (result.relations.length > 0) {
+        console.log(
+          `[CausalDetector] Auto-created ${result.relations.length} relation(s) via: ${result.strategies.join(', ')}`
+        );
+      }
+    }).catch(err => {
+      console.error('[CausalDetector] Async detection error:', err);
+    });
   }
 
   /**
@@ -1192,6 +1222,23 @@ export class MemoryEngine {
    */
   cleanupExpiredRelations(): { cleaned: number; relationIds: string[] } {
     return this.causal.cleanupExpired();
+  }
+
+  /**
+   * Detect causal relations for a session store with structured context.
+   * Called from god_session_store handler after entry is stored.
+   */
+  async detectSessionCausalLinks(
+    sessionEntryId: string,
+    context: {
+      decisions?: string[];
+      patterns?: string[];
+      filesChanged?: string[];
+      tags: string[];
+      content: string;
+    }
+  ): Promise<CausalDetectorResult> {
+    return this.causalDetector.detectAndLinkSession(sessionEntryId, context);
   }
 
   // ==========================================

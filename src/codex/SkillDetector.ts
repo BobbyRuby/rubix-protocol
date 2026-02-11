@@ -55,6 +55,45 @@ const SKILL_TAG_MAP: Record<string, string[]> = {
   '.net': ['polyglot:dotnet'],
   'asp.net': ['polyglot:dotnet'],
   'wordpress': ['polyglot:wordpress'],
+  'wp': ['polyglot:wordpress'],
+  'plugin': ['polyglot:wordpress'],
+  'php': ['polyglot:php'],
+
+  // JavaScript ecosystem
+  'javascript': ['polyglot:javascript'],
+  'js': ['polyglot:javascript'],
+  'typescript': ['polyglot:javascript'],
+  'jquery': ['polyglot:javascript'],
+  'react': ['polyglot:javascript'],
+  'vue': ['polyglot:javascript'],
+
+  // Leaflet (dedicated entry)
+  'leaflet': ['polyglot:leaflet'],
+  'geojson': ['polyglot:leaflet'],
+  'marker': ['polyglot:leaflet'],
+  'tile': ['polyglot:leaflet'],
+
+  // 3D frameworks
+  'three.js': ['polyglot:threejs'],
+  'threejs': ['polyglot:threejs'],
+  'three js': ['polyglot:threejs'],
+  'babylon': ['polyglot:babylonjs'],
+  'babylonjs': ['polyglot:babylonjs'],
+  'babylon.js': ['polyglot:babylonjs'],
+  'r3f': ['polyglot:r3f'],
+  'react-three-fiber': ['polyglot:r3f'],
+  'react three fiber': ['polyglot:r3f'],
+  'drei': ['polyglot:r3f'],
+  'fiber': ['polyglot:r3f'],
+  'aframe': ['polyglot:aframe'],
+  'a-frame': ['polyglot:aframe'],
+  'a frame': ['polyglot:aframe'],
+  'webvr': ['polyglot:aframe'],
+  'webxr': ['polyglot:aframe'],
+  'webgl': ['polyglot:js3d'],
+
+  // Python
+  'python': ['polyglot:python'],
 
   // Patterns (removed useless polyglot:pattern category tag)
   'api': ['polyglot:api'],

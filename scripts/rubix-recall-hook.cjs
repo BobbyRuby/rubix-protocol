@@ -19,11 +19,16 @@ const {
   readStdin,
   detectProject,
   resolveMcpConfig,
-  httpPost
+  httpPost,
+  detectPromptSkills,
+  getPolyglotEntries,
+  readHookIdentity
 } = require('./rubix-hook-utils.cjs');
 
 /**
- * Check comms.db for unread messages.
+ * Check comms.db for unread messages relevant to this instance.
+ * If instance identity is known (from hook-identity.json), filters out
+ * self-sent messages and already-acked broadcasts via message_reads.
  * Returns { total, urgent, senders[] } or null if comms.db doesn't exist.
  */
 function checkCommsInbox(dataDir) {
@@ -33,8 +38,52 @@ function checkCommsInbox(dataDir) {
     const fs = require('fs');
     if (!fs.existsSync(dbPath)) return null;
 
+    const identity = readHookIdentity(dataDir);
     const db = new Database(dbPath, { readonly: true });
     try {
+      if (identity && identity.instanceId) {
+        const iid = identity.instanceId;
+        // Instance-aware query: direct messages to me + broadcasts not from me and not yet acked
+        const sql = `
+          SELECT COUNT(*) as c FROM (
+            SELECT id FROM messages
+              WHERE to_instance = ? AND status = 'unread' AND from_instance != ?
+            UNION ALL
+            SELECT m.id FROM messages m
+              LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.instance_id = ?
+              WHERE m.to_instance IS NULL AND mr.message_id IS NULL
+              AND m.from_instance != ? AND m.status != 'expired'
+          )`;
+        const total = db.prepare(sql).get(iid, iid, iid, iid);
+        const urgentSql = `
+          SELECT COUNT(*) as c FROM (
+            SELECT id FROM messages
+              WHERE to_instance = ? AND status = 'unread' AND from_instance != ? AND priority >= 2
+            UNION ALL
+            SELECT m.id FROM messages m
+              LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.instance_id = ?
+              WHERE m.to_instance IS NULL AND mr.message_id IS NULL
+              AND m.from_instance != ? AND m.status != 'expired' AND m.priority >= 2
+          )`;
+        const urgent = db.prepare(urgentSql).get(iid, iid, iid, iid);
+        const sendersSql = `
+          SELECT DISTINCT from_instance FROM (
+            SELECT from_instance FROM messages
+              WHERE to_instance = ? AND status = 'unread' AND from_instance != ?
+            UNION ALL
+            SELECT m.from_instance FROM messages m
+              LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.instance_id = ?
+              WHERE m.to_instance IS NULL AND mr.message_id IS NULL
+              AND m.from_instance != ? AND m.status != 'expired'
+          ) LIMIT 5`;
+        const senders = db.prepare(sendersSql).all(iid, iid, iid, iid);
+        return {
+          total: total?.c || 0,
+          urgent: urgent?.c || 0,
+          senders: senders.map(r => r.from_instance)
+        };
+      }
+      // Fallback: no identity — count all unread (old behavior)
       const total = db.prepare("SELECT COUNT(*) as c FROM messages WHERE status = 'unread'").get();
       const urgent = db.prepare("SELECT COUNT(*) as c FROM messages WHERE status = 'unread' AND priority >= 2").get();
       const senders = db.prepare("SELECT DISTINCT from_instance FROM messages WHERE status = 'unread' LIMIT 5").all();
@@ -50,6 +99,9 @@ function checkCommsInbox(dataDir) {
     return null;
   }
 }
+
+// Coordination directive — injected into every prompt's system-reminder
+const COORD_DIRECTIVE = '[COORD] BEFORE editing any file: god_comms_broadcast(type:"status",payload:{files:[paths],action:"start",reason:"brief why"}). AFTER done: broadcast action:"done". BEFORE touching a file: check god_comms_inbox — if another instance has action:"start" on same file, WAIT for their "done". AFTER git commit/push: broadcast action:"commit" with payload:{repo,branch,commits:[{hash,message,files}],pushed:bool}. All spawned subagents MUST follow this rule.';
 
 // Trivial prompts that don't need memory recall
 const TRIVIAL_PATTERN = /^(yes|no|ok|y|n|sure|thanks|thank you|continue|go ahead|do it|correct|right|yep|nope|done|good|great|fine|k|ty|thx|please|proceed|confirmed|approved|deny|denied|allow|reject)\b/i;
@@ -70,6 +122,7 @@ async function main() {
     if (project) {
       console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
     }
+    console.log(COORD_DIRECTIVE);
     // Quick comms inbox check even on trivial prompts
     const mcpCfg = resolveMcpConfig();
     const dd = (mcpCfg && project) ? (mcpCfg[project.instance]?.dataDir || './data') : './data';
@@ -88,20 +141,44 @@ async function main() {
   if (project) {
     console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
   }
+  console.log(COORD_DIRECTIVE);
 
-  // Check comms inbox for unread messages
+  // Resolve data dir (shared by comms, polyglot, and CLI fallback)
   const mcpConfigForComms = resolveMcpConfig();
-  const commsDataDir = (mcpConfigForComms && project)
+  const dataDirRaw = (mcpConfigForComms && project)
     ? (mcpConfigForComms[project.instance]?.dataDir || './data')
     : './data';
-  const commsDataDirResolved = path.isAbsolute(commsDataDir)
-    ? commsDataDir
-    : path.join(RUBIX_ROOT, commsDataDir);
-  const inbox = checkCommsInbox(commsDataDirResolved);
+  const dataDirResolved = path.isAbsolute(dataDirRaw)
+    ? dataDirRaw
+    : path.join(RUBIX_ROOT, dataDirRaw);
+
+  // Check comms inbox for unread messages
+  const inbox = checkCommsInbox(dataDirResolved);
   if (inbox && inbox.total > 0) {
     const urgentTag = inbox.urgent > 0 ? ` (${inbox.urgent} URGENT)` : '';
     const from = inbox.senders.length > 0 ? ` from: ${inbox.senders.join(', ')}` : '';
     console.log(`[COMMS] ${inbox.total} unread message(s)${urgentTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+  }
+
+  // Polyglot skill detection + direct DB query (no daemon needed)
+  let polyglotIds = new Set();
+  const detectedSkills = detectPromptSkills(prompt);
+  const coreSkills = project?.coreSkills || [];
+  const allSkills = [...new Set([...coreSkills, ...detectedSkills])];
+
+  if (allSkills.length > 0) {
+    const polyglotLimit = Math.min(allSkills.length + 2, 5);
+    const polyglotEntries = getPolyglotEntries(dataDirResolved, allSkills, polyglotLimit);
+    if (polyglotEntries.length > 0) {
+      polyglotIds = new Set(polyglotEntries.map(e => e.id));
+      console.log('');
+      console.log(`[POLYGLOT] (${polyglotEntries.length} entries for: ${allSkills.join(', ')})`);
+      polyglotEntries.forEach((e, i) => {
+        const tags = (e.all_tags || '').split(',').filter(t => t.startsWith('polyglot:')).join(', ');
+        const content = (e.content || '').substring(0, 300).replace(/\n/g, ' ');
+        console.log(`  ${i + 1}. [${tags}] ${content}`);
+      });
+    }
   }
 
   // Query memory — try HTTP fast path first, then CLI fallback
@@ -193,6 +270,14 @@ async function main() {
   if (styleResults && styleResults.length > 0 && results && results.length > 0) {
     const promptIds = new Set(results.map(r => r.id));
     styleResults = styleResults.filter(r => !promptIds.has(r.id));
+  }
+
+  // Dedup: remove polyglot entries from semantic recall results (already shown in [POLYGLOT])
+  if (polyglotIds.size > 0 && results && results.length > 0) {
+    results = results.filter(r => !polyglotIds.has(r.id));
+  }
+  if (polyglotIds.size > 0 && styleResults && styleResults.length > 0) {
+    styleResults = styleResults.filter(r => !polyglotIds.has(r.id));
   }
 
   // Format output — style section first, then recalled memories

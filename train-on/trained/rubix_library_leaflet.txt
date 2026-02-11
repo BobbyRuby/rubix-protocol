@@ -1,0 +1,993 @@
+# RUBIX LIBRARY: LEAFLET_JS
+# VERSION: 1.9.x (Stable), 2.0 (Alpha)
+# SITE: leafletjs.com
+# USE_FOR: interactive_maps|GIS|location_apps|utility_mapping|field_data
+# PHILOSOPHY: simple|lightweight|mobile_friendly|extensible
+
+==============================================================================
+SETUP_INSTALLATION
+==============================================================================
+# CDN
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+# NPM
+npm install leaflet
+npm install @types/leaflet  # TypeScript types
+
+# Import (ES modules)
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+# Fix default marker icons (webpack/vite issue)
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+    iconUrl: markerIcon,
+    iconRetinaUrl: markerIcon2x,
+    shadowUrl: markerShadow,
+});
+
+# HTML container
+<div id="map" style="height: 400px; width: 100%;"></div>
+
+==============================================================================
+MAP_INITIALIZATION
+==============================================================================
+# Basic map
+const map = L.map('map').setView([40.7128, -74.0060], 13);
+
+# With options
+const map = L.map('map', {
+    center: [40.7128, -74.0060],
+    zoom: 13,
+    minZoom: 5,
+    maxZoom: 18,
+    zoomControl: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: true,
+    dragging: true,
+    attributionControl: true,
+    maxBounds: [[south, west], [north, east]],  // Restrict panning
+    maxBoundsViscosity: 1.0,  // How "sticky" bounds are
+});
+
+# Tile layers (base maps)
+// OpenStreetMap (free, no API key)
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// Mapbox (requires API key)
+L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
+    attribution: '© Mapbox',
+    id: 'mapbox/streets-v11',
+    accessToken: 'your.mapbox.token'
+}).addTo(map);
+
+// Google Maps (requires plugin)
+// Esri
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Esri'
+}).addTo(map);
+
+// CartoDB (free, good for light/dark themes)
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© CartoDB'
+}).addTo(map);
+
+// Dark theme
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© CartoDB'
+}).addTo(map);
+
+==============================================================================
+MARKERS
+==============================================================================
+# Basic marker
+const marker = L.marker([40.7128, -74.0060]).addTo(map);
+
+# With popup
+L.marker([40.7128, -74.0060])
+    .addTo(map)
+    .bindPopup('<b>New York City</b><br>Population: 8.3M')
+    .openPopup();
+
+# With tooltip
+L.marker([40.7128, -74.0060])
+    .addTo(map)
+    .bindTooltip('NYC', { permanent: true, direction: 'top' });
+
+# Custom icon
+const customIcon = L.icon({
+    iconUrl: 'marker.png',
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],    // Point that corresponds to marker location
+    popupAnchor: [0, -32],   // Point from which popup opens
+    shadowUrl: 'shadow.png',
+    shadowSize: [41, 41],
+    shadowAnchor: [12, 41]
+});
+
+L.marker([lat, lng], { icon: customIcon }).addTo(map);
+
+# DivIcon (HTML/CSS marker)
+const divIcon = L.divIcon({
+    className: 'custom-marker',
+    html: '<div class="marker-pin"></div><span class="marker-label">A</span>',
+    iconSize: [30, 42],
+    iconAnchor: [15, 42]
+});
+
+L.marker([lat, lng], { icon: divIcon }).addTo(map);
+
+# Circle marker (fixed pixel size)
+L.circleMarker([lat, lng], {
+    radius: 10,
+    fillColor: '#ff7800',
+    color: '#000',
+    weight: 1,
+    opacity: 1,
+    fillOpacity: 0.8
+}).addTo(map);
+
+# Marker options
+L.marker([lat, lng], {
+    icon: customIcon,
+    draggable: true,
+    title: 'Hover text',
+    alt: 'Accessibility text',
+    opacity: 0.8,
+    riseOnHover: true,
+    zIndexOffset: 1000
+}).addTo(map);
+
+# Draggable marker events
+marker.on('dragend', function(e) {
+    const position = e.target.getLatLng();
+    console.log('New position:', position.lat, position.lng);
+});
+
+==============================================================================
+SHAPES_VECTORS
+==============================================================================
+# Polyline (line/path)
+const latlngs = [
+    [45.51, -122.68],
+    [37.77, -122.43],
+    [34.04, -118.23]
+];
+
+const polyline = L.polyline(latlngs, {
+    color: 'red',
+    weight: 3,
+    opacity: 0.7,
+    smoothFactor: 1,
+    dashArray: '10, 10',  // Dashed line
+    lineCap: 'round',
+    lineJoin: 'round'
+}).addTo(map);
+
+map.fitBounds(polyline.getBounds());
+
+# Polygon
+const polygon = L.polygon([
+    [51.509, -0.08],
+    [51.503, -0.06],
+    [51.51, -0.047]
+], {
+    color: 'blue',
+    fillColor: '#30f',
+    fillOpacity: 0.5,
+    weight: 2
+}).addTo(map);
+
+# Polygon with hole
+const polygonWithHole = L.polygon([
+    // Outer ring
+    [[51.51, -0.1], [51.5, -0.1], [51.5, -0.08], [51.51, -0.08]],
+    // Inner ring (hole)
+    [[51.505, -0.095], [51.502, -0.095], [51.502, -0.085], [51.505, -0.085]]
+]).addTo(map);
+
+# Rectangle
+const bounds = [[51.49, -0.08], [51.5, -0.06]];
+const rectangle = L.rectangle(bounds, {
+    color: '#ff7800',
+    weight: 1
+}).addTo(map);
+
+# Circle (geographic, radius in meters)
+const circle = L.circle([51.508, -0.11], {
+    color: 'red',
+    fillColor: '#f03',
+    fillOpacity: 0.5,
+    radius: 500  // meters
+}).addTo(map);
+
+# Edit/update shapes
+polyline.setLatLngs(newLatLngs);
+circle.setRadius(1000);
+circle.setLatLng([newLat, newLng]);
+polygon.setStyle({ color: 'green' });
+
+==============================================================================
+POPUPS_TOOLTIPS
+==============================================================================
+# Popup on marker
+marker.bindPopup('<h3>Title</h3><p>Description</p>');
+marker.openPopup();
+marker.closePopup();
+
+# Popup options
+marker.bindPopup(content, {
+    maxWidth: 300,
+    minWidth: 50,
+    maxHeight: 200,
+    autoPan: true,
+    closeButton: true,
+    closeOnClick: true,
+    autoClose: true,
+    className: 'custom-popup'
+});
+
+# Standalone popup
+const popup = L.popup()
+    .setLatLng([lat, lng])
+    .setContent('<p>Hello world!</p>')
+    .openOn(map);
+
+# Popup on click anywhere
+map.on('click', function(e) {
+    L.popup()
+        .setLatLng(e.latlng)
+        .setContent('You clicked at ' + e.latlng.toString())
+        .openOn(map);
+});
+
+# Tooltip
+marker.bindTooltip('Tooltip text');
+
+marker.bindTooltip('Tooltip', {
+    permanent: false,      // Show on hover only
+    direction: 'top',      // top, bottom, left, right, center, auto
+    offset: [0, -10],
+    opacity: 0.9,
+    className: 'custom-tooltip'
+});
+
+# Permanent tooltip (always visible)
+marker.bindTooltip('Label', { permanent: true, direction: 'center' });
+
+==============================================================================
+GEOJSON
+==============================================================================
+# Load GeoJSON
+const geojsonData = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Location A",
+                "category": "office",
+                "value": 100
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [-74.006, 40.7128]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Route 1",
+                "distance": 5.2
+            },
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[-74.006, 40.712], [-73.98, 40.75]]
+            }
+        }
+    ]
+};
+
+# Basic GeoJSON layer
+L.geoJSON(geojsonData).addTo(map);
+
+# With styling
+L.geoJSON(geojsonData, {
+    style: function(feature) {
+        return {
+            color: feature.properties.category === 'office' ? 'blue' : 'red',
+            weight: 2,
+            fillOpacity: 0.5
+        };
+    }
+}).addTo(map);
+
+# Custom point markers
+L.geoJSON(geojsonData, {
+    pointToLayer: function(feature, latlng) {
+        return L.circleMarker(latlng, {
+            radius: 8,
+            fillColor: '#ff7800',
+            color: '#000',
+            weight: 1,
+            fillOpacity: 0.8
+        });
+    }
+}).addTo(map);
+
+# Popups from properties
+L.geoJSON(geojsonData, {
+    onEachFeature: function(feature, layer) {
+        if (feature.properties && feature.properties.name) {
+            layer.bindPopup(`
+                <strong>${feature.properties.name}</strong><br>
+                Category: ${feature.properties.category || 'N/A'}
+            `);
+        }
+    }
+}).addTo(map);
+
+# Filter features
+L.geoJSON(geojsonData, {
+    filter: function(feature) {
+        return feature.properties.value > 50;
+    }
+}).addTo(map);
+
+# Load from URL
+fetch('data.geojson')
+    .then(response => response.json())
+    .then(data => {
+        L.geoJSON(data).addTo(map);
+    });
+
+# Style functions for choropleth
+function getColor(value) {
+    return value > 1000 ? '#800026' :
+           value > 500  ? '#BD0026' :
+           value > 200  ? '#E31A1C' :
+           value > 100  ? '#FC4E2A' :
+           value > 50   ? '#FD8D3C' :
+           value > 20   ? '#FEB24C' :
+           value > 10   ? '#FED976' :
+                          '#FFEDA0';
+}
+
+L.geoJSON(geojsonData, {
+    style: function(feature) {
+        return {
+            fillColor: getColor(feature.properties.density),
+            weight: 2,
+            opacity: 1,
+            color: 'white',
+            fillOpacity: 0.7
+        };
+    }
+}).addTo(map);
+
+==============================================================================
+LAYER_GROUPS_CONTROLS
+==============================================================================
+# Layer group
+const markers = L.layerGroup([
+    L.marker([lat1, lng1]),
+    L.marker([lat2, lng2]),
+    L.marker([lat3, lng3])
+]).addTo(map);
+
+markers.addLayer(L.marker([lat4, lng4]));
+markers.removeLayer(someMarker);
+markers.clearLayers();
+
+# Feature group (with events and bounds)
+const featureGroup = L.featureGroup([
+    L.marker([lat1, lng1]),
+    L.polyline([[lat2, lng2], [lat3, lng3]])
+]).addTo(map);
+
+map.fitBounds(featureGroup.getBounds());
+
+featureGroup.on('click', function(e) {
+    console.log('Clicked layer:', e.layer);
+});
+
+# Layer control (toggle layers)
+const baseMaps = {
+    'Streets': streetsLayer,
+    'Satellite': satelliteLayer,
+    'Terrain': terrainLayer
+};
+
+const overlays = {
+    'Markers': markersGroup,
+    'Routes': routesGroup,
+    'Boundaries': boundariesGroup
+};
+
+L.control.layers(baseMaps, overlays, {
+    collapsed: true,
+    position: 'topright'
+}).addTo(map);
+
+# Programmatic layer toggle
+map.addLayer(markersGroup);
+map.removeLayer(markersGroup);
+map.hasLayer(markersGroup);
+
+==============================================================================
+EVENTS
+==============================================================================
+# Map events
+map.on('click', function(e) {
+    console.log('Clicked at:', e.latlng);
+});
+
+map.on('dblclick', function(e) { });
+map.on('mousedown', function(e) { });
+map.on('mouseup', function(e) { });
+map.on('mousemove', function(e) { });
+map.on('contextmenu', function(e) { });  // Right-click
+
+map.on('zoomstart', function() { });
+map.on('zoom', function() { });
+map.on('zoomend', function() { });
+map.on('movestart', function() { });
+map.on('move', function() { });
+map.on('moveend', function() { });
+
+map.on('load', function() { });
+map.on('resize', function() { });
+
+# Layer events
+marker.on('click', function(e) {
+    console.log('Marker clicked');
+});
+
+marker.on('dragstart', function(e) { });
+marker.on('drag', function(e) { });
+marker.on('dragend', function(e) {
+    const pos = e.target.getLatLng();
+});
+
+marker.on('mouseover', function(e) {
+    e.target.openPopup();
+});
+marker.on('mouseout', function(e) {
+    e.target.closePopup();
+});
+
+# Remove event listener
+map.off('click', handlerFunction);
+map.off('click');  // Remove all click handlers
+
+# One-time event
+map.once('click', function(e) {
+    console.log('First click only');
+});
+
+==============================================================================
+MAP_METHODS
+==============================================================================
+# View manipulation
+map.setView([lat, lng], zoom);
+map.setView([lat, lng], zoom, { animate: true, duration: 1 });
+map.flyTo([lat, lng], zoom);
+map.flyTo([lat, lng], zoom, { duration: 2 });
+map.panTo([lat, lng]);
+map.panTo([lat, lng], { animate: true });
+map.setZoom(15);
+map.zoomIn();
+map.zoomOut();
+map.fitBounds(bounds);
+map.fitBounds(bounds, { padding: [50, 50] });
+
+# Get map state
+map.getCenter();           // LatLng
+map.getZoom();             // Number
+map.getBounds();           // LatLngBounds
+map.getMinZoom();
+map.getMaxZoom();
+map.getSize();             // Point (pixels)
+
+# Coordinate conversion
+map.latLngToContainerPoint(latlng);  // LatLng to pixel
+map.containerPointToLatLng(point);   // Pixel to LatLng
+map.project(latlng, zoom);           // LatLng to world pixel
+map.unproject(point, zoom);          // World pixel to LatLng
+
+# Bounds checking
+map.getBounds().contains(latlng);
+bounds.extend(latlng);
+bounds.intersects(otherBounds);
+
+# Other methods
+map.invalidateSize();      // Recalculate size (after container resize)
+map.stop();                // Stop current animation
+map.locate({ setView: true, maxZoom: 16 });  // Geolocation
+
+==============================================================================
+CONTROLS
+==============================================================================
+# Built-in controls
+L.control.zoom({ position: 'topleft' }).addTo(map);
+L.control.attribution({ position: 'bottomright' }).addTo(map);
+L.control.scale({ imperial: false, metric: true }).addTo(map);
+L.control.layers(baseMaps, overlays).addTo(map);
+
+# Custom control
+const CustomControl = L.Control.extend({
+    options: {
+        position: 'topright'
+    },
+
+    onAdd: function(map) {
+        const container = L.DomUtil.create('div', 'leaflet-bar custom-control');
+        container.innerHTML = '<button>Custom</button>';
+
+        L.DomEvent.on(container, 'click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            console.log('Button clicked');
+        });
+
+        return container;
+    },
+
+    onRemove: function(map) {
+        // Cleanup
+    }
+});
+
+map.addControl(new CustomControl());
+
+// Or shorthand
+L.control({ position: 'topright' });
+
+# Legend control
+const legend = L.control({ position: 'bottomright' });
+
+legend.onAdd = function(map) {
+    const div = L.DomUtil.create('div', 'legend');
+    const grades = [0, 10, 20, 50, 100, 200, 500, 1000];
+
+    div.innerHTML = '<h4>Legend</h4>';
+    for (let i = 0; i < grades.length; i++) {
+        div.innerHTML +=
+            '<i style="background:' + getColor(grades[i] + 1) + '"></i> ' +
+            grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+    }
+    return div;
+};
+
+legend.addTo(map);
+
+==============================================================================
+GEOLOCATION
+==============================================================================
+# Locate user
+map.locate({ setView: true, maxZoom: 16 });
+
+map.on('locationfound', function(e) {
+    const radius = e.accuracy / 2;
+
+    L.marker(e.latlng)
+        .addTo(map)
+        .bindPopup('You are within ' + radius + ' meters')
+        .openPopup();
+
+    L.circle(e.latlng, { radius: radius }).addTo(map);
+});
+
+map.on('locationerror', function(e) {
+    alert(e.message);
+});
+
+# Locate options
+map.locate({
+    watch: true,           // Continuous tracking
+    setView: true,
+    maxZoom: 16,
+    timeout: 10000,
+    maximumAge: 0,
+    enableHighAccuracy: true
+});
+
+# Stop watching
+map.stopLocate();
+
+==============================================================================
+UTILITY_MAPPING_PATTERNS
+==============================================================================
+# Pole/asset markers with data
+function createPoleMarker(pole) {
+    const icon = L.divIcon({
+        className: 'pole-marker',
+        html: `<div class="pole-icon" style="background: ${getPoleColor(pole.type)}">
+                 <span>${pole.id}</span>
+               </div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+
+    const marker = L.marker([pole.lat, pole.lng], { icon })
+        .bindPopup(`
+            <div class="pole-popup">
+                <h4>Pole #${pole.id}</h4>
+                <table>
+                    <tr><td>Type:</td><td>${pole.type}</td></tr>
+                    <tr><td>Height:</td><td>${pole.height} ft</td></tr>
+                    <tr><td>Class:</td><td>${pole.poleClass}</td></tr>
+                    <tr><td>Owner:</td><td>${pole.owner}</td></tr>
+                </table>
+                <button onclick="editPole(${pole.id})">Edit</button>
+            </div>
+        `);
+
+    return marker;
+}
+
+# Cable/route lines
+function createCableRoute(route) {
+    const line = L.polyline(route.coordinates, {
+        color: getCableColor(route.type),
+        weight: route.type === 'fiber' ? 3 : 2,
+        opacity: 0.8,
+        dashArray: route.status === 'planned' ? '10, 10' : null
+    });
+
+    line.bindTooltip(`${route.name} (${route.type})`, {
+        permanent: false,
+        direction: 'center'
+    });
+
+    return line;
+}
+
+# Distance measurement
+let measurePoints = [];
+let measureLine = null;
+
+map.on('click', function(e) {
+    if (!measuring) return;
+
+    measurePoints.push(e.latlng);
+
+    if (measureLine) {
+        map.removeLayer(measureLine);
+    }
+
+    measureLine = L.polyline(measurePoints, {
+        color: 'red',
+        dashArray: '5, 10'
+    }).addTo(map);
+
+    if (measurePoints.length > 1) {
+        const total = calculateTotalDistance(measurePoints);
+        measureLine.bindPopup(`Distance: ${total.toFixed(2)} meters`).openPopup();
+    }
+});
+
+function calculateTotalDistance(points) {
+    let total = 0;
+    for (let i = 1; i < points.length; i++) {
+        total += points[i-1].distanceTo(points[i]);
+    }
+    return total;
+}
+
+# Span labeling
+function addSpanLabel(point1, point2, text) {
+    const midpoint = L.latLng(
+        (point1.lat + point2.lat) / 2,
+        (point1.lng + point2.lng) / 2
+    );
+
+    return L.marker(midpoint, {
+        icon: L.divIcon({
+            className: 'span-label',
+            html: `<div>${text}</div>`,
+            iconSize: [60, 20],
+            iconAnchor: [30, 10]
+        })
+    });
+}
+
+==============================================================================
+PERFORMANCE_OPTIMIZATION
+==============================================================================
+# Marker clustering (requires plugin)
+// npm install leaflet.markercluster
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+
+const markers = L.markerClusterGroup({
+    chunkedLoading: true,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+    maxClusterRadius: 50
+});
+
+data.forEach(item => {
+    markers.addLayer(L.marker([item.lat, item.lng]));
+});
+
+map.addLayer(markers);
+
+# Canvas renderer (better for many vectors)
+const map = L.map('map', {
+    renderer: L.canvas()
+});
+
+// Or per-layer
+L.polyline(latlngs, { renderer: L.canvas() }).addTo(map);
+
+# Simplify polylines
+const simplified = L.polyline(latlngs, {
+    smoothFactor: 2  // Higher = more simplified
+});
+
+# Lazy loading
+map.on('moveend', function() {
+    const bounds = map.getBounds();
+    loadDataInBounds(bounds);
+});
+
+function loadDataInBounds(bounds) {
+    // Fetch only data visible in current view
+    fetch(`/api/features?bbox=${bounds.toBBoxString()}`)
+        .then(response => response.json())
+        .then(data => updateMap(data));
+}
+
+# Virtual scrolling for many markers
+// Only render markers in current viewport
+function updateVisibleMarkers() {
+    const bounds = map.getBounds();
+
+    allMarkers.forEach(marker => {
+        if (bounds.contains(marker.getLatLng())) {
+            if (!map.hasLayer(marker)) {
+                map.addLayer(marker);
+            }
+        } else {
+            if (map.hasLayer(marker)) {
+                map.removeLayer(marker);
+            }
+        }
+    });
+}
+
+map.on('moveend', updateVisibleMarkers);
+
+==============================================================================
+PLUGINS_EXTENSIONS
+==============================================================================
+# Popular plugins
+
+// Marker Clustering
+// npm install leaflet.markercluster
+L.markerClusterGroup()
+
+// Draw tools (editing shapes)
+// npm install leaflet-draw
+const drawControl = new L.Control.Draw({
+    edit: { featureGroup: editableLayers }
+});
+
+// Routing (directions)
+// npm install leaflet-routing-machine
+L.Routing.control({
+    waypoints: [
+        L.latLng(57.74, 11.94),
+        L.latLng(57.6792, 11.949)
+    ]
+}).addTo(map);
+
+// Heatmap
+// npm install leaflet.heat
+L.heatLayer(points, { radius: 25 }).addTo(map);
+
+// Fullscreen
+// npm install leaflet.fullscreen
+map.addControl(new L.Control.Fullscreen());
+
+// Measure
+// npm install leaflet-measure
+L.control.measure().addTo(map);
+
+// Geocoding (address search)
+// npm install leaflet-control-geocoder
+L.Control.geocoder().addTo(map);
+
+// GPS tracking
+// npm install leaflet-gps
+L.control.gps().addTo(map);
+
+// Print/export
+// npm install leaflet-easyprint
+L.easyPrint({ title: 'Print map' }).addTo(map);
+
+// Side-by-side comparison
+// npm install leaflet-side-by-side
+L.control.sideBySide(leftLayer, rightLayer).addTo(map);
+
+==============================================================================
+REACT_INTEGRATION
+==============================================================================
+# React Leaflet
+npm install react-leaflet leaflet
+
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+
+function MyMap() {
+    return (
+        <MapContainer
+            center={[51.505, -0.09]}
+            zoom={13}
+            style={{ height: '400px', width: '100%' }}
+        >
+            <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; OpenStreetMap'
+            />
+            <Marker position={[51.505, -0.09]}>
+                <Popup>
+                    A popup on a marker
+                </Popup>
+            </Marker>
+        </MapContainer>
+    );
+}
+
+# Access map instance
+function MapController() {
+    const map = useMap();
+
+    useEffect(() => {
+        map.flyTo([lat, lng], 15);
+    }, [lat, lng]);
+
+    return null;
+}
+
+// Use inside MapContainer
+<MapContainer>
+    <MapController />
+</MapContainer>
+
+# Dynamic markers
+function DynamicMarkers({ locations }) {
+    return (
+        <>
+            {locations.map(loc => (
+                <Marker key={loc.id} position={[loc.lat, loc.lng]}>
+                    <Popup>{loc.name}</Popup>
+                </Marker>
+            ))}
+        </>
+    );
+}
+
+==============================================================================
+VUE_INTEGRATION
+==============================================================================
+# Vue Leaflet
+npm install @vue-leaflet/vue-leaflet leaflet
+
+<template>
+    <l-map
+        :zoom="zoom"
+        :center="center"
+        style="height: 400px"
+    >
+        <l-tile-layer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution="&copy; OpenStreetMap"
+        />
+        <l-marker :lat-lng="markerPosition">
+            <l-popup>Popup content</l-popup>
+        </l-marker>
+    </l-map>
+</template>
+
+<script setup>
+import { ref } from 'vue';
+import { LMap, LTileLayer, LMarker, LPopup } from '@vue-leaflet/vue-leaflet';
+import 'leaflet/dist/leaflet.css';
+
+const zoom = ref(13);
+const center = ref([51.505, -0.09]);
+const markerPosition = ref([51.505, -0.09]);
+</script>
+
+==============================================================================
+OFFLINE_MAPS
+==============================================================================
+# Tile caching (Service Worker approach)
+// Cache tiles for offline use
+
+# MBTiles (requires plugin)
+// npm install leaflet-mbtiles
+
+# Local tile server
+L.tileLayer('http://localhost:8080/tiles/{z}/{x}/{y}.png').addTo(map);
+
+# IndexedDB tile storage
+// npm install leaflet.offline
+const tileLayerOffline = L.tileLayer.offline(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { subdomains: 'abc' }
+);
+
+const controlSaveTiles = L.control.savetiles(tileLayerOffline, {
+    zoomlevels: [13, 14, 15, 16],
+    confirm(layer, successCallback) {
+        if (window.confirm('Save tiles?')) {
+            successCallback();
+        }
+    }
+});
+
+==============================================================================
+COMMON_PATTERNS
+==============================================================================
+# Fit map to all markers
+const group = L.featureGroup(allMarkers);
+map.fitBounds(group.getBounds().pad(0.1));
+
+# Clear all markers
+markersLayer.clearLayers();
+
+# Update marker position
+marker.setLatLng([newLat, newLng]);
+
+# Animate marker
+function animateMarker(marker, newLatLng, duration = 1000) {
+    const start = marker.getLatLng();
+    const startTime = Date.now();
+
+    function animate() {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        const lat = start.lat + (newLatLng.lat - start.lat) * progress;
+        const lng = start.lng + (newLatLng.lng - start.lng) * progress;
+
+        marker.setLatLng([lat, lng]);
+
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        }
+    }
+
+    animate();
+}
+
+# Export map as image
+// npm install leaflet-image
+leafletImage(map, function(err, canvas) {
+    const img = document.createElement('img');
+    img.src = canvas.toDataURL();
+    document.body.appendChild(img);
+});
+
+# Coordinate formatting
+function formatCoords(latlng) {
+    return `${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`;
+}
+
+# Degrees/Minutes/Seconds
+function toDMS(decimal) {
+    const d = Math.floor(decimal);
+    const m = Math.floor((decimal - d) * 60);
+    const s = ((decimal - d - m/60) * 3600).toFixed(2);
+    return `${d}° ${m}' ${s}"`;
+}

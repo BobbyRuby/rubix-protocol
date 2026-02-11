@@ -1,0 +1,1429 @@
+# RUBIX LIBRARY: THREE_JS
+# VERSION: r160+ (2024)
+# SITE: threejs.org
+# REPO: github.com/mrdoob/three.js
+# USE_FOR: 3D_visualization|games|simulations|data_viz|product_viewers|creative_coding
+# PHILOSOPHY: lightweight|flexible|low_level_control|massive_ecosystem
+
+==============================================================================
+SETUP_INSTALLATION
+==============================================================================
+# NPM (recommended)
+npm install three
+npm install @types/three  # TypeScript types
+
+# Import patterns
+import * as THREE from 'three';
+import { Scene, PerspectiveCamera, WebGLRenderer } from 'three';
+
+# Addons (examples/jsm)
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+
+# CDN with import maps
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+</script>
+
+# Legacy script tag
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+# Vite setup
+npm create vite@latest my-3d-app
+npm install three
+
+# Webpack note - may need to configure for addons
+resolve: {
+    alias: {
+        'three/addons': 'three/examples/jsm'
+    }
+}
+
+==============================================================================
+CORE_ARCHITECTURE
+==============================================================================
+# The render loop pattern
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer();
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+function animate() {
+    requestAnimationFrame(animate);
+    // Update objects here
+    renderer.render(scene, camera);
+}
+animate();
+
+# Scene graph hierarchy
+scene
+├── mesh1
+│   ├── geometry
+│   └── material
+├── group1
+│   ├── mesh2
+│   └── mesh3
+├── light1
+└── camera
+
+# Object3D (base class for all scene objects)
+object.position.set(x, y, z);
+object.rotation.set(x, y, z);          // Euler angles (radians)
+object.quaternion.set(x, y, z, w);     // Quaternion rotation
+object.scale.set(x, y, z);
+object.visible = true;
+object.name = 'myObject';
+object.userData = { custom: 'data' };
+
+object.add(child);
+object.remove(child);
+object.children;
+object.parent;
+object.traverse((child) => { });       // Iterate all descendants
+object.getWorldPosition(targetVector);
+object.lookAt(x, y, z);
+
+# Matrix transformations
+object.matrix;                          // Local matrix
+object.matrixWorld;                     // World matrix
+object.updateMatrix();
+object.updateMatrixWorld();
+object.matrixAutoUpdate = true;
+
+==============================================================================
+RENDERERS
+==============================================================================
+# WebGLRenderer (primary)
+const renderer = new THREE.WebGLRenderer({
+    canvas: document.getElementById('canvas'),  // Optional existing canvas
+    antialias: true,
+    alpha: true,                    // Transparent background
+    premultipliedAlpha: true,
+    preserveDrawingBuffer: false,   // True for screenshots
+    powerPreference: 'high-performance',  // or 'low-power', 'default'
+    stencil: true,
+    depth: true,
+    logarithmicDepthBuffer: false   // For extreme depth ranges
+});
+
+# Renderer settings
+renderer.setSize(width, height);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));  // Limit for performance
+renderer.setClearColor(0x000000, 1);
+renderer.clear();
+
+# Output encoding (color space)
+renderer.outputColorSpace = THREE.SRGBColorSpace;  // Default, correct for displays
+
+# Tone mapping (HDR to LDR)
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+// Options: NoToneMapping, LinearToneMapping, ReinhardToneMapping,
+//          CineonToneMapping, ACESFilmicToneMapping, CustomToneMapping
+
+# Shadows
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // Soft shadows
+// Options: BasicShadowMap, PCFShadowMap, PCFSoftShadowMap, VSMShadowMap
+
+# Physically correct lights
+renderer.useLegacyLights = false;  // Use physically correct lighting
+
+# Info/debug
+console.log(renderer.info.render);   // Calls, triangles, points, lines
+console.log(renderer.info.memory);   // Geometries, textures
+renderer.info.reset();
+
+# Dispose
+renderer.dispose();
+renderer.forceContextLoss();
+
+==============================================================================
+CAMERAS
+==============================================================================
+# PerspectiveCamera (3D depth perception)
+const camera = new THREE.PerspectiveCamera(
+    fov,      // Field of view (degrees, typically 50-75)
+    aspect,   // Aspect ratio (width / height)
+    near,     // Near clipping plane (0.1 typical)
+    far       // Far clipping plane (1000 typical)
+);
+
+camera.position.set(0, 5, 10);
+camera.lookAt(0, 0, 0);
+
+// Update after changing fov/aspect
+camera.aspect = window.innerWidth / window.innerHeight;
+camera.updateProjectionMatrix();
+
+# OrthographicCamera (no perspective, 2D/isometric)
+const frustumSize = 10;
+const aspect = window.innerWidth / window.innerHeight;
+const camera = new THREE.OrthographicCamera(
+    frustumSize * aspect / -2,   // left
+    frustumSize * aspect / 2,    // right
+    frustumSize / 2,             // top
+    frustumSize / -2,            // bottom
+    0.1,                         // near
+    1000                         // far
+);
+
+# ArrayCamera (multiple views)
+const cameras = [
+    new THREE.PerspectiveCamera(50, 0.5, 0.1, 100),
+    new THREE.PerspectiveCamera(50, 0.5, 0.1, 100)
+];
+cameras[0].viewport = new THREE.Vector4(0, 0, 0.5, 1);
+cameras[1].viewport = new THREE.Vector4(0.5, 0, 0.5, 1);
+const arrayCamera = new THREE.ArrayCamera(cameras);
+
+# CubeCamera (environment capture)
+const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
+const cubeCamera = new THREE.CubeCamera(0.1, 1000, cubeRenderTarget);
+scene.add(cubeCamera);
+
+// Update reflections
+cubeCamera.update(renderer, scene);
+material.envMap = cubeRenderTarget.texture;
+
+# StereoCamera (VR)
+const stereoCamera = new THREE.StereoCamera();
+stereoCamera.eyeSep = 0.064;  // Eye separation
+
+==============================================================================
+CONTROLS
+==============================================================================
+# OrbitControls (rotate around target)
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;        // Smooth motion
+controls.dampingFactor = 0.05;
+controls.enableZoom = true;
+controls.enableRotate = true;
+controls.enablePan = true;
+controls.autoRotate = false;
+controls.autoRotateSpeed = 2.0;
+
+controls.minDistance = 1;             // Zoom limits
+controls.maxDistance = 100;
+controls.minPolarAngle = 0;           // Vertical rotation limits
+controls.maxPolarAngle = Math.PI / 2; // Don't go below ground
+controls.minAzimuthAngle = -Infinity; // Horizontal rotation limits
+controls.maxAzimuthAngle = Infinity;
+
+controls.target.set(0, 0, 0);         // Look-at point
+controls.update();                     // Required in animation loop with damping
+
+controls.addEventListener('change', () => { });  // When camera moves
+
+# MapControls (top-down)
+import { MapControls } from 'three/addons/controls/MapControls.js';
+
+const controls = new MapControls(camera, renderer.domElement);
+controls.screenSpacePanning = false;  // Pan parallel to ground
+
+# TrackballControls (free rotation)
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+
+const controls = new TrackballControls(camera, renderer.domElement);
+controls.rotateSpeed = 2.0;
+controls.zoomSpeed = 1.2;
+controls.panSpeed = 0.8;
+controls.noRotate = false;
+controls.noZoom = false;
+controls.noPan = false;
+
+# FlyControls (flight simulator)
+import { FlyControls } from 'three/addons/controls/FlyControls.js';
+
+const controls = new FlyControls(camera, renderer.domElement);
+controls.movementSpeed = 10;
+controls.rollSpeed = Math.PI / 6;
+controls.dragToLook = true;
+
+// Requires delta time
+controls.update(delta);
+
+# FirstPersonControls
+import { FirstPersonControls } from 'three/addons/controls/FirstPersonControls.js';
+
+const controls = new FirstPersonControls(camera, renderer.domElement);
+controls.movementSpeed = 10;
+controls.lookSpeed = 0.1;
+
+# PointerLockControls (FPS style)
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+const controls = new PointerLockControls(camera, document.body);
+
+document.addEventListener('click', () => controls.lock());
+controls.addEventListener('lock', () => { });
+controls.addEventListener('unlock', () => { });
+
+// Manual movement
+const velocity = new THREE.Vector3();
+const direction = new THREE.Vector3();
+
+function animate() {
+    if (controls.isLocked) {
+        // WASD movement
+        direction.z = Number(moveForward) - Number(moveBackward);
+        direction.x = Number(moveRight) - Number(moveLeft);
+        direction.normalize();
+
+        velocity.z -= direction.z * speed * delta;
+        velocity.x -= direction.x * speed * delta;
+
+        controls.moveRight(-velocity.x);
+        controls.moveForward(-velocity.z);
+    }
+}
+
+# TransformControls (move/rotate/scale objects)
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.attach(selectedObject);
+scene.add(transformControls);
+
+transformControls.setMode('translate');  // 'translate', 'rotate', 'scale'
+transformControls.setSpace('world');     // 'world' or 'local'
+transformControls.setSize(1);            // Gizmo size
+
+transformControls.addEventListener('dragging-changed', (event) => {
+    orbitControls.enabled = !event.value;  // Disable orbit while transforming
+});
+
+# DragControls
+import { DragControls } from 'three/addons/controls/DragControls.js';
+
+const dragControls = new DragControls(objects, camera, renderer.domElement);
+dragControls.addEventListener('dragstart', (event) => {
+    orbitControls.enabled = false;
+});
+dragControls.addEventListener('dragend', (event) => {
+    orbitControls.enabled = true;
+});
+
+==============================================================================
+GEOMETRIES
+==============================================================================
+# Box
+new THREE.BoxGeometry(width, height, depth, widthSegments, heightSegments, depthSegments);
+
+# Sphere
+new THREE.SphereGeometry(radius, widthSegments, heightSegments, phiStart, phiLength, thetaStart, thetaLength);
+
+# Plane
+new THREE.PlaneGeometry(width, height, widthSegments, heightSegments);
+
+# Circle
+new THREE.CircleGeometry(radius, segments, thetaStart, thetaLength);
+
+# Cylinder
+new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+
+# Cone
+new THREE.ConeGeometry(radius, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength);
+
+# Torus (donut)
+new THREE.TorusGeometry(radius, tube, radialSegments, tubularSegments, arc);
+
+# TorusKnot
+new THREE.TorusKnotGeometry(radius, tube, tubularSegments, radialSegments, p, q);
+
+# Ring
+new THREE.RingGeometry(innerRadius, outerRadius, thetaSegments, phiSegments, thetaStart, thetaLength);
+
+# Polyhedrons
+new THREE.TetrahedronGeometry(radius, detail);
+new THREE.OctahedronGeometry(radius, detail);
+new THREE.DodecahedronGeometry(radius, detail);
+new THREE.IcosahedronGeometry(radius, detail);
+
+# Capsule
+new THREE.CapsuleGeometry(radius, length, capSegments, radialSegments);
+
+# Shape/Extrude (2D to 3D)
+const shape = new THREE.Shape();
+shape.moveTo(0, 0);
+shape.lineTo(0, 2);
+shape.lineTo(1, 2);
+shape.lineTo(1, 0);
+shape.closePath();
+
+// Hole
+const hole = new THREE.Path();
+hole.absarc(0.5, 1, 0.2, 0, Math.PI * 2, true);
+shape.holes.push(hole);
+
+const extrudeSettings = {
+    steps: 2,
+    depth: 1,
+    bevelEnabled: true,
+    bevelThickness: 0.1,
+    bevelSize: 0.1,
+    bevelOffset: 0,
+    bevelSegments: 3
+};
+new THREE.ExtrudeGeometry(shape, extrudeSettings);
+
+// Just 2D shape
+new THREE.ShapeGeometry(shape);
+
+# Lathe (rotational)
+const points = [];
+for (let i = 0; i < 10; i++) {
+    points.push(new THREE.Vector2(Math.sin(i * 0.2) * 3 + 3, (i - 5) * 0.8));
+}
+new THREE.LatheGeometry(points, segments, phiStart, phiLength);
+
+# Tube (along path)
+class CustomCurve extends THREE.Curve {
+    getPoint(t) {
+        const tx = t * 3 - 1.5;
+        const ty = Math.sin(2 * Math.PI * t);
+        const tz = 0;
+        return new THREE.Vector3(tx, ty, tz);
+    }
+}
+const path = new CustomCurve();
+new THREE.TubeGeometry(path, tubularSegments, radius, radialSegments, closed);
+
+# Edges (wireframe outline)
+const edges = new THREE.EdgesGeometry(boxGeometry, thresholdAngle);
+const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff }));
+
+# Wireframe
+const wireframe = new THREE.WireframeGeometry(boxGeometry);
+const line = new THREE.LineSegments(wireframe);
+
+==============================================================================
+BUFFER_GEOMETRY_CUSTOM
+==============================================================================
+# Custom geometry
+const geometry = new THREE.BufferGeometry();
+
+// Vertices (3 floats per vertex: x, y, z)
+const vertices = new Float32Array([
+    -1, -1, 0,
+     1, -1, 0,
+     1,  1, 0,
+    -1,  1, 0
+]);
+geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+
+// Indices (which vertices form triangles)
+const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+// Normals (3 floats per vertex)
+const normals = new Float32Array([
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1
+]);
+geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+
+// UVs (2 floats per vertex)
+const uvs = new Float32Array([
+    0, 0,
+    1, 0,
+    1, 1,
+    0, 1
+]);
+geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+// Auto-compute normals
+geometry.computeVertexNormals();
+
+// Bounding volumes (for frustum culling)
+geometry.computeBoundingBox();
+geometry.computeBoundingSphere();
+
+# Update geometry dynamically
+const positions = geometry.attributes.position.array;
+positions[0] = newX;
+positions[1] = newY;
+positions[2] = newZ;
+geometry.attributes.position.needsUpdate = true;
+
+# Merge geometries
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const merged = mergeGeometries([geo1, geo2, geo3]);
+
+# Non-indexed to indexed
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const indexed = mergeVertices(geometry);
+
+==============================================================================
+MATERIALS
+==============================================================================
+# MeshBasicMaterial (no lighting)
+new THREE.MeshBasicMaterial({
+    color: 0xff0000,
+    map: texture,
+    wireframe: false,
+    transparent: false,
+    opacity: 1,
+    side: THREE.FrontSide,  // FrontSide, BackSide, DoubleSide
+    alphaMap: alphaTexture,
+    envMap: envTexture,
+    combine: THREE.MultiplyOperation,  // MixOperation, AddOperation
+    reflectivity: 1
+});
+
+# MeshLambertMaterial (diffuse, no specular)
+new THREE.MeshLambertMaterial({
+    color: 0xff0000,
+    emissive: 0x000000,
+    emissiveIntensity: 1
+});
+
+# MeshPhongMaterial (specular highlights)
+new THREE.MeshPhongMaterial({
+    color: 0xff0000,
+    specular: 0x111111,
+    shininess: 30,
+    emissive: 0x000000,
+    flatShading: false
+});
+
+# MeshStandardMaterial (PBR)
+new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    roughness: 0.5,           // 0 = mirror, 1 = diffuse
+    metalness: 0.5,           // 0 = dielectric, 1 = metal
+    map: albedoTexture,
+    normalMap: normalTexture,
+    normalScale: new THREE.Vector2(1, 1),
+    roughnessMap: roughnessTexture,
+    metalnessMap: metalnessTexture,
+    aoMap: aoTexture,
+    aoMapIntensity: 1,
+    displacementMap: dispTexture,
+    displacementScale: 1,
+    envMap: envTexture,
+    envMapIntensity: 1,
+    emissive: 0x000000,
+    emissiveMap: emissiveTexture,
+    emissiveIntensity: 1
+});
+
+# MeshPhysicalMaterial (advanced PBR)
+new THREE.MeshPhysicalMaterial({
+    // All StandardMaterial properties plus:
+    clearcoat: 0,             // Clear coat layer
+    clearcoatRoughness: 0,
+    clearcoatMap: null,
+    clearcoatRoughnessMap: null,
+    clearcoatNormalMap: null,
+    clearcoatNormalScale: new THREE.Vector2(1, 1),
+
+    sheen: 0,                 // Fabric sheen
+    sheenRoughness: 1,
+    sheenColor: new THREE.Color(0x000000),
+    sheenColorMap: null,
+    sheenRoughnessMap: null,
+
+    transmission: 0,          // Glass/liquid transparency
+    transmissionMap: null,
+    thickness: 0,             // Volume thickness
+    thicknessMap: null,
+    attenuationDistance: Infinity,
+    attenuationColor: new THREE.Color(1, 1, 1),
+
+    ior: 1.5,                 // Index of refraction
+
+    iridescence: 0,           // Rainbow film effect
+    iridescenceIOR: 1.3,
+    iridescenceThicknessRange: [100, 400],
+    iridescenceMap: null,
+    iridescenceThicknessMap: null,
+
+    specularIntensity: 1,
+    specularColor: new THREE.Color(1, 1, 1),
+    specularIntensityMap: null,
+    specularColorMap: null
+});
+
+# MeshToonMaterial (cel-shading)
+const gradientMap = new THREE.DataTexture(/* gradient data */);
+gradientMap.minFilter = THREE.NearestFilter;
+gradientMap.magFilter = THREE.NearestFilter;
+
+new THREE.MeshToonMaterial({
+    color: 0xff0000,
+    gradientMap: gradientMap
+});
+
+# MeshNormalMaterial (debug normals)
+new THREE.MeshNormalMaterial({ flatShading: false });
+
+# MeshDepthMaterial (depth visualization)
+new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+
+# MeshMatcapMaterial (material capture)
+new THREE.MeshMatcapMaterial({
+    matcap: matcapTexture  // Pre-baked lighting
+});
+
+# LineBasicMaterial
+new THREE.LineBasicMaterial({
+    color: 0xff0000,
+    linewidth: 1,  // Only works in some contexts
+    linecap: 'round',
+    linejoin: 'round'
+});
+
+# LineDashedMaterial
+new THREE.LineDashedMaterial({
+    color: 0xff0000,
+    dashSize: 3,
+    gapSize: 1,
+    scale: 1
+});
+
+# PointsMaterial
+new THREE.PointsMaterial({
+    color: 0xff0000,
+    size: 1,
+    sizeAttenuation: true,  // Smaller with distance
+    map: spriteTexture,
+    alphaMap: alphaTexture,
+    transparent: true
+});
+
+# SpriteMaterial
+new THREE.SpriteMaterial({
+    color: 0xffffff,
+    map: spriteTexture,
+    rotation: 0,
+    sizeAttenuation: true
+});
+
+==============================================================================
+SHADER_MATERIALS
+==============================================================================
+# ShaderMaterial
+const material = new THREE.ShaderMaterial({
+    uniforms: {
+        time: { value: 0 },
+        resolution: { value: new THREE.Vector2() },
+        color: { value: new THREE.Color(0xff0000) },
+        texture1: { value: texture }
+    },
+    vertexShader: `
+        uniform float time;
+        varying vec2 vUv;
+        varying vec3 vNormal;
+
+        void main() {
+            vUv = uv;
+            vNormal = normal;
+
+            vec3 pos = position;
+            pos.z += sin(pos.x * 10.0 + time) * 0.1;
+
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform vec3 color;
+        uniform sampler2D texture1;
+        varying vec2 vUv;
+        varying vec3 vNormal;
+
+        void main() {
+            vec4 texColor = texture2D(texture1, vUv);
+            vec3 light = normalize(vec3(1.0, 1.0, 1.0));
+            float diffuse = max(dot(vNormal, light), 0.0);
+
+            gl_FragColor = vec4(color * texColor.rgb * diffuse, 1.0);
+        }
+    `,
+    side: THREE.DoubleSide,
+    transparent: false
+});
+
+// Update uniforms
+material.uniforms.time.value = elapsed;
+
+# RawShaderMaterial (no built-in uniforms)
+new THREE.RawShaderMaterial({
+    // Must define all uniforms/attributes manually
+    vertexShader: `
+        precision mediump float;
+
+        attribute vec3 position;
+        attribute vec2 uv;
+
+        uniform mat4 projectionMatrix;
+        uniform mat4 modelViewMatrix;
+
+        varying vec2 vUv;
+
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `...`
+});
+
+# Built-in shader chunks
+THREE.ShaderChunk['common']
+THREE.ShaderChunk['lights_pars_begin']
+// Use: #include <common>
+
+# onBeforeCompile (modify built-in shaders)
+material.onBeforeCompile = (shader) => {
+    shader.uniforms.time = { value: 0 };
+
+    shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        transformed.z += sin(transformed.x * 10.0 + time) * 0.1;
+        `
+    );
+
+    material.userData.shader = shader;
+};
+
+// Update in loop
+if (material.userData.shader) {
+    material.userData.shader.uniforms.time.value = elapsed;
+}
+
+==============================================================================
+TEXTURES
+==============================================================================
+# TextureLoader
+const loader = new THREE.TextureLoader();
+
+// Callback
+loader.load(
+    'texture.jpg',
+    (texture) => { /* loaded */ },
+    (progress) => { /* progress */ },
+    (error) => { /* error */ }
+);
+
+// With LoadingManager
+const manager = new THREE.LoadingManager();
+manager.onStart = (url, loaded, total) => { };
+manager.onProgress = (url, loaded, total) => { };
+manager.onLoad = () => { };
+manager.onError = (url) => { };
+
+const loader = new THREE.TextureLoader(manager);
+
+// Async/await pattern
+const texture = await loader.loadAsync('texture.jpg');
+
+# Texture settings
+texture.wrapS = THREE.RepeatWrapping;   // ClampToEdgeWrapping, MirroredRepeatWrapping
+texture.wrapT = THREE.RepeatWrapping;
+texture.repeat.set(4, 4);
+texture.offset.set(0.5, 0.5);
+texture.rotation = Math.PI / 4;
+texture.center.set(0.5, 0.5);
+
+texture.minFilter = THREE.LinearMipmapLinearFilter;  // For minification
+texture.magFilter = THREE.LinearFilter;              // For magnification
+// Options: NearestFilter, LinearFilter,
+//          NearestMipmapNearestFilter, LinearMipmapNearestFilter,
+//          NearestMipmapLinearFilter, LinearMipmapLinearFilter
+
+texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+texture.generateMipmaps = true;
+texture.flipY = true;
+
+texture.colorSpace = THREE.SRGBColorSpace;  // For color/albedo textures
+// LinearSRGBColorSpace for normal/roughness/metalness maps
+
+# CubeTextureLoader (skybox/environment)
+const cubeLoader = new THREE.CubeTextureLoader();
+const envMap = cubeLoader.load([
+    'px.jpg', 'nx.jpg',  // +X, -X
+    'py.jpg', 'ny.jpg',  // +Y, -Y
+    'pz.jpg', 'nz.jpg'   // +Z, -Z
+]);
+
+scene.background = envMap;
+scene.environment = envMap;  // For PBR reflections
+
+# HDR Environment (RGBELoader)
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+const rgbeLoader = new RGBELoader();
+rgbeLoader.load('environment.hdr', (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    scene.background = texture;
+    scene.environment = texture;
+});
+
+# EXR Loader
+import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
+
+# Video texture
+const video = document.createElement('video');
+video.src = 'video.mp4';
+video.loop = true;
+video.muted = true;
+video.playsInline = true;
+video.play();
+
+const videoTexture = new THREE.VideoTexture(video);
+videoTexture.colorSpace = THREE.SRGBColorSpace;
+
+# Canvas texture
+const canvas = document.createElement('canvas');
+canvas.width = 512;
+canvas.height = 512;
+const ctx = canvas.getContext('2d');
+
+// Draw on canvas
+ctx.fillStyle = '#ff0000';
+ctx.fillRect(0, 0, 512, 512);
+ctx.fillStyle = '#ffffff';
+ctx.font = '48px Arial';
+ctx.fillText('Hello', 100, 100);
+
+const canvasTexture = new THREE.CanvasTexture(canvas);
+
+// Update dynamic canvas
+ctx.fillText('Updated', 100, 200);
+canvasTexture.needsUpdate = true;
+
+# Data texture
+const width = 256;
+const height = 256;
+const data = new Uint8Array(width * height * 4);
+
+for (let i = 0; i < width * height * 4; i += 4) {
+    data[i] = Math.random() * 255;      // R
+    data[i + 1] = Math.random() * 255;  // G
+    data[i + 2] = Math.random() * 255;  // B
+    data[i + 3] = 255;                  // A
+}
+
+const dataTexture = new THREE.DataTexture(data, width, height);
+dataTexture.needsUpdate = true;
+
+# Compressed textures (KTX2)
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+
+const ktx2Loader = new KTX2Loader();
+ktx2Loader.setTranscoderPath('basis/');
+ktx2Loader.detectSupport(renderer);
+ktx2Loader.load('texture.ktx2', (texture) => { });
+
+# Render target (render to texture)
+const renderTarget = new THREE.WebGLRenderTarget(512, 512);
+
+renderer.setRenderTarget(renderTarget);
+renderer.render(scene, camera);
+renderer.setRenderTarget(null);
+
+// Use rendered texture
+material.map = renderTarget.texture;
+
+==============================================================================
+LIGHTS
+==============================================================================
+# AmbientLight (uniform, no shadows)
+const ambient = new THREE.AmbientLight(color, intensity);
+scene.add(ambient);
+
+# DirectionalLight (sun, parallel rays)
+const directional = new THREE.DirectionalLight(color, intensity);
+directional.position.set(5, 10, 5);
+directional.target.position.set(0, 0, 0);
+scene.add(directional);
+scene.add(directional.target);  // If moving target
+
+// Shadows
+directional.castShadow = true;
+directional.shadow.mapSize.width = 2048;
+directional.shadow.mapSize.height = 2048;
+directional.shadow.camera.near = 0.5;
+directional.shadow.camera.far = 50;
+directional.shadow.camera.left = -10;
+directional.shadow.camera.right = 10;
+directional.shadow.camera.top = 10;
+directional.shadow.camera.bottom = -10;
+directional.shadow.bias = -0.0001;
+directional.shadow.normalBias = 0.02;
+
+// Debug shadow camera
+const helper = new THREE.CameraHelper(directional.shadow.camera);
+scene.add(helper);
+
+# PointLight (bulb, omnidirectional)
+const point = new THREE.PointLight(color, intensity, distance, decay);
+point.position.set(0, 5, 0);
+point.castShadow = true;
+point.shadow.mapSize.width = 1024;
+point.shadow.mapSize.height = 1024;
+scene.add(point);
+
+# SpotLight (cone)
+const spot = new THREE.SpotLight(color, intensity, distance, angle, penumbra, decay);
+spot.position.set(0, 10, 0);
+spot.target.position.set(0, 0, 0);
+spot.angle = Math.PI / 6;      // Cone angle
+spot.penumbra = 0.2;           // Edge softness (0-1)
+spot.decay = 2;                // Physical decay
+spot.castShadow = true;
+scene.add(spot);
+
+# HemisphereLight (sky/ground)
+const hemi = new THREE.HemisphereLight(skyColor, groundColor, intensity);
+hemi.position.set(0, 50, 0);
+scene.add(hemi);
+
+# RectAreaLight (soft box, area light)
+import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+
+RectAreaLightUniformsLib.init();
+
+const rectLight = new THREE.RectAreaLight(color, intensity, width, height);
+rectLight.position.set(0, 5, 0);
+rectLight.lookAt(0, 0, 0);
+scene.add(rectLight);
+
+const helper = new RectAreaLightHelper(rectLight);
+rectLight.add(helper);
+
+# Light helpers
+new THREE.DirectionalLightHelper(light, size);
+new THREE.PointLightHelper(light, size);
+new THREE.SpotLightHelper(light);
+new THREE.HemisphereLightHelper(light, size);
+
+# LightProbe (baked lighting)
+import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
+
+const lightProbe = new THREE.LightProbe();
+scene.add(lightProbe);
+lightProbe.copy(LightProbeGenerator.fromCubeTexture(cubeTexture));
+
+==============================================================================
+LOADERS
+==============================================================================
+# GLTFLoader (recommended format)
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+// Optional: Draco compression
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+
+// Optional: KTX2 textures
+const ktx2Loader = new KTX2Loader();
+ktx2Loader.setTranscoderPath('basis/');
+ktx2Loader.detectSupport(renderer);
+
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(dracoLoader);
+gltfLoader.setKTX2Loader(ktx2Loader);
+gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
+gltfLoader.load('model.glb', (gltf) => {
+    const model = gltf.scene;
+    scene.add(model);
+
+    // Animations
+    const mixer = new THREE.AnimationMixer(model);
+    gltf.animations.forEach((clip) => {
+        mixer.clipAction(clip).play();
+    });
+
+    // Traverse meshes
+    model.traverse((child) => {
+        if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+        }
+    });
+});
+
+# FBXLoader
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+const fbxLoader = new FBXLoader();
+fbxLoader.load('model.fbx', (object) => {
+    scene.add(object);
+
+    // FBX often has animations
+    const mixer = new THREE.AnimationMixer(object);
+    if (object.animations.length > 0) {
+        mixer.clipAction(object.animations[0]).play();
+    }
+});
+
+# OBJLoader + MTLLoader
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+
+const mtlLoader = new MTLLoader();
+mtlLoader.load('model.mtl', (materials) => {
+    materials.preload();
+
+    const objLoader = new OBJLoader();
+    objLoader.setMaterials(materials);
+    objLoader.load('model.obj', (object) => {
+        scene.add(object);
+    });
+});
+
+# STLLoader
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const stlLoader = new STLLoader();
+stlLoader.load('model.stl', (geometry) => {
+    const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+});
+
+# PLYLoader (point clouds)
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+
+# PCDLoader (point cloud data)
+import { PCDLoader } from 'three/addons/loaders/PCDLoader.js';
+
+# 3DMLoader (Rhino)
+import { Rhino3dmLoader } from 'three/addons/loaders/3DMLoader.js';
+
+# IFCLoader (BIM)
+import { IFCLoader } from 'three/addons/loaders/IFCLoader.js';
+
+==============================================================================
+ANIMATION
+==============================================================================
+# Animation loop basics
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();       // Time since last frame
+    const elapsed = clock.getElapsedTime(); // Total time
+
+    // Animate
+    mesh.rotation.y += delta;
+    mesh.position.y = Math.sin(elapsed) * 2;
+
+    renderer.render(scene, camera);
+}
+animate();
+
+# AnimationMixer (for loaded animations)
+let mixer;
+
+// After loading model with animations
+mixer = new THREE.AnimationMixer(model);
+
+// Play all animations
+gltf.animations.forEach((clip) => {
+    mixer.clipAction(clip).play();
+});
+
+// Or play specific animation
+const action = mixer.clipAction(gltf.animations[0]);
+action.play();
+
+// In animation loop
+if (mixer) mixer.update(delta);
+
+# AnimationAction controls
+const action = mixer.clipAction(clip);
+
+action.play();
+action.stop();
+action.pause();
+action.reset();
+
+action.paused = true;
+action.time = 0;                          // Current time
+action.timeScale = 1;                     // Speed (negative = reverse)
+action.weight = 1;                        // Blend weight
+action.repetitions = Infinity;
+action.clampWhenFinished = true;          // Hold last frame
+
+action.setLoop(THREE.LoopRepeat);         // LoopOnce, LoopRepeat, LoopPingPong
+action.setEffectiveTimeScale(2);
+action.setEffectiveWeight(0.5);
+
+# Crossfade between animations
+const idleAction = mixer.clipAction(idleClip);
+const walkAction = mixer.clipAction(walkClip);
+
+idleAction.play();
+
+function crossfadeTo(newAction, duration) {
+    newAction.reset();
+    newAction.play();
+    newAction.crossFadeFrom(currentAction, duration);
+    currentAction = newAction;
+}
+
+# Animation events
+mixer.addEventListener('finished', (e) => {
+    console.log('Animation finished:', e.action.getClip().name);
+});
+
+mixer.addEventListener('loop', (e) => {
+    console.log('Animation looped');
+});
+
+# Keyframe animation (manual)
+const times = [0, 1, 2];
+const positionValues = [0, 0, 0, 0, 5, 0, 0, 0, 0];
+const rotationValues = [0, 0, 0, 1, 0, 0.707, 0, 0.707, 0, 0, 0, 1];
+
+const positionKF = new THREE.VectorKeyframeTrack('.position', times, positionValues);
+const rotationKF = new THREE.QuaternionKeyframeTrack('.quaternion', times, rotationValues);
+
+const clip = new THREE.AnimationClip('custom', 2, [positionKF, rotationKF]);
+
+const mixer = new THREE.AnimationMixer(mesh);
+mixer.clipAction(clip).play();
+
+# Morph targets
+// Geometry with morph targets
+mesh.morphTargetInfluences[0] = 0.5;  // 0-1 blend
+
+// Animate morphs
+const morphTrack = new THREE.NumberKeyframeTrack(
+    '.morphTargetInfluences[0]',
+    [0, 1, 2],
+    [0, 1, 0]
+);
+
+==============================================================================
+RAYCASTING
+==============================================================================
+# Basic raycasting
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+function onMouseMove(event) {
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+}
+
+function onClick(event) {
+    raycaster.setFromCamera(mouse, camera);
+
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const hit = intersects[0];
+        console.log('Object:', hit.object);
+        console.log('Point:', hit.point);
+        console.log('Distance:', hit.distance);
+        console.log('Face:', hit.face);
+        console.log('UV:', hit.uv);
+    }
+}
+
+# Raycast specific objects
+const selectableObjects = [mesh1, mesh2, mesh3];
+const intersects = raycaster.intersectObjects(selectableObjects, false);
+
+# Ray from arbitrary origin/direction
+raycaster.set(origin, direction);  // Both Vector3
+
+# Raycaster settings
+raycaster.near = 0;
+raycaster.far = Infinity;
+raycaster.params.Points.threshold = 0.1;  // Point cloud tolerance
+raycaster.params.Line.threshold = 0.1;    // Line tolerance
+
+# GPU picking (faster for many objects)
+// Render objects with unique colors, read pixel at mouse position
+
+==============================================================================
+POST_PROCESSING
+==============================================================================
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+
+# Bloom
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    1.5,   // strength
+    0.4,   // radius
+    0.85   // threshold
+);
+composer.addPass(bloomPass);
+
+# Anti-aliasing
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+// SMAA (better quality)
+const smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
+composer.addPass(smaaPass);
+
+// FXAA (faster)
+const fxaaPass = new ShaderPass(FXAAShader);
+fxaaPass.uniforms['resolution'].value.set(1/window.innerWidth, 1/window.innerHeight);
+composer.addPass(fxaaPass);
+
+# Depth of field
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+
+const bokehPass = new BokehPass(scene, camera, {
+    focus: 10,
+    aperture: 0.0001,
+    maxblur: 0.01
+});
+composer.addPass(bokehPass);
+
+# Screen Space Ambient Occlusion
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+
+const ssaoPass = new SSAOPass(scene, camera, width, height);
+ssaoPass.kernelRadius = 16;
+composer.addPass(ssaoPass);
+
+# Outline
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+
+const outlinePass = new OutlinePass(new THREE.Vector2(width, height), scene, camera);
+outlinePass.selectedObjects = [mesh1, mesh2];
+outlinePass.edgeStrength = 3;
+outlinePass.edgeGlow = 1;
+outlinePass.edgeThickness = 1;
+outlinePass.visibleEdgeColor.set('#ffffff');
+outlinePass.hiddenEdgeColor.set('#190a05');
+composer.addPass(outlinePass);
+
+# Film grain
+import { FilmPass } from 'three/addons/postprocessing/FilmPass.js';
+
+const filmPass = new FilmPass(0.35, false);
+composer.addPass(filmPass);
+
+# Glitch
+import { GlitchPass } from 'three/addons/postprocessing/GlitchPass.js';
+
+const glitchPass = new GlitchPass();
+composer.addPass(glitchPass);
+
+# Custom shader pass
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+
+const customShader = {
+    uniforms: {
+        tDiffuse: { value: null },
+        amount: { value: 0.5 }
+    },
+    vertexShader: `...`,
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float amount;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 color = texture2D(tDiffuse, vUv);
+            // Custom effect
+            gl_FragColor = color;
+        }
+    `
+};
+
+const customPass = new ShaderPass(customShader);
+composer.addPass(customPass);
+
+# Output pass (always last)
+composer.addPass(new OutputPass());
+
+# Render
+function animate() {
+    composer.render();  // Instead of renderer.render()
+}
+
+# Handle resize
+function onResize() {
+    composer.setSize(window.innerWidth, window.innerHeight);
+}
+
+==============================================================================
+HELPERS_DEBUG
+==============================================================================
+# Grid
+const grid = new THREE.GridHelper(size, divisions, color1, color2);
+scene.add(grid);
+
+# Axes
+const axes = new THREE.AxesHelper(size);
+scene.add(axes);
+
+# Box helper
+const boxHelper = new THREE.BoxHelper(mesh, 0xffff00);
+scene.add(boxHelper);
+boxHelper.update();  // Call when mesh changes
+
+# Bounding box
+const box = new THREE.Box3().setFromObject(mesh);
+const helper = new THREE.Box3Helper(box, 0xffff00);
+
+# Arrow
+const arrow = new THREE.ArrowHelper(direction, origin, length, color, headLength, headWidth);
+
+# Plane helper
+const plane = new THREE.Plane(normal, constant);
+const helper = new THREE.PlaneHelper(plane, size, color);
+
+# Skeleton helper
+const skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
+scene.add(skeletonHelper);
+
+# Vertex normals
+import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
+
+const normalsHelper = new VertexNormalsHelper(mesh, 0.1, 0xff0000);
+scene.add(normalsHelper);
+
+# Stats (FPS)
+import Stats from 'three/addons/libs/stats.module.js';
+
+const stats = new Stats();
+document.body.appendChild(stats.dom);
+
+function animate() {
+    stats.begin();
+    // render
+    stats.end();
+}
+
+# GUI (tweaking)
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+const gui = new GUI();
+
+gui.add(mesh.position, 'x', -10, 10);
+gui.add(mesh.position, 'y', -10, 10);
+gui.add(mesh.position, 'z', -10, 10);
+gui.add(material, 'wireframe');
+gui.add(material, 'metalness', 0, 1);
+gui.add(material, 'roughness', 0, 1);
+gui.addColor({ color: 0xff0000 }, 'color').onChange((value) => {
+    material.color.setHex(value);
+});
+
+const folder = gui.addFolder('Position');
+folder.add(mesh.position, 'x');
+folder.open();
+
+==============================================================================
+PERFORMANCE
+==============================================================================
+# Dispose resources
+geometry.dispose();
+material.dispose();
+texture.dispose();
+renderer.dispose();
+renderTarget.dispose();
+
+// Traverse and dispose
+scene.traverse((object) => {
+    if (object.geometry) object.geometry.dispose();
+    if (object.material) {
+        if (Array.isArray(object.material)) {
+            object.material.forEach(m => m.dispose());
+        } else {
+            object.material.dispose();
+        }
+    }
+});
+
+# Instanced mesh (thousands of same object)
+const count = 10000;
+const mesh = new THREE.InstancedMesh(geometry, material, count);
+
+const dummy = new THREE.Object3D();
+const matrix = new THREE.Matrix4();
+const color = new THREE.Color();
+
+for (let i = 0; i < count; i++) {
+    dummy.position.set(
+        Math.random() * 100 - 50,
+        Math.random() * 100 - 50,
+        Math.random() * 100 - 50
+    );
+    dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+    dummy.scale.setScalar(Math.random() * 0.5 + 0.5);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    mesh.setColorAt(i, color.setHex(Math.random() * 0xffffff));
+}
+
+mesh.instanceMatrix.needsUpdate = true;
+mesh.instanceColor.needsUpdate = true;
+
+# Level of Detail (LOD)
+const lod = new THREE.LOD();
+
+lod.addLevel(highDetailMesh, 0);      // Distance 0
+lod.addLevel(mediumDetailMesh, 50);   // Distance 50
+lod.addLevel(lowDetailMesh, 200);     // Distance 200
+
+scene.add(lod);
+
+// In animation loop
+lod.update(camera);
+
+# Frustum culling (automatic, but can disable)
+mesh.frustumCulled = true;  // Default
+
+# Merge geometries
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const geometries = meshes.map(m => m.geometry.clone().applyMatrix4(m.matrixWorld));
+const mergedGeometry = mergeGeometries(geometries);
+const mergedMesh = new THREE.Mesh(mergedGeometry, sharedMaterial);
+
+# Render on demand (not continuous)
+controls.addEventListener('change', () => {
+    renderer.render(scene, camera);
+});
+
+# Limit pixel ratio
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+# Offscreen rendering (Web Worker)
+// Use OffscreenCanvas with transferControlToOffscreen()

@@ -5808,6 +5808,7 @@ This is project-specific context that persists across sessions.`;
     });
 
     // Create causal links if related IDs provided
+    let manualLinks = 0;
     if (input.relatedIds?.length) {
       for (const relId of input.relatedIds) {
         try {
@@ -5815,10 +5816,32 @@ This is project-specific context that persists across sessions.`;
             [relId], [entry.id],
             CausalRelationType.ENABLES, 0.7
           );
+          manualLinks++;
         } catch (e) {
           // Non-critical
         }
       }
+    }
+
+    // Auto-detect causal relations from structured session data
+    let autoLinks = 0;
+    let autoStrategies: string[] = [];
+    try {
+      const detected = await engine.detectSessionCausalLinks(entry.id, {
+        decisions: input.decisions,
+        patterns: input.patterns,
+        filesChanged: input.filesChanged,
+        tags,
+        content
+      });
+      autoLinks = detected.relations.length;
+      autoStrategies = detected.strategies;
+      if (autoLinks > 0) {
+        console.log(`[god_session_store] Auto-detected ${autoLinks} causal relation(s) via: ${autoStrategies.join(', ')}`);
+      }
+    } catch (e) {
+      // Non-critical: don't fail the session store
+      console.error('[god_session_store] Causal detection error:', e);
     }
 
     return {
@@ -5828,7 +5851,8 @@ This is project-specific context that persists across sessions.`;
           success: true,
           id: entry.id,
           tags,
-          message: `Session summary stored with ${tags.length} tags`
+          causalLinks: { manual: manualLinks, auto: autoLinks, strategies: autoStrategies },
+          message: `Session summary stored with ${tags.length} tags, ${manualLinks + autoLinks} causal link(s)`
         }, null, 2)
       }]
     };
@@ -11175,6 +11199,20 @@ god_comms_setup mode="set" channel="email" config={
 
     this.instanceId = input.instanceId;
     store.heartbeat(input.instanceId, input.role, input.metadata);
+
+    // Persist identity for hooks (recall, stop, plan) that need to filter self-sent messages
+    try {
+      const { writeFileSync, mkdirSync, existsSync } = await import('fs');
+      const { join, isAbsolute } = await import('path');
+      const resolvedDataDir = isAbsolute(this.dataDir) ? this.dataDir : join(process.cwd(), this.dataDir);
+      if (!existsSync(resolvedDataDir)) mkdirSync(resolvedDataDir, { recursive: true });
+      writeFileSync(
+        join(resolvedDataDir, 'hook-identity.json'),
+        JSON.stringify({ instanceId: input.instanceId, role: input.role ?? null, timestamp: new Date().toISOString() })
+      );
+    } catch {
+      // Non-critical — hooks will fall back to counting all messages
+    }
 
     console.log(`[CommsStore] Instance registered: ${input.instanceId} (role: ${input.role ?? 'unset'})`);
 

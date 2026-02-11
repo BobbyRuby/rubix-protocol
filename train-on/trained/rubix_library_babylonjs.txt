@@ -1,0 +1,1371 @@
+# RUBIX LIBRARY: BABYLON_JS
+# VERSION: 7.x (2024)
+# SITE: babylonjs.com
+# REPO: github.com/BabylonJS/Babylon.js
+# USE_FOR: games|simulations|enterprise_3D|VR_AR|CAD_viewers|digital_twins
+# PHILOSOPHY: full_featured|batteries_included|typescript_first|playground_driven
+
+==============================================================================
+SETUP_INSTALLATION
+==============================================================================
+# NPM (modular)
+npm install @babylonjs/core
+npm install @babylonjs/loaders      # Model loaders
+npm install @babylonjs/gui          # 2D/3D GUI
+npm install @babylonjs/materials    # Extra materials
+npm install @babylonjs/inspector    # Debug tools
+npm install @babylonjs/serializers  # Export
+npm install @babylonjs/procedural-textures
+
+# Full package (all modules)
+npm install babylonjs
+npm install babylonjs-loaders
+npm install babylonjs-gui
+
+# CDN
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+<script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+<script src="https://cdn.babylonjs.com/inspector/babylon.inspector.bundle.js"></script>
+
+# ES6 imports (modular)
+import { Engine, Scene, ArcRotateCamera, Vector3, HemisphericLight, MeshBuilder } from '@babylonjs/core';
+import '@babylonjs/loaders/glTF';
+import * as GUI from '@babylonjs/gui';
+
+# UMD imports
+import * as BABYLON from 'babylonjs';
+import 'babylonjs-loaders';
+import * as GUI from 'babylonjs-gui';
+
+# HTML setup
+<canvas id="renderCanvas" style="width: 100%; height: 100%;"></canvas>
+
+==============================================================================
+CORE_ARCHITECTURE
+==============================================================================
+# Basic scene setup
+const canvas = document.getElementById('renderCanvas');
+const engine = new BABYLON.Engine(canvas, true, {
+    preserveDrawingBuffer: true,
+    stencil: true,
+    antialias: true
+});
+
+const createScene = () => {
+    const scene = new BABYLON.Scene(engine);
+
+    // Camera
+    const camera = new BABYLON.ArcRotateCamera(
+        'camera',
+        Math.PI / 2,    // alpha (horizontal angle)
+        Math.PI / 3,    // beta (vertical angle)
+        10,             // radius
+        BABYLON.Vector3.Zero(),
+        scene
+    );
+    camera.attachControl(canvas, true);
+
+    // Light
+    const light = new BABYLON.HemisphericLight(
+        'light',
+        new BABYLON.Vector3(0, 1, 0),
+        scene
+    );
+
+    // Mesh
+    const sphere = BABYLON.MeshBuilder.CreateSphere('sphere', { diameter: 2 }, scene);
+
+    return scene;
+};
+
+const scene = createScene();
+
+// Render loop
+engine.runRenderLoop(() => {
+    scene.render();
+});
+
+// Handle resize
+window.addEventListener('resize', () => {
+    engine.resize();
+});
+
+# Scene properties
+scene.clearColor = new BABYLON.Color4(0.2, 0.2, 0.3, 1);
+scene.ambientColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+scene.fogMode = BABYLON.Scene.FOGMODE_EXP;
+scene.fogDensity = 0.01;
+scene.fogColor = new BABYLON.Color3(0.8, 0.8, 0.8);
+
+# Scene optimization
+scene.autoClear = true;
+scene.autoClearDepthAndStencil = true;
+scene.blockMaterialDirtyMechanism = false;
+
+# Before/after render
+scene.registerBeforeRender(() => {
+    // Update logic
+});
+
+scene.registerAfterRender(() => {
+    // Post-render logic
+});
+
+# Observable pattern (Babylon events)
+scene.onBeforeRenderObservable.add(() => { });
+scene.onAfterRenderObservable.add(() => { });
+scene.onReadyObservable.add(() => { });
+scene.onDisposeObservable.add(() => { });
+
+mesh.onBeforeRenderObservable.add(() => { });
+
+==============================================================================
+ENGINES
+==============================================================================
+# WebGL Engine (default)
+const engine = new BABYLON.Engine(canvas, antialias, options, adaptToDeviceRatio);
+
+# Engine options
+{
+    preserveDrawingBuffer: false,
+    stencil: true,
+    antialias: true,
+    alpha: false,
+    premultipliedAlpha: true,
+    powerPreference: 'high-performance',  // 'low-power', 'default'
+    failIfMajorPerformanceCaveat: false,
+    deterministicLockstep: false,
+    lockstepMaxSteps: 4
+}
+
+# WebGPU Engine (next-gen)
+const engine = new BABYLON.WebGPUEngine(canvas);
+await engine.initAsync();
+
+# Null Engine (headless, server-side)
+const engine = new BABYLON.NullEngine();
+
+# Engine methods
+engine.resize();
+engine.setSize(width, height);
+engine.getRenderWidth();
+engine.getRenderHeight();
+engine.getFps();
+engine.getDeltaTime();
+engine.dispose();
+
+# Hardware scaling
+engine.setHardwareScalingLevel(1);  // 1 = full res, 2 = half res
+
+# Screenshot
+BABYLON.Tools.CreateScreenshot(engine, camera, { width: 1920, height: 1080 });
+BABYLON.Tools.CreateScreenshotUsingRenderTarget(engine, camera, { width: 4096, height: 4096 });
+
+==============================================================================
+CAMERAS
+==============================================================================
+# ArcRotateCamera (orbit)
+const camera = new BABYLON.ArcRotateCamera(
+    'camera',
+    alpha,      // Horizontal rotation (radians)
+    beta,       // Vertical rotation (radians)
+    radius,     // Distance from target
+    target,     // Vector3 look-at point
+    scene
+);
+
+camera.attachControl(canvas, true);
+
+// Limits
+camera.lowerRadiusLimit = 2;
+camera.upperRadiusLimit = 50;
+camera.lowerBetaLimit = 0.1;
+camera.upperBetaLimit = Math.PI / 2;
+camera.lowerAlphaLimit = null;  // No limit
+camera.upperAlphaLimit = null;
+
+// Behavior
+camera.panningSensibility = 1000;  // Higher = slower pan
+camera.wheelPrecision = 50;        // Higher = slower zoom
+camera.pinchPrecision = 50;
+camera.angularSensibilityX = 1000;
+camera.angularSensibilityY = 1000;
+
+// Auto rotation
+camera.useAutoRotationBehavior = true;
+camera.autoRotationBehavior.idleRotationSpeed = 0.1;
+
+// Framing behavior (auto-fit to mesh)
+camera.useFramingBehavior = true;
+camera.framingBehavior.framingTime = 1000;
+camera.framingBehavior.zoomOnMesh(mesh);
+
+# FreeCamera (FPS-style)
+const camera = new BABYLON.FreeCamera('camera', new BABYLON.Vector3(0, 5, -10), scene);
+camera.setTarget(BABYLON.Vector3.Zero());
+camera.attachControl(canvas, true);
+
+// Movement
+camera.speed = 0.5;
+camera.angularSensibility = 1000;
+
+// WASD + Arrow keys by default
+camera.keysUp = [87, 38];      // W, Up
+camera.keysDown = [83, 40];    // S, Down
+camera.keysLeft = [65, 37];    // A, Left
+camera.keysRight = [68, 39];   // D, Right
+
+// Collision
+camera.checkCollisions = true;
+camera.applyGravity = true;
+camera.ellipsoid = new BABYLON.Vector3(1, 1, 1);
+
+# UniversalCamera (FreeCamera + touch)
+const camera = new BABYLON.UniversalCamera('camera', position, scene);
+
+# FollowCamera
+const camera = new BABYLON.FollowCamera('camera', new BABYLON.Vector3(0, 10, -10), scene);
+camera.lockedTarget = targetMesh;
+camera.radius = 10;           // Distance from target
+camera.heightOffset = 4;      // Height above target
+camera.rotationOffset = 0;    // Angle around target
+camera.cameraAcceleration = 0.05;
+camera.maxCameraSpeed = 10;
+
+# AnaglyphCamera (3D glasses)
+const camera = new BABYLON.AnaglyphUniversalCamera('camera', position, 0.033, scene);
+
+# DeviceOrientationCamera (mobile gyro)
+const camera = new BABYLON.DeviceOrientationCamera('camera', position, scene);
+
+# VRDeviceOrientationCamera
+const camera = new BABYLON.VRDeviceOrientationFreeCamera('camera', position, scene);
+
+# WebXRCamera (VR/AR)
+const xr = await scene.createDefaultXRExperienceAsync();
+
+# Multiple cameras
+scene.activeCameras = [camera1, camera2];
+camera1.viewport = new BABYLON.Viewport(0, 0, 0.5, 1);
+camera2.viewport = new BABYLON.Viewport(0.5, 0, 0.5, 1);
+
+==============================================================================
+MESHES_MESHBUILDER
+==============================================================================
+# Box
+BABYLON.MeshBuilder.CreateBox('box', {
+    size: 1,              // Or individual: width, height, depth
+    width: 1,
+    height: 2,
+    depth: 0.5,
+    faceColors: [],       // Color per face
+    faceUV: [],           // UV per face
+    updatable: false,
+    sideOrientation: BABYLON.Mesh.DEFAULTSIDE
+}, scene);
+
+# Sphere
+BABYLON.MeshBuilder.CreateSphere('sphere', {
+    diameter: 2,          // Or: diameterX, diameterY, diameterZ
+    segments: 32,
+    arc: 1,               // 0-1, horizontal sweep
+    slice: 1,             // 0-1, vertical sweep
+    updatable: false
+}, scene);
+
+# Cylinder
+BABYLON.MeshBuilder.CreateCylinder('cylinder', {
+    height: 2,
+    diameter: 1,          // Or: diameterTop, diameterBottom
+    tessellation: 24,
+    subdivisions: 1,
+    arc: 1,
+    cap: BABYLON.Mesh.CAP_ALL,  // CAP_START, CAP_END, CAP_ALL
+    updatable: false
+}, scene);
+
+# Plane
+BABYLON.MeshBuilder.CreatePlane('plane', {
+    size: 5,              // Or: width, height
+    sideOrientation: BABYLON.Mesh.DOUBLESIDE,
+    updatable: false
+}, scene);
+
+# Ground
+BABYLON.MeshBuilder.CreateGround('ground', {
+    width: 10,
+    height: 10,
+    subdivisions: 10,
+    updatable: false
+}, scene);
+
+# Ground from height map
+BABYLON.MeshBuilder.CreateGroundFromHeightMap('terrain', 'heightmap.png', {
+    width: 100,
+    height: 100,
+    subdivisions: 100,
+    minHeight: 0,
+    maxHeight: 10,
+    onReady: (mesh) => { }
+}, scene);
+
+# Tiled ground
+BABYLON.MeshBuilder.CreateTiledGround('tiledGround', {
+    xmin: -10,
+    xmax: 10,
+    zmin: -10,
+    zmax: 10,
+    subdivisions: { w: 4, h: 4 },
+    precision: { w: 2, h: 2 }
+}, scene);
+
+# Disc
+BABYLON.MeshBuilder.CreateDisc('disc', {
+    radius: 2,
+    tessellation: 32,
+    arc: 1
+}, scene);
+
+# Torus
+BABYLON.MeshBuilder.CreateTorus('torus', {
+    diameter: 2,
+    thickness: 0.5,
+    tessellation: 32
+}, scene);
+
+# Torus Knot
+BABYLON.MeshBuilder.CreateTorusKnot('torusKnot', {
+    radius: 2,
+    tube: 0.5,
+    radialSegments: 128,
+    tubularSegments: 32,
+    p: 2,
+    q: 3
+}, scene);
+
+# Polyhedra
+BABYLON.MeshBuilder.CreatePolyhedron('poly', {
+    type: 0,  // 0-14 different types
+    size: 1
+}, scene);
+
+# IcoSphere (geodesic)
+BABYLON.MeshBuilder.CreateIcoSphere('ico', {
+    radius: 1,
+    subdivisions: 4,
+    flat: false
+}, scene);
+
+# Capsule
+BABYLON.MeshBuilder.CreateCapsule('capsule', {
+    radius: 0.5,
+    height: 2,
+    tessellation: 16,
+    subdivisions: 1
+}, scene);
+
+# Lines
+BABYLON.MeshBuilder.CreateLines('lines', {
+    points: [
+        new BABYLON.Vector3(0, 0, 0),
+        new BABYLON.Vector3(1, 1, 0),
+        new BABYLON.Vector3(2, 0, 0)
+    ],
+    colors: [
+        new BABYLON.Color4(1, 0, 0, 1),
+        new BABYLON.Color4(0, 1, 0, 1),
+        new BABYLON.Color4(0, 0, 1, 1)
+    ],
+    updatable: true
+}, scene);
+
+# Dashed lines
+BABYLON.MeshBuilder.CreateDashedLines('dashed', {
+    points: points,
+    dashSize: 1,
+    gapSize: 0.5,
+    dashNb: 200
+}, scene);
+
+# Tube (along path)
+BABYLON.MeshBuilder.CreateTube('tube', {
+    path: pathPoints,
+    radius: 0.5,
+    tessellation: 16,
+    radiusFunction: (i, distance) => { return 0.5; },
+    cap: BABYLON.Mesh.CAP_ALL,
+    updatable: true
+}, scene);
+
+# Extrude shape
+const shape = [
+    new BABYLON.Vector3(0, 0, 0),
+    new BABYLON.Vector3(1, 0, 0),
+    new BABYLON.Vector3(1, 1, 0),
+    new BABYLON.Vector3(0, 1, 0)
+];
+const path = [
+    new BABYLON.Vector3(0, 0, 0),
+    new BABYLON.Vector3(0, 0, 5)
+];
+
+BABYLON.MeshBuilder.ExtrudeShape('extrude', {
+    shape: shape,
+    path: path,
+    scale: 1,
+    rotation: 0,
+    cap: BABYLON.Mesh.CAP_ALL,
+    updatable: false
+}, scene);
+
+# Lathe (revolution)
+const latheShape = [
+    new BABYLON.Vector3(0, 0, 0),
+    new BABYLON.Vector3(1, 0, 0),
+    new BABYLON.Vector3(1.5, 1, 0),
+    new BABYLON.Vector3(0.5, 2, 0)
+];
+
+BABYLON.MeshBuilder.CreateLathe('lathe', {
+    shape: latheShape,
+    tessellation: 32,
+    closed: true
+}, scene);
+
+# Ribbon (surface from paths)
+BABYLON.MeshBuilder.CreateRibbon('ribbon', {
+    pathArray: [path1, path2, path3],
+    closeArray: false,
+    closePath: false
+}, scene);
+
+# Decals (stickers on meshes)
+const decal = BABYLON.MeshBuilder.CreateDecal('decal', targetMesh, {
+    position: hitPoint,
+    normal: hitNormal,
+    size: new BABYLON.Vector3(1, 1, 1)
+});
+
+==============================================================================
+MESH_OPERATIONS
+==============================================================================
+# Position, rotation, scale
+mesh.position = new BABYLON.Vector3(x, y, z);
+mesh.position.x = 5;
+mesh.rotation = new BABYLON.Vector3(0, Math.PI / 4, 0);  // Euler angles
+mesh.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(x, y, z);
+mesh.scaling = new BABYLON.Vector3(1, 2, 1);
+
+# Pivot point
+mesh.setPivotPoint(new BABYLON.Vector3(0, -1, 0));
+
+# Parent-child
+child.parent = parent;
+child.setParent(parent);
+
+# Look at
+mesh.lookAt(targetPosition);
+
+# Bounding info
+const bounds = mesh.getBoundingInfo();
+bounds.boundingBox.minimumWorld;
+bounds.boundingBox.maximumWorld;
+bounds.boundingSphere.centerWorld;
+bounds.boundingSphere.radiusWorld;
+
+# Clone vs instance
+const clone = mesh.clone('clone');        // Full copy
+const instance = mesh.createInstance('instance');  // Shared geometry
+
+# Merge meshes
+const merged = BABYLON.Mesh.MergeMeshes([mesh1, mesh2, mesh3], true, true, undefined, false, true);
+
+# Visibility
+mesh.isVisible = true;
+mesh.visibility = 0.5;  // Transparency without material change
+
+# Enabled/disabled
+mesh.setEnabled(false);  // Completely disabled
+
+# Picking
+mesh.isPickable = true;
+
+# Dispose
+mesh.dispose();
+
+# Freeze transformations (optimize static meshes)
+mesh.freezeWorldMatrix();
+mesh.unfreezeWorldMatrix();
+
+# Bake transformations
+mesh.bakeCurrentTransformIntoVertices();
+
+==============================================================================
+MATERIALS
+==============================================================================
+# StandardMaterial
+const material = new BABYLON.StandardMaterial('mat', scene);
+
+// Colors
+material.diffuseColor = new BABYLON.Color3(1, 0, 0);
+material.specularColor = new BABYLON.Color3(1, 1, 1);
+material.emissiveColor = new BABYLON.Color3(0, 0, 0);
+material.ambientColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+// Textures
+material.diffuseTexture = new BABYLON.Texture('diffuse.jpg', scene);
+material.specularTexture = new BABYLON.Texture('specular.jpg', scene);
+material.emissiveTexture = new BABYLON.Texture('emissive.jpg', scene);
+material.ambientTexture = new BABYLON.Texture('ambient.jpg', scene);
+material.bumpTexture = new BABYLON.Texture('normal.jpg', scene);
+material.opacityTexture = new BABYLON.Texture('opacity.jpg', scene);
+material.reflectionTexture = new BABYLON.CubeTexture('env', scene);
+
+// Properties
+material.specularPower = 32;
+material.alpha = 1;
+material.backFaceCulling = true;
+material.wireframe = false;
+material.useAlphaFromDiffuseTexture = true;
+
+// Fresnel
+material.emissiveFresnelParameters = new BABYLON.FresnelParameters();
+material.emissiveFresnelParameters.bias = 0.6;
+material.emissiveFresnelParameters.power = 4;
+material.emissiveFresnelParameters.leftColor = BABYLON.Color3.White();
+material.emissiveFresnelParameters.rightColor = BABYLON.Color3.Black();
+
+# PBRMaterial
+const pbr = new BABYLON.PBRMaterial('pbr', scene);
+
+// Base
+pbr.albedoColor = new BABYLON.Color3(1, 0, 0);
+pbr.albedoTexture = new BABYLON.Texture('albedo.jpg', scene);
+
+// Metallic workflow
+pbr.metallic = 0.5;
+pbr.roughness = 0.5;
+pbr.metallicTexture = new BABYLON.Texture('metallic.jpg', scene);
+
+// Specular workflow (alternative)
+pbr.reflectivityColor = new BABYLON.Color3(1, 1, 1);
+pbr.microSurface = 0.9;
+
+// Normal map
+pbr.bumpTexture = new BABYLON.Texture('normal.jpg', scene);
+pbr.invertNormalMapX = false;
+pbr.invertNormalMapY = false;
+
+// Ambient occlusion
+pbr.ambientTexture = new BABYLON.Texture('ao.jpg', scene);
+pbr.ambientTextureStrength = 1;
+
+// Environment
+pbr.environmentTexture = BABYLON.CubeTexture.CreateFromPrefilteredData('env.env', scene);
+pbr.environmentIntensity = 1;
+
+// Emissive
+pbr.emissiveColor = new BABYLON.Color3(0, 0, 0);
+pbr.emissiveTexture = new BABYLON.Texture('emissive.jpg', scene);
+pbr.emissiveIntensity = 1;
+
+// Clear coat
+pbr.clearCoat.isEnabled = true;
+pbr.clearCoat.intensity = 1;
+pbr.clearCoat.roughness = 0;
+
+// Sheen (fabric)
+pbr.sheen.isEnabled = true;
+pbr.sheen.intensity = 1;
+pbr.sheen.color = new BABYLON.Color3(1, 1, 1);
+
+// Subsurface (skin, wax)
+pbr.subSurface.isTranslucencyEnabled = true;
+pbr.subSurface.translucencyIntensity = 1;
+
+// Anisotropy
+pbr.anisotropy.isEnabled = true;
+pbr.anisotropy.intensity = 1;
+
+# PBRMetallicRoughnessMaterial (simplified PBR)
+const pbr = new BABYLON.PBRMetallicRoughnessMaterial('pbr', scene);
+pbr.baseColor = new BABYLON.Color3(1, 0, 0);
+pbr.metallic = 0.5;
+pbr.roughness = 0.5;
+pbr.baseTexture = new BABYLON.Texture('albedo.jpg', scene);
+pbr.metallicRoughnessTexture = new BABYLON.Texture('mr.jpg', scene);
+
+# PBRSpecularGlossinessMaterial
+const pbr = new BABYLON.PBRSpecularGlossinessMaterial('pbr', scene);
+pbr.diffuseColor = new BABYLON.Color3(1, 0, 0);
+pbr.specularColor = new BABYLON.Color3(1, 1, 1);
+pbr.glossiness = 0.9;
+
+# BackgroundMaterial (optimized for skybox)
+const bgMaterial = new BABYLON.BackgroundMaterial('bg', scene);
+bgMaterial.reflectionTexture = new BABYLON.CubeTexture('env', scene);
+bgMaterial.reflectionTexture.coordinatesMode = BABYLON.Texture.SKYBOX_MODE;
+
+# GridMaterial
+const gridMaterial = new BABYLON.GridMaterial('grid', scene);
+gridMaterial.gridRatio = 1;
+gridMaterial.majorUnitFrequency = 5;
+gridMaterial.minorUnitVisibility = 0.45;
+gridMaterial.mainColor = new BABYLON.Color3(0, 0, 0);
+gridMaterial.lineColor = new BABYLON.Color3(1, 1, 1);
+
+# ShaderMaterial
+const shaderMaterial = new BABYLON.ShaderMaterial('shader', scene, {
+    vertex: 'custom',      // custom.vertex.fx
+    fragment: 'custom'     // custom.fragment.fx
+}, {
+    attributes: ['position', 'normal', 'uv'],
+    uniforms: ['world', 'worldView', 'worldViewProjection', 'view', 'projection', 'time']
+});
+
+shaderMaterial.setFloat('time', 0);
+shaderMaterial.setColor3('color', new BABYLON.Color3(1, 0, 0));
+shaderMaterial.setTexture('textureSampler', texture);
+
+// Inline shaders
+BABYLON.Effect.ShadersStore['customVertexShader'] = `
+    precision highp float;
+    attribute vec3 position;
+    attribute vec2 uv;
+    uniform mat4 worldViewProjection;
+    varying vec2 vUV;
+    void main() {
+        gl_Position = worldViewProjection * vec4(position, 1.0);
+        vUV = uv;
+    }
+`;
+
+BABYLON.Effect.ShadersStore['customFragmentShader'] = `
+    precision highp float;
+    varying vec2 vUV;
+    uniform sampler2D textureSampler;
+    void main() {
+        gl_FragColor = texture2D(textureSampler, vUV);
+    }
+`;
+
+# NodeMaterial (visual shader)
+const nodeMaterial = new BABYLON.NodeMaterial('nodeMat', scene);
+
+// Or load from snippet
+BABYLON.NodeMaterial.ParseFromSnippetAsync('ABC123', scene).then(mat => {
+    mesh.material = mat;
+});
+
+// Or load from file
+nodeMaterial.loadAsync('nodeMaterial.json').then(() => {
+    mesh.material = nodeMaterial;
+});
+
+// Edit in browser
+nodeMaterial.edit();  // Opens Node Material Editor
+
+==============================================================================
+TEXTURES
+==============================================================================
+# Basic texture
+const texture = new BABYLON.Texture('texture.jpg', scene);
+texture.uScale = 2;
+texture.vScale = 2;
+texture.uOffset = 0.5;
+texture.vOffset = 0.5;
+texture.uAng = 0;
+texture.vAng = 0;
+texture.wAng = 0;  // Rotation
+texture.level = 1; // Intensity
+
+# Texture sampling
+texture.samplingMode = BABYLON.Texture.TRILINEAR_SAMPLINGMODE;
+// NEAREST_SAMPLINGMODE, BILINEAR_SAMPLINGMODE, TRILINEAR_SAMPLINGMODE
+
+texture.wrapU = BABYLON.Texture.WRAP_ADDRESSMODE;
+texture.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+// WRAP_ADDRESSMODE, CLAMP_ADDRESSMODE, MIRROR_ADDRESSMODE
+
+# CubeTexture (environment/skybox)
+const cubeTexture = new BABYLON.CubeTexture('textures/skybox', scene);
+// Expects: skybox_px.jpg, skybox_nx.jpg, skybox_py.jpg, skybox_ny.jpg, skybox_pz.jpg, skybox_nz.jpg
+
+// HDR environment
+const hdrTexture = BABYLON.CubeTexture.CreateFromPrefilteredData('environment.env', scene);
+
+// Equirectangular HDR
+const hdrTexture = new BABYLON.HDRCubeTexture('environment.hdr', scene, 512);
+
+# VideoTexture
+const videoTexture = new BABYLON.VideoTexture('video', 'video.mp4', scene, true, true);
+// Or from video element
+const videoTexture = new BABYLON.VideoTexture('video', videoElement, scene);
+
+videoTexture.video.play();
+videoTexture.video.pause();
+
+# DynamicTexture (canvas-based)
+const dynamicTexture = new BABYLON.DynamicTexture('dynamic', { width: 512, height: 512 }, scene);
+const ctx = dynamicTexture.getContext();
+
+ctx.fillStyle = 'red';
+ctx.fillRect(0, 0, 512, 512);
+ctx.font = 'bold 48px Arial';
+ctx.fillStyle = 'white';
+ctx.fillText('Hello', 100, 100);
+
+dynamicTexture.update();
+
+# RawTexture
+const data = new Uint8Array(width * height * 4);
+const rawTexture = new BABYLON.RawTexture(
+    data,
+    width,
+    height,
+    BABYLON.Engine.TEXTUREFORMAT_RGBA,
+    scene
+);
+
+# ProceduralTexture
+const noiseTexture = new BABYLON.NoiseProceduralTexture('noise', 256, scene);
+noiseTexture.animationSpeedFactor = 5;
+noiseTexture.persistence = 2;
+noiseTexture.brightness = 0.5;
+
+// Other procedural textures (need @babylonjs/procedural-textures)
+new BABYLON.WoodProceduralTexture('wood', 512, scene);
+new BABYLON.MarbleProceduralTexture('marble', 512, scene);
+new BABYLON.BrickProceduralTexture('brick', 512, scene);
+new BABYLON.GrassProceduralTexture('grass', 512, scene);
+new BABYLON.FireProceduralTexture('fire', 256, scene);
+
+# RenderTargetTexture
+const rtt = new BABYLON.RenderTargetTexture('rtt', 512, scene);
+rtt.renderList.push(mesh1, mesh2);
+scene.customRenderTargets.push(rtt);
+
+// Mirror
+const mirror = new BABYLON.MirrorTexture('mirror', 512, scene);
+mirror.mirrorPlane = new BABYLON.Plane(0, -1, 0, 0);
+mirror.renderList.push(mesh1, mesh2);
+
+// Refraction
+const refraction = new BABYLON.RefractionTexture('refraction', 512, scene);
+refraction.refractionPlane = new BABYLON.Plane(0, -1, 0, 0);
+refraction.depth = 2;
+
+==============================================================================
+LIGHTS
+==============================================================================
+# HemisphericLight (ambient sky/ground)
+const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene);
+light.intensity = 0.7;
+light.diffuse = new BABYLON.Color3(1, 1, 1);
+light.specular = new BABYLON.Color3(1, 1, 1);
+light.groundColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+# DirectionalLight (sun)
+const light = new BABYLON.DirectionalLight('light', new BABYLON.Vector3(-1, -2, -1), scene);
+light.position = new BABYLON.Vector3(20, 40, 20);
+light.intensity = 0.7;
+
+# PointLight (bulb)
+const light = new BABYLON.PointLight('light', new BABYLON.Vector3(0, 5, 0), scene);
+light.intensity = 0.7;
+light.range = 100;
+
+# SpotLight
+const light = new BABYLON.SpotLight(
+    'light',
+    new BABYLON.Vector3(0, 10, 0),  // Position
+    new BABYLON.Vector3(0, -1, 0),  // Direction
+    Math.PI / 3,                     // Angle
+    2,                               // Exponent
+    scene
+);
+light.intensity = 0.7;
+
+# Light properties
+light.intensity = 1;
+light.diffuse = new BABYLON.Color3(1, 1, 1);
+light.specular = new BABYLON.Color3(1, 1, 1);
+light.setEnabled(true);
+
+# Include/exclude meshes
+light.includedOnlyMeshes = [mesh1, mesh2];
+light.excludedMeshes = [mesh3];
+
+# Shadows
+const shadowGenerator = new BABYLON.ShadowGenerator(1024, light);
+shadowGenerator.addShadowCaster(mesh);
+shadowGenerator.useExponentialShadowMap = true;
+shadowGenerator.useBlurExponentialShadowMap = true;
+shadowGenerator.blurKernel = 32;
+shadowGenerator.bias = 0.00001;
+shadowGenerator.normalBias = 0.02;
+
+// Soft shadows
+shadowGenerator.usePercentageCloserFiltering = true;
+shadowGenerator.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
+
+// Contact hardening (realistic)
+shadowGenerator.useContactHardeningShadow = true;
+shadowGenerator.contactHardeningLightSizeUVRatio = 0.05;
+
+// Receive shadows
+mesh.receiveShadows = true;
+
+# Cascaded Shadow Maps (large outdoor scenes)
+const csm = new BABYLON.CascadedShadowGenerator(1024, light);
+csm.shadowMaxZ = 100;
+csm.stabilizeCascades = true;
+csm.lambda = 0.9;
+csm.cascadeBlendPercentage = 0.05;
+csm.addShadowCaster(mesh);
+
+==============================================================================
+LOADERS
+==============================================================================
+# SceneLoader
+import '@babylonjs/loaders/glTF';
+
+// Append to scene
+BABYLON.SceneLoader.Append('models/', 'model.glb', scene, (scene) => {
+    console.log('Loaded');
+});
+
+// Import mesh(es)
+BABYLON.SceneLoader.ImportMesh(
+    '',              // Mesh names ('' = all)
+    'models/',       // Root URL
+    'model.glb',     // Filename
+    scene,
+    (meshes, particleSystems, skeletons, animationGroups) => {
+        const root = meshes[0];
+
+        // Play animations
+        if (animationGroups.length > 0) {
+            animationGroups[0].start(true);
+        }
+    },
+    (progress) => {
+        console.log(progress.loaded / progress.total * 100 + '%');
+    },
+    (scene, message, exception) => {
+        console.error(message, exception);
+    }
+);
+
+// Async version
+const result = await BABYLON.SceneLoader.ImportMeshAsync('', 'models/', 'model.glb', scene);
+const meshes = result.meshes;
+const animationGroups = result.animationGroups;
+
+// Load entire scene
+const scene = await BABYLON.SceneLoader.LoadAsync('models/', 'scene.glb', engine);
+
+# Asset containers (load without adding to scene)
+const container = await BABYLON.SceneLoader.LoadAssetContainerAsync('models/', 'model.glb', scene);
+
+// Add to scene when ready
+container.addAllToScene();
+
+// Remove from scene
+container.removeAllFromScene();
+
+// Instantiate multiple copies
+const instances = container.instantiateModelsToScene();
+
+# Supported formats
+// .glb, .gltf (recommended)
+// .babylon
+// .obj
+// .stl
+// .fbx (via loaders)
+
+==============================================================================
+ANIMATION
+==============================================================================
+# Animation basics
+const animation = new BABYLON.Animation(
+    'myAnimation',
+    'position.x',                           // Property path
+    30,                                      // FPS
+    BABYLON.Animation.ANIMATIONTYPE_FLOAT,  // Type
+    BABYLON.Animation.ANIMATIONLOOPMODE_CYCLE  // Loop mode
+);
+
+// Keyframes
+const keys = [
+    { frame: 0, value: 0 },
+    { frame: 30, value: 5 },
+    { frame: 60, value: 0 }
+];
+animation.setKeys(keys);
+
+mesh.animations.push(animation);
+
+// Play
+scene.beginAnimation(mesh, 0, 60, true);  // (target, from, to, loop)
+
+// With callbacks
+const animatable = scene.beginAnimation(mesh, 0, 60, false, 1, () => {
+    console.log('Animation finished');
+});
+
+animatable.pause();
+animatable.restart();
+animatable.stop();
+animatable.goToFrame(30);
+animatable.speedRatio = 2;
+
+# Animation types
+BABYLON.Animation.ANIMATIONTYPE_FLOAT
+BABYLON.Animation.ANIMATIONTYPE_VECTOR2
+BABYLON.Animation.ANIMATIONTYPE_VECTOR3
+BABYLON.Animation.ANIMATIONTYPE_QUATERNION
+BABYLON.Animation.ANIMATIONTYPE_MATRIX
+BABYLON.Animation.ANIMATIONTYPE_COLOR3
+BABYLON.Animation.ANIMATIONTYPE_COLOR4
+BABYLON.Animation.ANIMATIONTYPE_SIZE
+
+# Loop modes
+BABYLON.Animation.ANIMATIONLOOPMODE_RELATIVE
+BABYLON.Animation.ANIMATIONLOOPMODE_CYCLE
+BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT
+
+# Easing functions
+const easingFunction = new BABYLON.CircleEase();
+easingFunction.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEINOUT);
+animation.setEasingFunction(easingFunction);
+
+// Available easing: CircleEase, BackEase, BounceEase, CubicEase,
+// ElasticEase, ExponentialEase, PowerEase, QuadraticEase,
+// QuarticEase, QuinticEase, SineEase, BezierCurveEase
+
+# Animation Groups (from loaded models)
+animationGroup.start(loop);
+animationGroup.stop();
+animationGroup.pause();
+animationGroup.reset();
+animationGroup.goToFrame(30);
+animationGroup.speedRatio = 1;
+
+// Blending
+animationGroup.setWeightForAllAnimatables(0.5);
+
+// Events
+animationGroup.onAnimationEndObservable.add(() => { });
+animationGroup.onAnimationLoopObservable.add(() => { });
+
+# Animation blending
+const animatable1 = scene.beginAnimation(mesh, 0, 30, true);
+const animatable2 = scene.beginAnimation(mesh, 31, 60, true);
+
+animatable1.weight = 0.5;
+animatable2.weight = 0.5;
+
+# Skeletal animation
+skeleton.beginAnimation('walk', true);
+
+# Morph targets
+mesh.morphTargetManager = new BABYLON.MorphTargetManager();
+
+const target = new BABYLON.MorphTarget('smile', 0);
+target.setPositions(newPositions);
+mesh.morphTargetManager.addTarget(target);
+
+target.influence = 0.5;  // 0-1
+
+==============================================================================
+PHYSICS
+==============================================================================
+# Enable physics (Havok - recommended)
+const havokInstance = await HavokPhysics();
+const havokPlugin = new BABYLON.HavokPlugin(true, havokInstance);
+scene.enablePhysics(new BABYLON.Vector3(0, -9.81, 0), havokPlugin);
+
+# Physics aggregate (simple approach)
+const aggregate = new BABYLON.PhysicsAggregate(
+    mesh,
+    BABYLON.PhysicsShapeType.SPHERE,  // Shape type
+    { mass: 1, restitution: 0.75 },   // Options
+    scene
+);
+
+// Shape types
+BABYLON.PhysicsShapeType.BOX
+BABYLON.PhysicsShapeType.SPHERE
+BABYLON.PhysicsShapeType.CAPSULE
+BABYLON.PhysicsShapeType.CYLINDER
+BABYLON.PhysicsShapeType.MESH
+BABYLON.PhysicsShapeType.CONVEX_HULL
+BABYLON.PhysicsShapeType.CONTAINER
+
+# Physics options
+{
+    mass: 1,              // 0 = static
+    restitution: 0.5,     // Bounciness
+    friction: 0.5,
+    startAsleep: false,
+    disablePreStep: false
+}
+
+# Apply forces
+aggregate.body.applyForce(
+    new BABYLON.Vector3(100, 0, 0),
+    mesh.getAbsolutePosition()
+);
+
+aggregate.body.applyImpulse(
+    new BABYLON.Vector3(10, 0, 0),
+    mesh.getAbsolutePosition()
+);
+
+# Set velocity
+aggregate.body.setLinearVelocity(new BABYLON.Vector3(5, 0, 0));
+aggregate.body.setAngularVelocity(new BABYLON.Vector3(0, 1, 0));
+
+# Get velocity
+const linearVel = aggregate.body.getLinearVelocity();
+const angularVel = aggregate.body.getAngularVelocity();
+
+# Constraints/joints
+const joint = new BABYLON.HingeConstraint(
+    new BABYLON.Vector3(0, 1, 0),   // Pivot A
+    new BABYLON.Vector3(0, -1, 0),  // Pivot B
+    new BABYLON.Vector3(1, 0, 0),   // Axis
+    scene
+);
+aggregateA.body.addConstraint(aggregateB.body, joint);
+
+// Joint types
+BABYLON.BallAndSocketConstraint
+BABYLON.HingeConstraint
+BABYLON.SliderConstraint
+BABYLON.LockConstraint
+BABYLON.DistanceConstraint
+
+# Raycasting with physics
+const raycastResult = new BABYLON.PhysicsRaycastResult();
+scene.getPhysicsEngine().raycast(origin, end, raycastResult);
+
+if (raycastResult.hasHit) {
+    console.log(raycastResult.hitPointWorld);
+    console.log(raycastResult.hitNormalWorld);
+    console.log(raycastResult.body);
+}
+
+# Collision events
+aggregate.body.setCollisionCallbackEnabled(true);
+
+const observable = aggregate.body.getCollisionObservable();
+observable.add((event) => {
+    console.log('Collision with:', event.collidedAgainst);
+    console.log('Point:', event.point);
+    console.log('Normal:', event.normal);
+});
+
+==============================================================================
+GUI
+==============================================================================
+import * as GUI from '@babylonjs/gui';
+
+# Fullscreen UI (2D overlay)
+const advancedTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI('UI');
+
+# Button
+const button = GUI.Button.CreateSimpleButton('btn', 'Click Me');
+button.width = '150px';
+button.height = '40px';
+button.color = 'white';
+button.background = 'green';
+button.cornerRadius = 5;
+button.thickness = 2;
+button.onPointerClickObservable.add(() => {
+    console.log('Clicked!');
+});
+advancedTexture.addControl(button);
+
+// Image button
+const imageButton = GUI.Button.CreateImageOnlyButton('imgBtn', 'icon.png');
+
+// Image with text button
+const button = GUI.Button.CreateImageWithCenterTextButton('btn', 'Text', 'icon.png');
+
+# TextBlock
+const text = new GUI.TextBlock();
+text.text = 'Hello World';
+text.color = 'white';
+text.fontSize = 24;
+text.fontFamily = 'Arial';
+text.textHorizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+text.textVerticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_CENTER;
+advancedTexture.addControl(text);
+
+# InputText
+const input = new GUI.InputText();
+input.width = '200px';
+input.height = '40px';
+input.color = 'white';
+input.background = 'gray';
+input.placeholderText = 'Enter text...';
+input.onTextChangedObservable.add((eventData) => {
+    console.log(eventData.text);
+});
+advancedTexture.addControl(input);
+
+# Slider
+const slider = new GUI.Slider();
+slider.minimum = 0;
+slider.maximum = 100;
+slider.value = 50;
+slider.width = '200px';
+slider.height = '20px';
+slider.onValueChangedObservable.add((value) => {
+    console.log(value);
+});
+advancedTexture.addControl(slider);
+
+# Checkbox
+const checkbox = new GUI.Checkbox();
+checkbox.width = '20px';
+checkbox.height = '20px';
+checkbox.isChecked = false;
+checkbox.color = 'green';
+checkbox.onIsCheckedChangedObservable.add((value) => {
+    console.log(value);
+});
+
+# Containers
+
+// StackPanel
+const panel = new GUI.StackPanel();
+panel.width = '200px';
+panel.isVertical = true;
+panel.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+panel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_TOP;
+advancedTexture.addControl(panel);
+panel.addControl(button);
+panel.addControl(text);
+
+// Grid
+const grid = new GUI.Grid();
+grid.addColumnDefinition(0.5);
+grid.addColumnDefinition(0.5);
+grid.addRowDefinition(0.5);
+grid.addRowDefinition(0.5);
+advancedTexture.addControl(grid);
+grid.addControl(button, 0, 0);  // row, column
+
+// Rectangle (container with border)
+const rect = new GUI.Rectangle();
+rect.width = '200px';
+rect.height = '100px';
+rect.cornerRadius = 10;
+rect.color = 'white';
+rect.thickness = 2;
+rect.background = 'gray';
+advancedTexture.addControl(rect);
+rect.addControl(text);
+
+// ScrollViewer
+const scrollViewer = new GUI.ScrollViewer();
+scrollViewer.width = '200px';
+scrollViewer.height = '300px';
+advancedTexture.addControl(scrollViewer);
+scrollViewer.addControl(panel);
+
+# 3D GUI (on mesh)
+const plane = BABYLON.MeshBuilder.CreatePlane('uiPlane', { size: 2 }, scene);
+const advancedTexture = GUI.AdvancedDynamicTexture.CreateForMesh(plane, 1024, 1024);
+
+# Link to mesh (follow mesh in 2D)
+const label = new GUI.TextBlock();
+label.text = 'Label';
+advancedTexture.addControl(label);
+label.linkWithMesh(mesh);
+label.linkOffsetY = -50;
+
+# GUI positioning
+control.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;   // LEFT, CENTER, RIGHT
+control.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_TOP;        // TOP, CENTER, BOTTOM
+control.left = '10px';
+control.top = '10px';
+control.paddingLeft = '5px';
+control.paddingTop = '5px';
+
+==============================================================================
+WEBXR_VR_AR
+==============================================================================
+# Default XR experience (quick setup)
+const xr = await scene.createDefaultXRExperienceAsync({
+    floorMeshes: [ground]
+});
+
+// Check support
+if (xr.baseExperience) {
+    console.log('XR supported');
+}
+
+// Enter VR
+xr.baseExperience.enterXRAsync('immersive-vr', 'local-floor');
+
+// Exit
+xr.baseExperience.exitXRAsync();
+
+# XR state
+xr.baseExperience.onStateChangedObservable.add((state) => {
+    switch (state) {
+        case BABYLON.WebXRState.IN_XR:
+            console.log('In XR');
+            break;
+        case BABYLON.WebXRState.NOT_IN_XR:
+            console.log('Not in XR');
+            break;
+    }
+});
+
+# Controllers
+xr.input.onControllerAddedObservable.add((controller) => {
+    controller.onMotionControllerInitObservable.add((motionController) => {
+        const trigger = motionController.getComponent('xr-standard-trigger');
+        trigger.onButtonStateChangedObservable.add((component) => {
+            if (component.pressed) {
+                console.log('Trigger pressed');
+            }
+        });
+    });
+});
+
+# Teleportation
+const teleportation = xr.teleportation;
+teleportation.addFloorMesh(ground);
+
+# Hand tracking
+const hands = xr.baseExperience.featuresManager.enableFeature(
+    BABYLON.WebXRFeatureName.HAND_TRACKING,
+    'latest',
+    { xrInput: xr.input }
+);
+
+# AR (WebXR)
+const xr = await scene.createDefaultXRExperienceAsync({
+    uiOptions: {
+        sessionMode: 'immersive-ar'
+    }
+});
+
+// Hit test
+const hitTest = xr.baseExperience.featuresManager.enableFeature(
+    BABYLON.WebXRFeatureName.HIT_TEST,
+    'latest'
+);
+
+hitTest.onHitTestResultObservable.add((results) => {
+    if (results.length) {
+        // Place object at hit point
+        mesh.position = results[0].position;
+    }
+});
+
+==============================================================================
+OPTIMIZATION
+==============================================================================
+# Scene optimizer
+const options = new BABYLON.SceneOptimizerOptions(60, 2000);  // Target FPS, check interval
+
+options.addOptimization(new BABYLON.HardwareScalingOptimization(0, 2));
+options.addOptimization(new BABYLON.TextureOptimization(1, 512));
+options.addOptimization(new BABYLON.ShadowsOptimization(2));
+options.addOptimization(new BABYLON.PostProcessesOptimization(3));
+options.addOptimization(new BABYLON.ParticlesOptimization(4));
+options.addOptimization(new BABYLON.RenderTargetsOptimization(5));
+options.addOptimization(new BABYLON.MergeMeshesOptimization(6));
+
+const optimizer = new BABYLON.SceneOptimizer(scene, options);
+optimizer.start();
+
+# Freeze materials (static materials)
+material.freeze();
+material.unfreeze();
+
+# Freeze active meshes (fixed scene)
+scene.freezeActiveMeshes();
+scene.unfreezeActiveMeshes();
+
+# Instances (many identical meshes)
+const instance = mesh.createInstance('instance');
+
+# Thin instances (maximum performance)
+const matrix = BABYLON.Matrix.Translation(x, y, z);
+mesh.thinInstanceAdd(matrix);
+mesh.thinInstanceSetMatrixAt(index, matrix);
+
+# LOD (Level of Detail)
+mesh.addLODLevel(50, mediumDetailMesh);
+mesh.addLODLevel(100, lowDetailMesh);
+mesh.addLODLevel(200, null);  // Hide at distance
+
+# Occlusion queries
+mesh.occlusionQueryAlgorithmType = BABYLON.AbstractMesh.OCCLUSION_ALGORITHM_TYPE_CONSERVATIVE;
+mesh.occlusionType = BABYLON.AbstractMesh.OCCLUSION_TYPE_OPTIMISTIC;
+
+# Asset containers (lazy loading)
+const container = await BABYLON.SceneLoader.LoadAssetContainerAsync(url, filename, scene);
+// Add when needed
+container.addAllToScene();
+
+# Texture compression
+// Use KTX2 compressed textures
+
+# Dispose unused resources
+mesh.dispose();
+material.dispose();
+texture.dispose();
+
+# Check performance
+scene.getEngine().getFps();
+scene.getActiveMeshes().length;
+scene.getActiveParticles();
+
+==============================================================================
+INSPECTOR_DEBUG
+==============================================================================
+# Show inspector
+import '@babylonjs/inspector';
+
+scene.debugLayer.show({
+    embedMode: true,
+    overlay: true
+});
+
+scene.debugLayer.hide();
+
+# Keyboard shortcut
+window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'i') {
+        if (scene.debugLayer.isVisible()) {
+            scene.debugLayer.hide();
+        } else {
+            scene.debugLayer.show();
+        }
+    }
+});
+
+# Debug helpers
+// Axes viewer
+new BABYLON.AxesViewer(scene, 1);
+
+// Physics viewer
+const physicsViewer = new BABYLON.PhysicsViewer(scene);
+physicsViewer.showBody(aggregate.body);
+
+// Gizmo manager
+const gizmoManager = new BABYLON.GizmoManager(scene);
+gizmoManager.positionGizmoEnabled = true;
+gizmoManager.rotationGizmoEnabled = true;
+gizmoManager.scaleGizmoEnabled = true;
+gizmoManager.attachToMesh(mesh);

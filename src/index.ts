@@ -77,6 +77,8 @@ export type {
 
 // Causal exports
 export { CausalMemory } from './causal/CausalMemory.js';
+export { CausalDetector } from './causal/CausalDetector.js';
+export type { CausalDetectorEngine, CausalDetectorResult } from './causal/CausalDetector.js';
 export { Hypergraph } from './causal/Hypergraph.js';
 export type {
   HyperedgeData,

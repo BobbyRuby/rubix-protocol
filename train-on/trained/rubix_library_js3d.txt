@@ -1,0 +1,1054 @@
+# RUBIX LIBRARY: JS_3D_FRAMEWORKS
+# SCOPE: Three.js|Babylon.js|React_Three_Fiber|WebGL|WebGPU
+# USE_FOR: 3D_visualization|games|simulations|data_viz|AR_VR|product_viewers
+
+==============================================================================
+FRAMEWORK_COMPARISON
+==============================================================================
+THREE.JS
+- Most popular, largest ecosystem
+- Lower-level, more control
+- Extensive examples and community
+- Best for: custom visualizations, art, experiments
+- Site: threejs.org
+
+BABYLON.JS
+- Microsoft-backed, full game engine
+- Higher-level, more built-in features
+- Better physics, GUI, inspector tools
+- Best for: games, complex apps, enterprise
+- Site: babylonjs.com
+
+REACT_THREE_FIBER
+- React renderer for Three.js
+- Declarative, component-based
+- Great DX with React ecosystem
+- Best for: React apps, rapid prototyping
+- Site: docs.pmnd.rs/react-three-fiber
+
+A-FRAME
+- HTML-based, beginner-friendly
+- Built on Three.js
+- VR-first design
+- Best for: WebVR, quick prototypes
+- Site: aframe.io
+
+==============================================================================
+THREE.JS_SETUP
+==============================================================================
+# Installation
+npm install three
+npm install @types/three  # TypeScript
+
+# CDN
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+
+# Basic imports
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+# Minimal scene
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+// Add a cube
+const geometry = new THREE.BoxGeometry(1, 1, 1);
+const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+const cube = new THREE.Mesh(geometry, material);
+scene.add(cube);
+
+// Light
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5, 5, 5);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x404040));
+
+// Camera position
+camera.position.z = 5;
+
+// Animation loop
+function animate() {
+    requestAnimationFrame(animate);
+    cube.rotation.x += 0.01;
+    cube.rotation.y += 0.01;
+    renderer.render(scene, camera);
+}
+animate();
+
+// Handle resize
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+==============================================================================
+THREE.JS_CAMERAS
+==============================================================================
+# Perspective camera (3D depth)
+const camera = new THREE.PerspectiveCamera(
+    75,                                      // FOV (degrees)
+    window.innerWidth / window.innerHeight,  // Aspect ratio
+    0.1,                                     // Near clipping plane
+    1000                                     // Far clipping plane
+);
+camera.position.set(0, 5, 10);
+camera.lookAt(0, 0, 0);
+
+# Orthographic camera (no perspective, 2D/isometric)
+const aspect = window.innerWidth / window.innerHeight;
+const frustumSize = 10;
+const camera = new THREE.OrthographicCamera(
+    frustumSize * aspect / -2,  // left
+    frustumSize * aspect / 2,   // right
+    frustumSize / 2,            // top
+    frustumSize / -2,           // bottom
+    0.1,                        // near
+    1000                        // far
+);
+
+# Orbit controls (rotate around target)
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.enableZoom = true;
+controls.enablePan = true;
+controls.minDistance = 2;
+controls.maxDistance = 50;
+controls.maxPolarAngle = Math.PI / 2;  // Limit vertical rotation
+
+// In animation loop
+controls.update();
+
+# First-person controls
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+const controls = new PointerLockControls(camera, document.body);
+document.addEventListener('click', () => controls.lock());
+
+# Fly controls
+import { FlyControls } from 'three/addons/controls/FlyControls.js';
+
+const controls = new FlyControls(camera, renderer.domElement);
+controls.movementSpeed = 10;
+controls.rollSpeed = Math.PI / 6;
+
+==============================================================================
+THREE.JS_GEOMETRIES
+==============================================================================
+# Built-in geometries
+new THREE.BoxGeometry(width, height, depth);
+new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+new THREE.PlaneGeometry(width, height);
+new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments);
+new THREE.ConeGeometry(radius, height, segments);
+new THREE.TorusGeometry(radius, tube, radialSegments, tubularSegments);
+new THREE.TorusKnotGeometry(radius, tube, tubularSegments, radialSegments);
+new THREE.RingGeometry(innerRadius, outerRadius, segments);
+new THREE.CircleGeometry(radius, segments);
+new THREE.DodecahedronGeometry(radius);
+new THREE.IcosahedronGeometry(radius);
+new THREE.OctahedronGeometry(radius);
+new THREE.TetrahedronGeometry(radius);
+
+# Buffer geometry (custom)
+const geometry = new THREE.BufferGeometry();
+
+const vertices = new Float32Array([
+    -1, -1, 0,
+     1, -1, 0,
+     1,  1, 0,
+    -1,  1, 0
+]);
+
+const indices = [0, 1, 2, 0, 2, 3];
+
+geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+geometry.setIndex(indices);
+geometry.computeVertexNormals();
+
+# Extrude geometry (from 2D shape)
+const shape = new THREE.Shape();
+shape.moveTo(0, 0);
+shape.lineTo(0, 2);
+shape.lineTo(1, 2);
+shape.lineTo(1, 0);
+shape.closePath();
+
+const extrudeSettings = {
+    steps: 1,
+    depth: 0.5,
+    bevelEnabled: true,
+    bevelThickness: 0.1,
+    bevelSize: 0.1,
+    bevelSegments: 3
+};
+
+const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+
+# Lathe geometry (rotational)
+const points = [];
+for (let i = 0; i < 10; i++) {
+    points.push(new THREE.Vector2(Math.sin(i * 0.2) * 3 + 3, (i - 5) * 0.8));
+}
+const geometry = new THREE.LatheGeometry(points);
+
+# Text geometry
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+const loader = new FontLoader();
+loader.load('fonts/helvetiker_regular.typeface.json', (font) => {
+    const geometry = new TextGeometry('Hello', {
+        font: font,
+        size: 1,
+        height: 0.2,
+        curveSegments: 12,
+        bevelEnabled: true,
+        bevelThickness: 0.03,
+        bevelSize: 0.02
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+});
+
+==============================================================================
+THREE.JS_MATERIALS
+==============================================================================
+# Basic material (no lighting)
+new THREE.MeshBasicMaterial({
+    color: 0xff0000,
+    wireframe: false,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide
+});
+
+# Standard material (PBR, realistic)
+new THREE.MeshStandardMaterial({
+    color: 0xff0000,
+    metalness: 0.5,
+    roughness: 0.5,
+    map: texture,              // Color/albedo map
+    normalMap: normalTexture,  // Normal map
+    roughnessMap: roughTex,    // Roughness map
+    metalnessMap: metalTex,    // Metalness map
+    aoMap: aoTexture,          // Ambient occlusion
+    envMap: envTexture,        // Environment reflection
+    envMapIntensity: 1
+});
+
+# Physical material (more advanced PBR)
+new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,
+    metalness: 0,
+    roughness: 0,
+    transmission: 1,           // Glass transparency
+    thickness: 0.5,            // Glass thickness
+    clearcoat: 1,              // Clear coat layer
+    clearcoatRoughness: 0,
+    ior: 1.5,                  // Index of refraction
+    sheen: 0.5,                // Fabric sheen
+    sheenRoughness: 0.5,
+    sheenColor: 0xff0000
+});
+
+# Lambert material (non-shiny)
+new THREE.MeshLambertMaterial({ color: 0x00ff00 });
+
+# Phong material (shiny, specular highlights)
+new THREE.MeshPhongMaterial({
+    color: 0x00ff00,
+    shininess: 100,
+    specular: 0x111111
+});
+
+# Toon material (cel-shading)
+new THREE.MeshToonMaterial({ color: 0x00ff00 });
+
+# Line materials
+new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
+new THREE.LineDashedMaterial({ color: 0xff0000, dashSize: 0.1, gapSize: 0.1 });
+
+# Point material
+new THREE.PointsMaterial({ color: 0xff0000, size: 0.1, sizeAttenuation: true });
+
+# Shader material (custom GLSL)
+new THREE.ShaderMaterial({
+    uniforms: {
+        time: { value: 0 },
+        color: { value: new THREE.Color(0xff0000) }
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform float time;
+        uniform vec3 color;
+        varying vec2 vUv;
+        void main() {
+            gl_FragColor = vec4(color * sin(time + vUv.x * 10.0), 1.0);
+        }
+    `
+});
+
+==============================================================================
+THREE.JS_TEXTURES
+==============================================================================
+# Load texture
+const textureLoader = new THREE.TextureLoader();
+const texture = textureLoader.load('texture.jpg');
+
+# Texture settings
+texture.wrapS = THREE.RepeatWrapping;
+texture.wrapT = THREE.RepeatWrapping;
+texture.repeat.set(4, 4);
+texture.offset.set(0.5, 0.5);
+texture.rotation = Math.PI / 4;
+texture.center.set(0.5, 0.5);
+texture.minFilter = THREE.LinearMipmapLinearFilter;
+texture.magFilter = THREE.LinearFilter;
+texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+# Environment map (reflections)
+const cubeTextureLoader = new THREE.CubeTextureLoader();
+const envMap = cubeTextureLoader.load([
+    'px.jpg', 'nx.jpg',
+    'py.jpg', 'ny.jpg',
+    'pz.jpg', 'nz.jpg'
+]);
+scene.environment = envMap;
+scene.background = envMap;
+
+# HDR environment
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+new RGBELoader().load('environment.hdr', (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = texture;
+    scene.background = texture;
+});
+
+# Video texture
+const video = document.createElement('video');
+video.src = 'video.mp4';
+video.loop = true;
+video.muted = true;
+video.play();
+
+const videoTexture = new THREE.VideoTexture(video);
+const material = new THREE.MeshBasicMaterial({ map: videoTexture });
+
+# Canvas texture
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = 'red';
+ctx.fillRect(0, 0, 256, 256);
+
+const canvasTexture = new THREE.CanvasTexture(canvas);
+
+// Update dynamic canvas
+canvasTexture.needsUpdate = true;
+
+==============================================================================
+THREE.JS_LIGHTS
+==============================================================================
+# Ambient light (everywhere, no shadows)
+const ambient = new THREE.AmbientLight(0x404040, 0.5);
+scene.add(ambient);
+
+# Directional light (sun-like, parallel rays)
+const directional = new THREE.DirectionalLight(0xffffff, 1);
+directional.position.set(5, 10, 5);
+directional.castShadow = true;
+directional.shadow.mapSize.width = 2048;
+directional.shadow.mapSize.height = 2048;
+directional.shadow.camera.near = 0.5;
+directional.shadow.camera.far = 50;
+directional.shadow.camera.left = -10;
+directional.shadow.camera.right = 10;
+directional.shadow.camera.top = 10;
+directional.shadow.camera.bottom = -10;
+scene.add(directional);
+
+# Point light (bulb, radiates all directions)
+const point = new THREE.PointLight(0xff0000, 1, 100);
+point.position.set(0, 5, 0);
+point.castShadow = true;
+scene.add(point);
+
+# Spot light (cone of light)
+const spot = new THREE.SpotLight(0xffffff, 1);
+spot.position.set(0, 10, 0);
+spot.angle = Math.PI / 6;
+spot.penumbra = 0.2;
+spot.decay = 2;
+spot.distance = 50;
+spot.castShadow = true;
+scene.add(spot);
+
+# Hemisphere light (sky/ground)
+const hemi = new THREE.HemisphereLight(0xffffbb, 0x080820, 1);
+scene.add(hemi);
+
+# Rect area light (soft box)
+import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+
+RectAreaLightUniformsLib.init();
+const rectLight = new THREE.RectAreaLight(0xffffff, 5, 4, 4);
+rectLight.position.set(0, 5, 0);
+rectLight.lookAt(0, 0, 0);
+scene.add(rectLight);
+
+# Enable shadows on renderer
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+// Objects
+mesh.castShadow = true;
+mesh.receiveShadow = true;
+
+==============================================================================
+THREE.JS_LOADERS
+==============================================================================
+# GLTF/GLB (recommended format)
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
+
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(dracoLoader);
+
+gltfLoader.load(
+    'model.glb',
+    (gltf) => {
+        const model = gltf.scene;
+        model.scale.set(0.5, 0.5, 0.5);
+        model.position.set(0, 0, 0);
+        scene.add(model);
+
+        // Access animations
+        const mixer = new THREE.AnimationMixer(model);
+        gltf.animations.forEach((clip) => {
+            mixer.clipAction(clip).play();
+        });
+    },
+    (progress) => {
+        console.log((progress.loaded / progress.total * 100) + '% loaded');
+    },
+    (error) => {
+        console.error('Error loading model:', error);
+    }
+);
+
+# FBX
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+const fbxLoader = new FBXLoader();
+fbxLoader.load('model.fbx', (object) => {
+    scene.add(object);
+});
+
+# OBJ + MTL
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+
+const mtlLoader = new MTLLoader();
+mtlLoader.load('model.mtl', (materials) => {
+    materials.preload();
+
+    const objLoader = new OBJLoader();
+    objLoader.setMaterials(materials);
+    objLoader.load('model.obj', (object) => {
+        scene.add(object);
+    });
+});
+
+# STL (3D printing)
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const stlLoader = new STLLoader();
+stlLoader.load('model.stl', (geometry) => {
+    const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+});
+
+==============================================================================
+THREE.JS_ANIMATION
+==============================================================================
+# Basic animation loop
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+    const elapsed = clock.getElapsedTime();
+
+    // Rotate
+    cube.rotation.x += delta;
+    cube.rotation.y += delta * 0.5;
+
+    // Oscillate
+    cube.position.y = Math.sin(elapsed) * 2;
+
+    renderer.render(scene, camera);
+}
+
+# Animation mixer (for loaded models)
+let mixer;
+
+// After loading model
+mixer = new THREE.AnimationMixer(model);
+const action = mixer.clipAction(gltf.animations[0]);
+action.play();
+
+// In animation loop
+if (mixer) mixer.update(delta);
+
+# Animation actions
+const action = mixer.clipAction(clip);
+action.play();
+action.stop();
+action.pause();
+action.reset();
+action.setLoop(THREE.LoopRepeat, Infinity);
+action.setLoop(THREE.LoopOnce);
+action.setLoop(THREE.LoopPingPong);
+action.clampWhenFinished = true;
+action.timeScale = 2;  // Speed
+action.weight = 0.5;   // Blend weight
+action.fadeIn(0.5);
+action.fadeOut(0.5);
+action.crossFadeFrom(otherAction, 0.5);
+
+# Keyframe animation (manual)
+const times = [0, 1, 2];
+const values = [0, 0, 0, 5, 0, 0, 0, 0, 0];  // x,y,z for each time
+
+const positionKF = new THREE.VectorKeyframeTrack('.position', times, values);
+const clip = new THREE.AnimationClip('move', 2, [positionKF]);
+
+const mixer = new THREE.AnimationMixer(mesh);
+mixer.clipAction(clip).play();
+
+# GSAP integration
+import gsap from 'gsap';
+
+gsap.to(cube.position, {
+    x: 5,
+    duration: 2,
+    ease: 'power2.inOut'
+});
+
+gsap.to(cube.rotation, {
+    y: Math.PI * 2,
+    duration: 2,
+    repeat: -1,
+    ease: 'none'
+});
+
+==============================================================================
+THREE.JS_RAYCASTING
+==============================================================================
+# Mouse picking
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+function onMouseMove(event) {
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+}
+
+function onMouseClick(event) {
+    raycaster.setFromCamera(mouse, camera);
+
+    const intersects = raycaster.intersectObjects(scene.children, true);
+
+    if (intersects.length > 0) {
+        const object = intersects[0].object;
+        const point = intersects[0].point;
+        const face = intersects[0].face;
+        const distance = intersects[0].distance;
+
+        console.log('Clicked:', object.name, 'at', point);
+
+        // Highlight
+        object.material.emissive.setHex(0xff0000);
+    }
+}
+
+window.addEventListener('mousemove', onMouseMove);
+window.addEventListener('click', onMouseClick);
+
+# Hover effects
+function animate() {
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(selectableObjects);
+
+    // Reset all
+    selectableObjects.forEach(obj => obj.material.color.setHex(0xffffff));
+
+    // Highlight hovered
+    if (intersects.length > 0) {
+        intersects[0].object.material.color.setHex(0xff0000);
+        document.body.style.cursor = 'pointer';
+    } else {
+        document.body.style.cursor = 'default';
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+}
+
+==============================================================================
+THREE.JS_POST_PROCESSING
+==============================================================================
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const composer = new EffectComposer(renderer);
+
+// Base render
+composer.addPass(new RenderPass(scene, camera));
+
+// Bloom effect
+const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    1.5,   // strength
+    0.4,   // radius
+    0.85   // threshold
+);
+composer.addPass(bloomPass);
+
+// Anti-aliasing
+const smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
+composer.addPass(smaaPass);
+
+// Output (color space correction)
+composer.addPass(new OutputPass());
+
+// In animation loop
+composer.render();  // Instead of renderer.render()
+
+# Other effects
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';      // Depth of field
+import { FilmPass } from 'three/addons/postprocessing/FilmPass.js';        // Film grain
+import { GlitchPass } from 'three/addons/postprocessing/GlitchPass.js';    // Glitch
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';  // Outline
+
+==============================================================================
+BABYLON.JS_SETUP
+==============================================================================
+# Installation
+npm install babylonjs
+npm install babylonjs-loaders
+npm install babylonjs-gui
+
+# CDN
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+
+# Basic scene
+const canvas = document.getElementById('renderCanvas');
+const engine = new BABYLON.Engine(canvas, true);
+
+const createScene = () => {
+    const scene = new BABYLON.Scene(engine);
+
+    // Camera
+    const camera = new BABYLON.ArcRotateCamera(
+        'camera',
+        Math.PI / 2,    // alpha (horizontal rotation)
+        Math.PI / 3,    // beta (vertical rotation)
+        10,             // radius
+        BABYLON.Vector3.Zero(),
+        scene
+    );
+    camera.attachControl(canvas, true);
+
+    // Light
+    const light = new BABYLON.HemisphericLight(
+        'light',
+        new BABYLON.Vector3(0, 1, 0),
+        scene
+    );
+
+    // Mesh
+    const sphere = BABYLON.MeshBuilder.CreateSphere(
+        'sphere',
+        { diameter: 2 },
+        scene
+    );
+
+    // Material
+    const material = new BABYLON.StandardMaterial('mat', scene);
+    material.diffuseColor = new BABYLON.Color3(1, 0, 0);
+    sphere.material = material;
+
+    return scene;
+};
+
+const scene = createScene();
+
+engine.runRenderLoop(() => {
+    scene.render();
+});
+
+window.addEventListener('resize', () => {
+    engine.resize();
+});
+
+==============================================================================
+BABYLON.JS_MESHES
+==============================================================================
+# Built-in shapes
+BABYLON.MeshBuilder.CreateBox('box', { size: 2 }, scene);
+BABYLON.MeshBuilder.CreateSphere('sphere', { diameter: 2, segments: 32 }, scene);
+BABYLON.MeshBuilder.CreateCylinder('cyl', { height: 3, diameter: 2 }, scene);
+BABYLON.MeshBuilder.CreateTorus('torus', { diameter: 2, thickness: 0.5 }, scene);
+BABYLON.MeshBuilder.CreatePlane('plane', { size: 5 }, scene);
+BABYLON.MeshBuilder.CreateGround('ground', { width: 10, height: 10 }, scene);
+BABYLON.MeshBuilder.CreateDisc('disc', { radius: 2 }, scene);
+BABYLON.MeshBuilder.CreateCapsule('capsule', { radius: 0.5, height: 2 }, scene);
+
+# Ground with height map
+const ground = BABYLON.MeshBuilder.CreateGroundFromHeightMap(
+    'terrain',
+    'heightmap.png',
+    {
+        width: 100,
+        height: 100,
+        subdivisions: 100,
+        minHeight: 0,
+        maxHeight: 10
+    },
+    scene
+);
+
+# Load models
+BABYLON.SceneLoader.ImportMesh(
+    '',           // meshNames ('' = all)
+    'models/',    // rootUrl
+    'model.glb',  // filename
+    scene,
+    (meshes, particleSystems, skeletons, animationGroups) => {
+        const model = meshes[0];
+        model.scaling = new BABYLON.Vector3(0.1, 0.1, 0.1);
+
+        // Play animations
+        if (animationGroups.length > 0) {
+            animationGroups[0].start(true);
+        }
+    }
+);
+
+// Async version
+const result = await BABYLON.SceneLoader.ImportMeshAsync('', 'models/', 'model.glb', scene);
+
+==============================================================================
+BABYLON.JS_MATERIALS
+==============================================================================
+# Standard material
+const material = new BABYLON.StandardMaterial('mat', scene);
+material.diffuseColor = new BABYLON.Color3(1, 0, 0);
+material.specularColor = new BABYLON.Color3(1, 1, 1);
+material.emissiveColor = new BABYLON.Color3(0, 0, 0);
+material.ambientColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+material.alpha = 1;
+material.backFaceCulling = true;
+material.wireframe = false;
+
+# PBR material
+const pbr = new BABYLON.PBRMaterial('pbr', scene);
+pbr.albedoColor = new BABYLON.Color3(1, 0, 0);
+pbr.metallic = 0.5;
+pbr.roughness = 0.5;
+pbr.albedoTexture = new BABYLON.Texture('albedo.jpg', scene);
+pbr.bumpTexture = new BABYLON.Texture('normal.jpg', scene);
+pbr.metallicTexture = new BABYLON.Texture('metallic.jpg', scene);
+pbr.environmentTexture = BABYLON.CubeTexture.CreateFromPrefilteredData('env.env', scene);
+
+==============================================================================
+BABYLON.JS_PHYSICS
+==============================================================================
+# Enable physics (Havok)
+const havokInstance = await HavokPhysics();
+const havokPlugin = new BABYLON.HavokPlugin(true, havokInstance);
+scene.enablePhysics(new BABYLON.Vector3(0, -9.81, 0), havokPlugin);
+
+# Add physics to mesh
+const aggregate = new BABYLON.PhysicsAggregate(
+    sphere,
+    BABYLON.PhysicsShapeType.SPHERE,
+    { mass: 1, restitution: 0.75 },
+    scene
+);
+
+# Ground (static)
+new BABYLON.PhysicsAggregate(
+    ground,
+    BABYLON.PhysicsShapeType.BOX,
+    { mass: 0 },  // mass 0 = static
+    scene
+);
+
+# Apply force/impulse
+aggregate.body.applyImpulse(
+    new BABYLON.Vector3(10, 0, 0),
+    sphere.getAbsolutePosition()
+);
+
+==============================================================================
+BABYLON.JS_GUI
+==============================================================================
+import * as GUI from 'babylonjs-gui';
+
+# Fullscreen UI
+const advancedTexture = GUI.AdvancedDynamicTexture.CreateFullscreenUI('UI');
+
+# Button
+const button = GUI.Button.CreateSimpleButton('btn', 'Click Me');
+button.width = '150px';
+button.height = '40px';
+button.color = 'white';
+button.background = 'green';
+button.onPointerClickObservable.add(() => {
+    console.log('Clicked!');
+});
+advancedTexture.addControl(button);
+
+# Text
+const text = new GUI.TextBlock();
+text.text = 'Hello World';
+text.color = 'white';
+text.fontSize = 24;
+advancedTexture.addControl(text);
+
+# 3D GUI (on mesh)
+const plane = BABYLON.MeshBuilder.CreatePlane('uiPlane', { size: 2 }, scene);
+const advancedTexture = GUI.AdvancedDynamicTexture.CreateForMesh(plane);
+
+==============================================================================
+REACT_THREE_FIBER
+==============================================================================
+# Installation
+npm install @react-three/fiber three
+npm install @react-three/drei  # Helpers
+
+# Basic scene
+import { Canvas } from '@react-three/fiber';
+
+function App() {
+    return (
+        <Canvas>
+            <ambientLight intensity={0.5} />
+            <directionalLight position={[10, 10, 5]} />
+            <mesh>
+                <boxGeometry args={[1, 1, 1]} />
+                <meshStandardMaterial color="orange" />
+            </mesh>
+        </Canvas>
+    );
+}
+
+# Interactive mesh
+import { useState, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
+
+function Box(props) {
+    const meshRef = useRef();
+    const [hovered, setHovered] = useState(false);
+    const [clicked, setClicked] = useState(false);
+
+    useFrame((state, delta) => {
+        meshRef.current.rotation.x += delta;
+        meshRef.current.rotation.y += delta * 0.5;
+    });
+
+    return (
+        <mesh
+            {...props}
+            ref={meshRef}
+            scale={clicked ? 1.5 : 1}
+            onClick={() => setClicked(!clicked)}
+            onPointerOver={() => setHovered(true)}
+            onPointerOut={() => setHovered(false)}
+        >
+            <boxGeometry args={[1, 1, 1]} />
+            <meshStandardMaterial color={hovered ? 'hotpink' : 'orange'} />
+        </mesh>
+    );
+}
+
+# Drei helpers
+import { OrbitControls, Environment, useGLTF, Html, Text } from '@react-three/drei';
+
+function Scene() {
+    const { scene } = useGLTF('/model.glb');
+
+    return (
+        <>
+            <OrbitControls />
+            <Environment preset="sunset" />
+            <primitive object={scene} scale={0.5} />
+            <Text position={[0, 2, 0]} fontSize={0.5} color="black">
+                Hello World
+            </Text>
+            <Html position={[0, 1, 0]}>
+                <div className="label">HTML in 3D!</div>
+            </Html>
+        </>
+    );
+}
+
+# Physics with rapier
+npm install @react-three/rapier
+
+import { Physics, RigidBody } from '@react-three/rapier';
+
+function PhysicsScene() {
+    return (
+        <Physics>
+            <RigidBody>
+                <mesh position={[0, 5, 0]}>
+                    <sphereGeometry />
+                    <meshStandardMaterial />
+                </mesh>
+            </RigidBody>
+            <RigidBody type="fixed">
+                <mesh position={[0, 0, 0]}>
+                    <boxGeometry args={[10, 0.5, 10]} />
+                    <meshStandardMaterial />
+                </mesh>
+            </RigidBody>
+        </Physics>
+    );
+}
+
+==============================================================================
+A-FRAME
+==============================================================================
+# HTML-based 3D
+<html>
+<head>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+</head>
+<body>
+    <a-scene>
+        <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"></a-box>
+        <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E"></a-sphere>
+        <a-cylinder position="1 0.75 -3" radius="0.5" height="1.5" color="#FFC65D"></a-cylinder>
+        <a-plane position="0 0 -4" rotation="-90 0 0" width="4" height="4" color="#7BC8A4"></a-plane>
+        <a-sky color="#ECECEC"></a-sky>
+    </a-scene>
+</body>
+</html>
+
+# Custom component
+AFRAME.registerComponent('rotate', {
+    schema: {
+        speed: { type: 'number', default: 1 }
+    },
+    tick: function(time, delta) {
+        this.el.object3D.rotation.y += this.data.speed * delta * 0.001;
+    }
+});
+
+<a-box rotate="speed: 2"></a-box>
+
+# VR
+<a-scene vr-mode-ui="enabled: true">
+    <a-entity id="rig" movement-controls>
+        <a-entity camera position="0 1.6 0" look-controls></a-entity>
+        <a-entity laser-controls="hand: left"></a-entity>
+        <a-entity laser-controls="hand: right"></a-entity>
+    </a-entity>
+</a-scene>
+
+==============================================================================
+PERFORMANCE_TIPS
+==============================================================================
+# Geometry
+- Reuse geometries: const geo = new BoxGeometry(); // Share among meshes
+- Use BufferGeometry (default in modern Three.js)
+- Merge static geometries: BufferGeometryUtils.mergeGeometries()
+- Use instancing for many identical objects
+
+# Instanced mesh (thousands of same object)
+const count = 10000;
+const mesh = new THREE.InstancedMesh(geometry, material, count);
+
+const matrix = new THREE.Matrix4();
+for (let i = 0; i < count; i++) {
+    matrix.setPosition(Math.random() * 100, Math.random() * 100, Math.random() * 100);
+    mesh.setMatrixAt(i, matrix);
+}
+mesh.instanceMatrix.needsUpdate = true;
+
+# Materials
+- Reuse materials where possible
+- Use simpler materials (Basic/Lambert vs Standard/Physical)
+- Limit texture sizes (power of 2, compress)
+
+# Rendering
+- Use frustum culling (automatic, but can disable per object)
+- Implement LOD (Level of Detail)
+const lod = new THREE.LOD();
+lod.addLevel(highDetailMesh, 0);
+lod.addLevel(mediumDetailMesh, 50);
+lod.addLevel(lowDetailMesh, 100);
+
+- Limit shadow map updates
+- Use EffectComposer only when needed
+
+# Monitoring
+import Stats from 'three/addons/libs/stats.module.js';
+const stats = new Stats();
+document.body.appendChild(stats.dom);
+// In loop: stats.update();
+
+==============================================================================
+WEBGPU_FUTURE
+==============================================================================
+# Three.js WebGPU (experimental)
+import * as THREE from 'three/webgpu';
+
+const renderer = new THREE.WebGPURenderer();
+await renderer.init();
+
+# Babylon.js WebGPU
+const engine = new BABYLON.WebGPUEngine(canvas);
+await engine.initAsync();
+
+# Benefits over WebGL
+- Better CPU performance (less driver overhead)
+- Compute shaders
+- Better multi-threading
+- Modern GPU features

@@ -57,6 +57,7 @@ function generateTags(category, type) {
   const categoryTag = category === 'patterns' ? 'pattern'
                     : category === 'platform' ? 'platform'
                     : category === 'tool' ? 'tool'
+                    : category === 'library' ? 'library'
                     : category;
 
   return [

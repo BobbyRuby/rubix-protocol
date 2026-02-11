@@ -1,0 +1,861 @@
+# RUBIX ECOSYSTEM: TYPESCRIPT_JAVASCRIPT_LIBRARIES
+# SCOPE: Frameworks|Libraries|Tools (excluding Next.js, Node.js - see respective files)
+# PHILOSOPHY: full_stack_JS|component_driven|npm_ecosystem
+
+==============================================================================
+FRONTEND_FRAMEWORKS
+==============================================================================
+REACT
+desc:component_library|Meta|dominant
+site:react.dev
+use_for:SPAs|complex_UIs|component_systems
++large_ecosystem:massive
++job_market:dominant
++React_Native:mobile
+
+npm create vite@latest my-app -- --template react-ts
+
+// Component
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <button onClick={() => setCount(c => c + 1)}>
+      Count: {count}
+    </button>
+  );
+}
+
+// Hooks
+useState:local_state
+useEffect:side_effects
+useContext:context_consumption
+useRef:mutable_refs
+useMemo:memoized_values
+useCallback:memoized_callbacks
+useReducer:complex_state
+
+VUE_3
+desc:progressive_framework|approachable
+site:vuejs.org
+use_for:SPAs|progressive_enhancement
++easy_learning_curve:gentle
++single_file_components:cohesive
++Composition_API:flexible
+
+npm create vue@latest
+
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+
+const count = ref(0)
+const doubled = computed(() => count.value * 2)
+</script>
+
+<template>
+  <button @click="count++">Count: {{ count }}</button>
+  <p>Doubled: {{ doubled }}</p>
+</template>
+
+// Composition API
+ref:reactive_primitive
+reactive:reactive_object
+computed:derived_state
+watch:side_effects
+onMounted:lifecycle
+
+SVELTE
+desc:compile_time_framework|no_virtual_DOM
+site:svelte.dev
+use_for:performance_critical|small_bundle
++no_runtime:compiled_away
++simple_syntax:less_boilerplate
++fast:no_diffing
+
+npm create svelte@latest my-app
+
+<script lang="ts">
+  let count = 0;
+  $: doubled = count * 2;  // Reactive
+</script>
+
+<button on:click={() => count++}>
+  Count: {count}
+</button>
+<p>Doubled: {doubled}</p>
+
+SOLID
+desc:reactive_primitives|fine_grained_reactivity
+site:solidjs.com
+use_for:performance_critical|React_like_DX
++true_reactivity:no_virtual_DOM
++familiar:React_like_syntax
++fast:fine_grained_updates
+
+npm create solid@latest
+
+import { createSignal, createEffect } from 'solid-js';
+
+function Counter() {
+  const [count, setCount] = createSignal(0);
+  createEffect(() => console.log(count()));
+  
+  return (
+    <button onClick={() => setCount(c => c + 1)}>
+      Count: {count()}
+    </button>
+  );
+}
+
+ANGULAR
+desc:full_framework|Google|enterprise
+site:angular.io
+use_for:enterprise_apps|large_teams
++batteries_included:everything_built_in
++TypeScript_first:strong_typing
++dependency_injection:built_in
++RxJS:reactive
+
+ng new my-app
+
+@Component({
+  selector: 'app-counter',
+  template: `
+    <button (click)="increment()">Count: {{ count }}</button>
+  `
+})
+export class CounterComponent {
+  count = 0;
+  increment() { this.count++; }
+}
+
+QWIK
+desc:resumable_framework|instant_loading
+site:qwik.builder.io
+use_for:content_sites|instant_interactivity
++resumability:no_hydration
++lazy_loading:automatic
+
+HTMX
+desc:HTML_extensions|hypermedia
+site:htmx.org
+use_for:server_rendered|simple_interactivity
++no_JS_needed:HTML_attributes
++progressive_enhancement:works_without_JS
+
+<button hx-post="/clicked" hx-swap="outerHTML">
+  Click Me
+</button>
+
+ALPINE_JS
+desc:minimal_JS_framework|inline
+site:alpinejs.dev
+use_for:sprinkles_of_JS|simple_interactivity
+
+<div x-data="{ count: 0 }">
+  <button @click="count++">Count: <span x-text="count"></span></button>
+</div>
+
+==============================================================================
+META_FRAMEWORKS
+==============================================================================
+REMIX
+desc:full_stack_React|web_standards
+site:remix.run
+use_for:full_stack_React|forms|data_loading
++web_standards:native_fetch|FormData
++nested_routes:data_loading
++progressive_enhancement:works_without_JS
+
+npx create-remix@latest
+
+// Route with loader and action
+export async function loader({ params }: LoaderFunctionArgs) {
+  return json(await getUser(params.id));
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const formData = await request.formData();
+  return createUser(Object.fromEntries(formData));
+}
+
+export default function User() {
+  const user = useLoaderData<typeof loader>();
+  return <div>{user.name}</div>;
+}
+
+NUXT_3
+desc:Vue_meta_framework|full_stack
+site:nuxt.com
+use_for:Vue_SSR|full_stack_Vue
++auto_imports:components|composables
++file_based_routing:automatic
++Nitro_server:universal
+
+npx nuxi init my-app
+
+// pages/users/[id].vue
+<script setup>
+const route = useRoute()
+const { data: user } = await useFetch(`/api/users/${route.params.id}`)
+</script>
+
+SVELTEKIT
+desc:Svelte_meta_framework
+site:kit.svelte.dev
+use_for:Svelte_apps|full_stack
+
+npm create svelte@latest my-app
+
+// +page.server.ts
+export async function load({ params }) {
+  return { user: await getUser(params.id) };
+}
+
+// +page.svelte
+<script>
+  export let data;
+</script>
+<h1>{data.user.name}</h1>
+
+ASTRO
+desc:content_focused|island_architecture
+site:astro.build
+use_for:content_sites|blogs|docs
++partial_hydration:islands
++any_framework:React|Vue|Svelte
++zero_JS_default:static_first
+
+npm create astro@latest
+
+---
+// Component script (runs at build time)
+const posts = await getPosts();
+---
+
+<html>
+  <body>
+    {posts.map(post => <PostCard post={post} />)}
+    <Counter client:visible />  <!-- Hydrated on visible -->
+  </body>
+</html>
+
+==============================================================================
+STATE_MANAGEMENT
+==============================================================================
+ZUSTAND
+desc:simple_state|minimal_boilerplate
+use_with:React
++simple:tiny_API
++no_provider:direct_usage
++middleware:persist|devtools
+
+import { create } from 'zustand';
+
+interface Store {
+  count: number;
+  increment: () => void;
+}
+
+const useStore = create<Store>((set) => ({
+  count: 0,
+  increment: () => set((state) => ({ count: state.count + 1 })),
+}));
+
+function Counter() {
+  const { count, increment } = useStore();
+  return <button onClick={increment}>{count}</button>;
+}
+
+JOTAI
+desc:atomic_state|primitive_focused
+use_with:React
++bottom_up:atoms
++TypeScript:excellent
++async:built_in
+
+import { atom, useAtom } from 'jotai';
+
+const countAtom = atom(0);
+const doubledAtom = atom((get) => get(countAtom) * 2);
+
+function Counter() {
+  const [count, setCount] = useAtom(countAtom);
+  return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+}
+
+REDUX_TOOLKIT
+desc:predictable_state|flux_pattern
+use_with:React
++DevTools:time_travel
++middleware:thunk|saga
++RTK_Query:data_fetching
+
+import { createSlice, configureStore } from '@reduxjs/toolkit';
+
+const counterSlice = createSlice({
+  name: 'counter',
+  initialState: { value: 0 },
+  reducers: {
+    increment: (state) => { state.value += 1; },
+  },
+});
+
+const store = configureStore({ reducer: { counter: counterSlice.reducer } });
+
+PINIA
+desc:Vue_state_management
+use_with:Vue
++Composition_API:native
++DevTools:Vue_DevTools
++TypeScript:excellent
+
+import { defineStore } from 'pinia';
+
+export const useCounterStore = defineStore('counter', {
+  state: () => ({ count: 0 }),
+  getters: {
+    doubled: (state) => state.count * 2,
+  },
+  actions: {
+    increment() { this.count++; },
+  },
+});
+
+NANOSTORES
+desc:tiny_state|framework_agnostic
+use_with:any_framework
++tiny:less_than_1KB
++framework_agnostic:React|Vue|Svelte
+
+import { atom, computed } from 'nanostores';
+
+const count = atom(0);
+const doubled = computed(count, c => c * 2);
+count.set(count.get() + 1);
+
+XSTATE
+desc:state_machines|complex_state
+use_for:complex_flows|wizards|async
++visualizer:state_charts
++TypeScript:excellent
+
+import { createMachine, interpret } from 'xstate';
+
+const toggleMachine = createMachine({
+  id: 'toggle',
+  initial: 'inactive',
+  states: {
+    inactive: { on: { TOGGLE: 'active' } },
+    active: { on: { TOGGLE: 'inactive' } },
+  },
+});
+
+==============================================================================
+DATA_FETCHING
+==============================================================================
+TANSTACK_QUERY
+desc:async_state_management|caching
+use_with:React|Vue|Solid|Svelte
++caching:automatic
++background_updates:stale_while_revalidate
++DevTools:excellent
+
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+function Users() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => fetch('/api/users').then(r => r.json()),
+  });
+  
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (newUser) => fetch('/api/users', {
+      method: 'POST',
+      body: JSON.stringify(newUser),
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+  });
+}
+
+SWR
+desc:React_data_fetching|Vercel
+use_with:React
++simple:minimal_API
++revalidation:automatic
+
+import useSWR from 'swr';
+
+const fetcher = (url: string) => fetch(url).then(r => r.json());
+
+function User({ id }: { id: string }) {
+  const { data, error, isLoading } = useSWR(`/api/users/${id}`, fetcher);
+}
+
+AXIOS
+desc:HTTP_client|popular
++interceptors:auth|logging
++transforms:request|response
++cancellation:AbortController
+
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'https://api.example.com',
+  timeout: 10000,
+});
+
+api.interceptors.request.use((config) => {
+  config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+const { data } = await api.get('/users');
+await api.post('/users', { name: 'John' });
+
+KY
+desc:tiny_HTTP_client|fetch_wrapper
+const response = await ky.get('https://api.example.com/users').json();
+await ky.post('https://api.example.com/users', { json: { name: 'John' } });
+
+TRPC
+desc:end_to_end_typesafe_APIs
+use_with:TypeScript_fullstack
++type_inference:automatic
++no_codegen:runtime_types
+
+// Server
+const appRouter = router({
+  user: router({
+    get: publicProcedure
+      .input(z.object({ id: z.string() }))
+      .query(({ input }) => getUser(input.id)),
+  }),
+});
+
+// Client
+const user = await trpc.user.get.query({ id: '1' });
+
+==============================================================================
+FORMS
+==============================================================================
+REACT_HOOK_FORM
+desc:performant_forms|minimal_rerenders
+use_with:React
++performance:uncontrolled_inputs
++validation:Zod|Yup_integration
++DevTools:form_state
+
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const schema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+function LoginForm() {
+  const { register, handleSubmit, formState: { errors } } = useForm({
+    resolver: zodResolver(schema),
+  });
+  
+  const onSubmit = (data) => console.log(data);
+  
+  return (
+    <form onSubmit={handleSubmit(onSubmit)}>
+      <input {...register('email')} />
+      {errors.email && <span>{errors.email.message}</span>}
+      <input {...register('password')} type="password" />
+      <button type="submit">Submit</button>
+    </form>
+  );
+}
+
+FORMIK
+desc:form_library|older_popular
+use_with:React
+import { Formik, Form, Field, ErrorMessage } from 'formik';
+
+VUELIDATE
+desc:Vue_validation
+use_with:Vue
+
+VEEVALIDATE
+desc:Vue_forms
+use_with:Vue
+
+SUPERFORMS
+desc:SvelteKit_forms
+use_with:SvelteKit
+
+==============================================================================
+VALIDATION
+==============================================================================
+ZOD
+desc:TypeScript_first_validation|schema
++TypeScript:inferred_types
++composable:schemas
++ecosystem:integrations
+
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  age: z.number().int().positive().optional(),
+  role: z.enum(['admin', 'user']),
+});
+
+type User = z.infer<typeof UserSchema>;
+
+const result = UserSchema.safeParse(data);
+if (result.success) {
+  const user = result.data;
+} else {
+  console.log(result.error.issues);
+}
+
+YUP
+desc:schema_validation|older
+const schema = yup.object({
+  name: yup.string().required(),
+  email: yup.string().email().required(),
+});
+
+VALIBOT
+desc:tiny_validation|modular
+import * as v from 'valibot';
+
+const Schema = v.object({
+  email: v.pipe(v.string(), v.email()),
+});
+
+TYPEBOX
+desc:JSON_Schema_compatible
+import { Type } from '@sinclair/typebox';
+
+const User = Type.Object({
+  name: Type.String(),
+  email: Type.String({ format: 'email' }),
+});
+
+==============================================================================
+UI_COMPONENT_LIBRARIES
+==============================================================================
+SHADCN_UI
+desc:copy_paste_components|Tailwind
+site:ui.shadcn.com
+use_with:React|Next.js
++own_your_code:not_npm_dependency
++customizable:full_control
++Radix_UI:accessible_primitives
+
+npx shadcn-ui@latest init
+npx shadcn-ui@latest add button
+
+RADIX_UI
+desc:unstyled_primitives|accessible
+site:radix-ui.com
+use_with:React
++accessible:ARIA_compliant
++unstyled:bring_your_own_CSS
+
+import * as Dialog from '@radix-ui/react-dialog';
+
+<Dialog.Root>
+  <Dialog.Trigger>Open</Dialog.Trigger>
+  <Dialog.Portal>
+    <Dialog.Overlay />
+    <Dialog.Content>
+      <Dialog.Title>Title</Dialog.Title>
+      <Dialog.Close>Close</Dialog.Close>
+    </Dialog.Content>
+  </Dialog.Portal>
+</Dialog.Root>
+
+HEADLESS_UI
+desc:unstyled_components|Tailwind_Labs
+use_with:React|Vue
++accessible:ARIA_compliant
++Tailwind:designed_for
+
+MUI
+desc:Material_Design|comprehensive
+site:mui.com
+use_with:React
++comprehensive:everything_included
++theming:powerful
+
+CHAKRA_UI
+desc:accessible_components|styled
+use_with:React
++accessibility:built_in
++theming:CSS_in_JS
+
+MANTINE
+desc:full_featured_library
+use_with:React
++hooks:useful_utilities
++forms:built_in
+
+ANT_DESIGN
+desc:enterprise_components|Alibaba
+use_with:React|Vue
++comprehensive:enterprise_focused
++data_heavy:tables|forms
+
+VUETIFY
+desc:Material_Design_Vue
+use_with:Vue
+
+PRIMEVUE
+desc:rich_components_Vue
+use_with:Vue
+
+ELEMENT_PLUS
+desc:Vue_3_components
+use_with:Vue
+
+==============================================================================
+STYLING
+==============================================================================
+TAILWIND_CSS
+desc:utility_first_CSS
+site:tailwindcss.com
++rapid_development:no_context_switching
++consistent:design_system
++purge:small_bundle
+
+<div className="flex items-center justify-between p-4 bg-white rounded-lg shadow-md">
+  <h1 className="text-xl font-bold text-gray-900">Title</h1>
+</div>
+
+STYLED_COMPONENTS
+desc:CSS_in_JS|React
+const Button = styled.button`
+  background: ${props => props.primary ? 'blue' : 'white'};
+  color: ${props => props.primary ? 'white' : 'blue'};
+  padding: 0.5rem 1rem;
+`;
+
+EMOTION
+desc:CSS_in_JS|flexible
+import { css } from '@emotion/react';
+
+const style = css`
+  background: blue;
+  color: white;
+`;
+
+CSS_MODULES
+desc:scoped_CSS|built_in
+import styles from './Button.module.css';
+<button className={styles.button}>Click</button>
+
+VANILLA_EXTRACT
+desc:zero_runtime_CSS_in_TS
+import { style } from '@vanilla-extract/css';
+
+export const button = style({
+  background: 'blue',
+  color: 'white',
+});
+
+PANDA_CSS
+desc:build_time_CSS_in_JS
+import { css } from '../styled-system/css';
+
+<div className={css({ bg: 'blue.500', color: 'white' })}>Hello</div>
+
+UNO_CSS
+desc:atomic_CSS_engine|instant
++fast:on_demand
++presets:Tailwind|Windi
+
+==============================================================================
+ANIMATION
+==============================================================================
+FRAMER_MOTION
+desc:React_animation|declarative
+use_with:React
++declarative:simple_API
++gestures:drag|tap
++layout:automatic
+
+import { motion } from 'framer-motion';
+
+<motion.div
+  initial={{ opacity: 0, y: 20 }}
+  animate={{ opacity: 1, y: 0 }}
+  exit={{ opacity: 0 }}
+  whileHover={{ scale: 1.05 }}
+  transition={{ duration: 0.3 }}
+>
+  Animated
+</motion.div>
+
+GSAP
+desc:professional_animation|powerful
++timeline:sequencing
++ScrollTrigger:scroll_animations
++performance:optimized
+
+import gsap from 'gsap';
+
+gsap.to('.box', { x: 100, duration: 1 });
+gsap.timeline()
+  .to('.box', { x: 100 })
+  .to('.box', { y: 100 });
+
+REACT_SPRING
+desc:physics_based_animation
+use_with:React
+import { useSpring, animated } from '@react-spring/web';
+
+const styles = useSpring({ from: { opacity: 0 }, to: { opacity: 1 } });
+<animated.div style={styles}>Hello</animated.div>
+
+AUTO_ANIMATE
+desc:automatic_animations|simple
+import { useAutoAnimate } from '@formkit/auto-animate/react';
+
+const [parent] = useAutoAnimate();
+<ul ref={parent}>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
+
+LOTTIE
+desc:After_Effects_animations
+import Lottie from 'lottie-react';
+<Lottie animationData={animationJson} />
+
+==============================================================================
+TESTING
+==============================================================================
+VITEST
+desc:Vite_native_testing|fast
++fast:Vite_powered
++Jest_compatible:easy_migration
++TypeScript:native
+
+import { describe, it, expect, vi } from 'vitest';
+
+describe('sum', () => {
+  it('adds numbers', () => {
+    expect(sum(1, 2)).toBe(3);
+  });
+});
+
+// Mocking
+vi.mock('./api');
+vi.fn();
+vi.spyOn(object, 'method');
+
+JEST
+desc:testing_framework|Meta
++snapshots:UI_testing
++mocking:built_in
++coverage:built_in
+
+TESTING_LIBRARY
+desc:DOM_testing|user_centric
+use_with:React|Vue|Svelte
++user_focused:accessibility_queries
++framework_agnostic:adapters
+
+import { render, screen, fireEvent } from '@testing-library/react';
+
+test('button click', async () => {
+  render(<Counter />);
+  const button = screen.getByRole('button', { name: /count/i });
+  await fireEvent.click(button);
+  expect(screen.getByText('Count: 1')).toBeInTheDocument();
+});
+
+PLAYWRIGHT
+desc:E2E_testing|Microsoft
+(see rubix_tool_playwright.txt for details)
+
+CYPRESS
+desc:E2E_testing|interactive
++interactive:time_travel
++real_browser:Chrome|Firefox
+
+cy.visit('/');
+cy.get('[data-testid="button"]').click();
+cy.contains('Success').should('be.visible');
+
+MSW
+desc:API_mocking|service_worker
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
+
+const server = setupServer(
+  http.get('/api/users', () => {
+    return HttpResponse.json([{ id: 1, name: 'John' }]);
+  })
+);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+STORYBOOK
+desc:component_documentation|isolation
++visual_testing:snapshots
++docs:automatic
++addons:ecosystem
+
+// Button.stories.tsx
+export default { component: Button };
+export const Primary = { args: { primary: true, label: 'Button' } };
+
+==============================================================================
+UTILITIES
+==============================================================================
+LODASH
+desc:utility_functions|popular
+import { debounce, throttle, cloneDeep, groupBy } from 'lodash-es';
+
+RAMDA
+desc:functional_utilities
+import { pipe, map, filter } from 'ramda';
+
+DATE_FNS
+desc:date_utilities|modular
+import { format, addDays, differenceInDays } from 'date-fns';
+format(new Date(), 'yyyy-MM-dd');
+
+DAYJS
+desc:tiny_date_library|Moment_alternative
+import dayjs from 'dayjs';
+dayjs().format('YYYY-MM-DD');
+dayjs().add(1, 'day');
+
+NANOID
+desc:tiny_unique_IDs
+import { nanoid } from 'nanoid';
+const id = nanoid(); // "V1StGXR8_Z5jdHi6B-myT"
+
+UUID
+desc:UUID_generation
+import { v4 as uuidv4 } from 'uuid';
+const id = uuidv4();
+
+IMMER
+desc:immutable_updates|mutable_syntax
+import { produce } from 'immer';
+const nextState = produce(state, draft => {
+  draft.user.name = 'Jane';
+});
+
+==============================================================================
+DEPENDENCY_MATRIX
+==============================================================================
+FRONTEND:React|Vue|Svelte|Solid|Angular
+META:Next.js|Remix|Nuxt|SvelteKit|Astro
+STATE:Zustand|Jotai|Redux|Pinia|XState
+FETCH:TanStack_Query|SWR|Axios|tRPC
+FORMS:React_Hook_Form|Formik|Zod
+UI:shadcn|Radix|MUI|Chakra|Mantine
+STYLE:Tailwind|Styled_Components|CSS_Modules
+ANIMATION:Framer_Motion|GSAP|React_Spring
+TESTING:Vitest|Jest|Testing_Library|Playwright
