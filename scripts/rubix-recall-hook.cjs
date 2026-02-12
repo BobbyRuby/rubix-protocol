@@ -101,6 +101,44 @@ function checkCommsInbox(dataDir) {
   }
 }
 
+/**
+ * Check comms.db for trigger task status summary.
+ * Returns { running, completed, failed } or null if table doesn't exist.
+ */
+function checkTriggerTasks(dataDir) {
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = path.join(dataDir, 'comms.db');
+    const fs = require('fs');
+    if (!fs.existsSync(dbPath)) return null;
+
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      // Check if trigger_tasks table exists
+      const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='trigger_tasks'").get();
+      if (!tableExists) return null;
+
+      const counts = db.prepare(`
+        SELECT status, COUNT(*) as c FROM trigger_tasks
+        WHERE status IN ('running', 'completed', 'failed')
+        AND created_at > datetime('now', '-24 hours')
+        GROUP BY status
+      `).all();
+
+      const result = { running: 0, completed: 0, failed: 0 };
+      for (const row of counts) {
+        result[row.status] = row.c;
+      }
+      if (result.running === 0 && result.completed === 0 && result.failed === 0) return null;
+      return result;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 // Coordination directive — injected into every prompt's system-reminder
 const COORD_DIRECTIVE = '[COORD] BEFORE editing any file: god_comms_broadcast(type:"status",payload:{files:[paths],action:"start",reason:"brief why"}). AFTER done: broadcast action:"done". BEFORE touching a file: check god_comms_inbox — if another instance has action:"start" on same file, WAIT for their "done". AFTER git commit/push: broadcast action:"commit" with payload:{repo,branch,commits:[{hash,message,files}],pushed:bool}. All spawned subagents MUST follow this rule.';
 
@@ -124,9 +162,7 @@ async function main() {
       const mcpCfg = resolveMcpConfig();
       const dd = (mcpCfg && project) ? (mcpCfg[project.instance]?.dataDir || './data') : './data';
       const ddResolved = path.isAbsolute(dd) ? dd : path.join(RUBIX_ROOT, dd);
-      const identity = readHookIdentity(ddResolved);
-      const instanceLabel = identity?.name ? `${identity.name} (${project.instance})` : project.instance;
-      console.log(`[PROJECT] Active: ${project.name} | Instance: ${instanceLabel} | Tools: ${project.tools} | Time: ${now}`);
+      console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
       console.log(COORD_DIRECTIVE);
       // Quick comms inbox check even on trivial prompts
       const inboxCheck = checkCommsInbox(ddResolved);
@@ -134,6 +170,14 @@ async function main() {
         const urgTag = inboxCheck.urgent > 0 ? ` (${inboxCheck.urgent} URGENT)` : '';
         const from = inboxCheck.senders.length > 0 ? ` from: ${inboxCheck.senders.join(', ')}` : '';
         console.log(`[COMMS] ${inboxCheck.total} unread message(s)${urgTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+      }
+      const triggerCheck = checkTriggerTasks(ddResolved);
+      if (triggerCheck) {
+        const parts = [];
+        if (triggerCheck.running > 0) parts.push(`${triggerCheck.running} running`);
+        if (triggerCheck.completed > 0) parts.push(`${triggerCheck.completed} completed`);
+        if (triggerCheck.failed > 0) parts.push(`${triggerCheck.failed} failed`);
+        console.log(`[TRIGGERS] ${parts.join(', ')} (last 24h) — call god_comms_trigger_status`);
       }
     } else {
       console.log(COORD_DIRECTIVE);
@@ -147,9 +191,7 @@ async function main() {
     const mcpCfgEarly = resolveMcpConfig();
     const ddEarly = (mcpCfgEarly && project) ? (mcpCfgEarly[project.instance]?.dataDir || './data') : './data';
     const ddEarlyResolved = path.isAbsolute(ddEarly) ? ddEarly : path.join(RUBIX_ROOT, ddEarly);
-    const identityEarly = readHookIdentity(ddEarlyResolved);
-    const instanceLabel = identityEarly?.name ? `${identityEarly.name} (${project.instance})` : project.instance;
-    console.log(`[PROJECT] Active: ${project.name} | Instance: ${instanceLabel} | Tools: ${project.tools} | Time: ${now}`);
+    console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
   }
   console.log(COORD_DIRECTIVE);
 
@@ -168,6 +210,16 @@ async function main() {
     const urgentTag = inbox.urgent > 0 ? ` (${inbox.urgent} URGENT)` : '';
     const from = inbox.senders.length > 0 ? ` from: ${inbox.senders.join(', ')}` : '';
     console.log(`[COMMS] ${inbox.total} unread message(s)${urgentTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+  }
+
+  // Check trigger task status
+  const triggers = checkTriggerTasks(dataDirResolved);
+  if (triggers) {
+    const parts = [];
+    if (triggers.running > 0) parts.push(`${triggers.running} running`);
+    if (triggers.completed > 0) parts.push(`${triggers.completed} completed`);
+    if (triggers.failed > 0) parts.push(`${triggers.failed} failed`);
+    console.log(`[TRIGGERS] ${parts.join(', ')} (last 24h) — call god_comms_trigger_status`);
   }
 
   // Polyglot skill detection + direct DB query (no daemon needed)

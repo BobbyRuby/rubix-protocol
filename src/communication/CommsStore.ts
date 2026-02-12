@@ -107,6 +107,35 @@ export class CommsStore {
     if (!cols.some(c => c.name === 'name')) {
       this.db.exec("ALTER TABLE instances ADD COLUMN name TEXT");
     }
+
+    // Ensure trigger_tasks table exists (added 2026-02-11)
+    const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='trigger_tasks'").all();
+    if (tables.length === 0) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS trigger_tasks (
+          id TEXT PRIMARY KEY,
+          from_instance TEXT NOT NULL,
+          target_instance TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          raw_task TEXT NOT NULL,
+          status TEXT DEFAULT 'pending',
+          priority INTEGER DEFAULT 0,
+          pid INTEGER,
+          result TEXT,
+          error TEXT,
+          response_message_id TEXT,
+          chain_depth INTEGER DEFAULT 0,
+          max_chain_depth INTEGER DEFAULT 3,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_trigger_status ON trigger_tasks(status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_trigger_from ON trigger_tasks(from_instance, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_trigger_target ON trigger_tasks(target_instance, status);
+      `);
+    }
   }
 
   // ==========================================
@@ -418,10 +447,132 @@ export class CommsStore {
     };
   }
 
+  // ==========================================
+  // Trigger Tasks
+  // ==========================================
+
+  /**
+   * Insert a new trigger task record.
+   */
+  createTriggerTask(task: {
+    id: string;
+    fromInstance: string;
+    targetInstance: string;
+    prompt: string;
+    rawTask: string;
+    priority?: number;
+    chainDepth?: number;
+    maxChainDepth?: number;
+    metadata?: unknown;
+  }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO trigger_tasks (id, from_instance, target_instance, prompt, raw_task, status, priority, chain_depth, max_chain_depth, created_at, metadata)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+    `).run(
+      task.id,
+      task.fromInstance,
+      task.targetInstance,
+      task.prompt,
+      task.rawTask,
+      task.priority ?? 0,
+      task.chainDepth ?? 0,
+      task.maxChainDepth ?? 3,
+      now,
+      task.metadata ? JSON.stringify(task.metadata) : null
+    );
+  }
+
+  /**
+   * Update a trigger task's status and optional fields.
+   */
+  updateTriggerTask(id: string, updates: {
+    status?: string;
+    pid?: number;
+    result?: string;
+    error?: string;
+    responseMessageId?: string;
+    startedAt?: string;
+    completedAt?: string;
+  }): void {
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+
+    if (updates.status !== undefined) { sets.push('status = ?'); vals.push(updates.status); }
+    if (updates.pid !== undefined) { sets.push('pid = ?'); vals.push(updates.pid); }
+    if (updates.result !== undefined) { sets.push('result = ?'); vals.push(updates.result); }
+    if (updates.error !== undefined) { sets.push('error = ?'); vals.push(updates.error); }
+    if (updates.responseMessageId !== undefined) { sets.push('response_message_id = ?'); vals.push(updates.responseMessageId); }
+    if (updates.startedAt !== undefined) { sets.push('started_at = ?'); vals.push(updates.startedAt); }
+    if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); vals.push(updates.completedAt); }
+
+    if (sets.length === 0) return;
+    vals.push(id);
+
+    this.db.prepare(`UPDATE trigger_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  }
+
+  /**
+   * Get a single trigger task by ID.
+   */
+  getTriggerTask(id: string): TriggerTaskRow | null {
+    return (this.db.prepare('SELECT * FROM trigger_tasks WHERE id = ?').get(id) as TriggerTaskRow) ?? null;
+  }
+
+  /**
+   * List trigger tasks with optional filters.
+   */
+  listTriggerTasks(filters?: { status?: string; fromInstance?: string; targetInstance?: string; limit?: number }): TriggerTaskRow[] {
+    const conditions: string[] = [];
+    const vals: unknown[] = [];
+
+    if (filters?.status) { conditions.push('status = ?'); vals.push(filters.status); }
+    if (filters?.fromInstance) { conditions.push('from_instance = ?'); vals.push(filters.fromInstance); }
+    if (filters?.targetInstance) { conditions.push('target_instance = ?'); vals.push(filters.targetInstance); }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = filters?.limit ?? 20;
+    vals.push(limit);
+
+    return this.db.prepare(`SELECT * FROM trigger_tasks ${where} ORDER BY created_at DESC LIMIT ?`).all(...vals) as TriggerTaskRow[];
+  }
+
+  /**
+   * Count currently running trigger tasks.
+   */
+  countRunningTriggers(): number {
+    const row = this.db.prepare("SELECT COUNT(*) as c FROM trigger_tasks WHERE status = 'running'").get() as { c: number };
+    return row.c;
+  }
+
   /**
    * Close the database connection.
    */
   close(): void {
     this.db.close();
   }
+}
+
+// ==========================================
+// Trigger Task Row Type
+// ==========================================
+
+export interface TriggerTaskRow {
+  id: string;
+  from_instance: string;
+  target_instance: string;
+  prompt: string;
+  raw_task: string;
+  status: string;
+  priority: number;
+  pid: number | null;
+  result: string | null;
+  error: string | null;
+  response_message_id: string | null;
+  chain_depth: number;
+  max_chain_depth: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  metadata: string | null;
 }

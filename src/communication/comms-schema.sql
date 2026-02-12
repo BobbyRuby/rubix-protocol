@@ -46,3 +46,27 @@ CREATE TABLE IF NOT EXISTS instances (
     status TEXT DEFAULT 'active',   -- active|idle|busy|offline
     metadata TEXT                   -- JSON
 );
+
+-- Inter-instance trigger tasks (autonomous instance spawning)
+CREATE TABLE IF NOT EXISTS trigger_tasks (
+    id TEXT PRIMARY KEY,
+    from_instance TEXT NOT NULL,
+    target_instance TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    raw_task TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',  -- pending|running|completed|failed|cancelled
+    priority INTEGER DEFAULT 0,    -- 0=normal, 1=high, 2=urgent
+    pid INTEGER,
+    result TEXT,
+    error TEXT,
+    response_message_id TEXT,
+    chain_depth INTEGER DEFAULT 0,
+    max_chain_depth INTEGER DEFAULT 3,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    metadata TEXT                   -- JSON
+);
+CREATE INDEX IF NOT EXISTS idx_trigger_status ON trigger_tasks(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trigger_from ON trigger_tasks(from_instance, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trigger_target ON trigger_tasks(target_instance, status);

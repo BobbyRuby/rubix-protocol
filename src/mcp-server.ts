@@ -40,7 +40,9 @@ import type { CodexConfiguration, PartialCodexConfiguration } from './config/ind
 import { CommunicationManager } from './communication/index.js';
 import type { ChannelType, CommunicationConfig, EscalationResponse, EscalationFallbackResponse } from './communication/index.js';
 import { CommsStore } from './communication/CommsStore.js';
-import type { InboxFilters, MessageType, MessagePriority } from './communication/CommsStore.js';
+import type { InboxFilters, MessageType, MessagePriority, TriggerTaskRow } from './communication/CommsStore.js';
+import { TriggerService } from './communication/TriggerService.js';
+import type { TriggerResult } from './communication/TriggerService.js';
 import { DaemonDetector } from './utils/DaemonDetector.js';
 import { getCodexLLMConfig, getCuriosityConfig } from './core/config.js';
 import { CuriosityTracker } from './curiosity/CuriosityTracker.js';
@@ -3644,6 +3646,72 @@ const TOOLS: Tool[] = [
   },
 
   // ==========================================
+  // Inter-Instance Trigger Tools
+  // ==========================================
+
+  {
+    name: 'god_comms_trigger',
+    description: `Spawn a new Claude Code session as another instance.
+
+    Autonomously triggers a new Claude session with a composed prompt that includes:
+    - User style preferences (from memory)
+    - Instance identity directive
+    - Chain depth tracking
+    - The task to execute
+
+    The spawned session gets full MCP tool access (same .claude/mcp.json).
+    Results are sent back via comms when the session completes.
+
+    Safety: chain depth limit (default 3), concurrent limit (3), self-trigger rejected.
+    Set RUBIX_TRIGGER_ENABLED=false to disable entirely.
+
+    Requires god_comms_heartbeat first.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        targetInstance: { type: 'string', description: 'Target instance ID (e.g. "instance_2")' },
+        targetName: { type: 'string', description: 'Target display name (e.g. "Axis")' },
+        task: { type: 'string', description: 'Task description for the spawned session' },
+        priority: { type: 'number', enum: [0, 1, 2], description: '0=normal, 1=high, 2=urgent' },
+        context: { type: 'string', description: 'Optional extra context to inject into prompt' },
+        chainDepth: { type: 'number', description: 'Current chain depth (0 = root trigger). Auto-incremented.' },
+        maxChainDepth: { type: 'number', description: 'Override max chain depth (default: 3)' }
+      },
+      required: ['targetInstance', 'task']
+    }
+  },
+  {
+    name: 'god_comms_trigger_status',
+    description: `Check status of trigger tasks.
+
+    With triggerId: returns status of a specific trigger.
+    Without triggerId: lists recent triggers with optional filters.
+
+    Statuses: pending → running → completed/failed/cancelled`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        triggerId: { type: 'string', description: 'Specific trigger ID to check' },
+        status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed', 'cancelled'], description: 'Filter by status' },
+        limit: { type: 'number', description: 'Max results (default: 20)' }
+      }
+    }
+  },
+  {
+    name: 'god_comms_trigger_cancel',
+    description: `Cancel a running or pending trigger session.
+
+    Sends SIGTERM to the spawned Claude process and marks the trigger as cancelled.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        triggerId: { type: 'string', description: 'Trigger ID to cancel' }
+      },
+      required: ['triggerId']
+    }
+  },
+
+  // ==========================================
   // Curiosity Tools
   // ==========================================
 
@@ -4380,6 +4448,7 @@ class GodAgentMCPServer {
   private distillationService: MemoryDistillationService | null = null;
   // Inter-instance communication
   private commsStore: CommsStore | null = null;
+  private triggerService: TriggerService | null = null;
   private instanceId: string | null = null;
   private instanceName: string | null = null;
   // Learning feedback tracking (for implicit feedback from god_store)
@@ -5013,6 +5082,14 @@ This is project-specific context that persists across sessions.`;
             return await this.handleCommsThread(args);
           case 'god_comms_peers':
             return await this.handleCommsPeers();
+
+          // Inter-Instance Trigger Tools
+          case 'god_comms_trigger':
+            return await this.handleCommsTrigger(args);
+          case 'god_comms_trigger_status':
+            return await this.handleCommsTriggerStatus(args);
+          case 'god_comms_trigger_cancel':
+            return await this.handleCommsTriggerCancel(args);
 
           // Curiosity Tools
           case 'god_curiosity_list':
@@ -11457,6 +11534,115 @@ god_comms_setup mode="set" channel="email" config={
             unread: stats.unread,
             activeInstances: stats.activeInstances
           }
+        }, null, 2)
+      }]
+    };
+  }
+
+  // ==========================================
+  // Inter-Instance Trigger Handlers
+  // ==========================================
+
+  private getTriggerService(): TriggerService {
+    if (!this.triggerService) {
+      const store = this.getCommsStore();
+      this.triggerService = new TriggerService(store, this.dataDir, this.projectRoot);
+    }
+    return this.triggerService;
+  }
+
+  private async handleCommsTrigger(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const fromInstance = this.requireInstanceId();
+    const input = args as {
+      targetInstance: string;
+      targetName?: string;
+      task: string;
+      priority?: 0 | 1 | 2;
+      context?: string;
+      chainDepth?: number;
+      maxChainDepth?: number;
+    };
+
+    const service = this.getTriggerService();
+    const result = await service.trigger(fromInstance, this.instanceName, {
+      targetInstance: input.targetInstance,
+      targetName: input.targetName,
+      task: input.task,
+      priority: input.priority,
+      context: input.context,
+      chainDepth: input.chainDepth,
+      maxChainDepth: input.maxChainDepth
+    });
+
+    const isError = result.status === 'failed';
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: !isError,
+          ...result,
+          message: isError
+            ? result.error
+            : `Trigger spawned. Session running as ${input.targetName ?? input.targetInstance}. Check status with god_comms_trigger_status or wait for comms response.`
+        }, null, 2)
+      }],
+      ...(isError ? { isError: true } : {})
+    };
+  }
+
+  private async handleCommsTriggerStatus(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = args as { triggerId?: string; status?: string; limit?: number };
+    const service = this.getTriggerService();
+
+    if (input.triggerId) {
+      const result = service.getStatus(input.triggerId) as TriggerResult;
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }]
+      };
+    }
+
+    const tasks = service.getStatus(undefined, {
+      status: input.status,
+      limit: input.limit
+    }) as TriggerTaskRow[];
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          triggers: tasks.map(t => ({
+            id: t.id,
+            from: t.from_instance,
+            target: t.target_instance,
+            status: t.status,
+            task: t.raw_task.substring(0, 200) + (t.raw_task.length > 200 ? '...' : ''),
+            chainDepth: `${t.chain_depth}/${t.max_chain_depth}`,
+            createdAt: t.created_at,
+            startedAt: t.started_at,
+            completedAt: t.completed_at,
+            hasResult: !!t.result,
+            error: t.error
+          })),
+          count: tasks.length
+        }, null, 2)
+      }]
+    };
+  }
+
+  private async handleCommsTriggerCancel(args: unknown): Promise<{ content: Array<{ type: string; text: string }> }> {
+    const input = args as { triggerId: string };
+    const service = this.getTriggerService();
+    const result = service.cancel(input.triggerId);
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: result.status === 'cancelled',
+          ...result
         }, null, 2)
       }]
     };

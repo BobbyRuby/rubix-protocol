@@ -31,5 +31,10 @@ export type {
   MessageType,
   MessageStatus,
   MessagePriority,
-  InstanceStatus
+  InstanceStatus,
+  TriggerTaskRow
 } from './CommsStore.js';
+
+// Inter-instance trigger system
+export { TriggerService } from './TriggerService.js';
+export type { TriggerInput, TriggerResult } from './TriggerService.js';
