@@ -148,8 +148,10 @@ export class CommsStore {
   send(fromInstance: string, input: SendMessageInput): string {
     const id = uuidv4();
     const now = new Date().toISOString();
-    const expiresAt = input.expiresInMs
-      ? new Date(Date.now() + input.expiresInMs).toISOString()
+    const defaultTtlMs = input.type === 'status' ? 30 * 60 * 1000 : undefined;
+    const ttlMs = input.expiresInMs ?? defaultTtlMs;
+    const expiresAt = ttlMs
+      ? new Date(Date.now() + ttlMs).toISOString()
       : null;
 
     const stmt = this.db.prepare(`
