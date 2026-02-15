@@ -108,6 +108,11 @@ Full documentation is available in the [`docs/`](docs/) directory, built with [M
 
 ## License
 
-AGPL-3.0 -- see [LICENSE](LICENSE) for details.
+AGPL-3.0 with Additional Terms -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Commercial licensing available. Contact the copyright holder for terms.
+Key points:
+- **Runtime integration** with God-Agent's memory, MCP tools, or learning systems makes your application a covered work under AGPL-3.0 (full source disclosure required)
+- **Generated output** used commercially requires attribution
+- **Commercial licenses** are available that exempt you from AGPL-3.0 and the Additional Terms
+
+For commercial licensing inquiries, contact the copyright holder.

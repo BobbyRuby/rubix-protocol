@@ -1,0 +1,63 @@
+NOTICE — Additional Terms under AGPL-3.0 Section 7
+
+Copyright (c) 2025-2026 Robert Ruby II / RUBIX
+https://github.com/BobbyRuby/rubix-protocol
+
+This file constitutes "Additional Terms" as permitted under Section 7
+of the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+These terms supplement — not replace — the AGPL-3.0 license.
+
+==========================================================================
+
+1. GENERATED OUTPUT CLAUSE
+
+   Software, code, configurations, or other artifacts produced by this
+   program ("Generated Output") that are used in a commercial context —
+   including but not limited to: sale, licensing, provision as a service,
+   or integration into commercial products — are subject to the following:
+
+   a) Attribution Required. Any commercial use of Generated Output must
+      include prominent attribution to this project:
+
+      "Built with God-Agent (https://github.com/BobbyRuby/rubix-protocol)"
+
+   b) Runtime Integration. If the Generated Output depends on, queries,
+      or otherwise integrates with this program's runtime systems at any
+      point during its operation — including but not limited to: memory
+      storage, MCP tool invocation, learning/feedback systems, scheduling,
+      or communication systems — the Generated Output and any application
+      incorporating it constitute a "covered work" under the AGPL-3.0 and
+      must comply with all its terms, including source disclosure.
+
+   c) Standalone Exception. Generated Output that operates entirely
+      independently of this program after generation, with no runtime
+      dependency or integration, is exempt from AGPL-3.0 copyleft
+      requirements but remains subject to the attribution requirement
+      in clause (a) above.
+
+2. MEMORY AND DATA INTEGRATION CLAUSE
+
+   Any application or system that integrates with this program's data
+   stores (including but not limited to: memory databases, vector indexes,
+   embedding stores, communication databases, learning trajectories, or
+   session data) at runtime constitutes a combined work and is subject to
+   the full terms of the AGPL-3.0.
+
+3. COMMERCIAL LICENSING
+
+   The copyright holder offers commercial licenses that exempt licensees
+   from the terms of the AGPL-3.0 and these Additional Terms. Commercial
+   licenses permit proprietary use, modification, and distribution without
+   source disclosure obligations.
+
+   For commercial licensing inquiries, contact the copyright holder.
+
+4. SEVERABILITY
+
+   If any provision of these Additional Terms is held to be unenforceable,
+   the remaining provisions shall continue in full force and effect.
+
+==========================================================================
+
+These Additional Terms are effective as of February 15, 2026.
