@@ -4,7 +4,7 @@ Your developers spend 60% of their time on context — reading code they forgot,
 
 **RUBIX is an AI development agent that remembers everything, learns from every mistake, and gets faster the longer it runs.** It doesn't just generate code. It understands your codebase, executes multi-step engineering tasks autonomously, and only asks for help when it genuinely needs a human decision.
 
-Built as an [MCP](https://modelcontextprotocol.io/) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with 160+ tools. Production-tested across multi-developer, multi-project environments.
+Built as an [MCP](https://modelcontextprotocol.io/) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with 160+ tools. Production-tested with five concurrent AI instances working across multiple projects against a shared memory brain.
 
 ## What This Actually Does
 
