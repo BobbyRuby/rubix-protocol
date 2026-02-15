@@ -1,18 +1,20 @@
 # RUBIX Protocol
 
-**RUBIX** is an autonomous AI developer agent with persistent memory, continuous learning, and intelligent escalation. It executes complex multi-step coding tasks, self-heals from failures, and only escalates to humans when genuinely blocked.
+Your developers spend 60% of their time on context — reading code they forgot, re-learning decisions that were made last quarter, debugging failures they've already seen. RUBIX eliminates that.
 
-Built as an [MCP](https://modelcontextprotocol.io/) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), RUBIX extends Claude with 160+ tools spanning memory, code execution, browser automation, static analysis, and more.
+**RUBIX is an AI development agent that remembers everything, learns from every mistake, and gets faster the longer it runs.** It doesn't just generate code. It understands your codebase, executes multi-step engineering tasks autonomously, and only asks for help when it genuinely needs a human decision.
 
-## Key Features
+Built as an [MCP](https://modelcontextprotocol.io/) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with 160+ tools. Production-tested across multi-developer, multi-project environments.
 
-- **Persistent Memory** -- 768-dim vector search (HNSW), L-Score provenance tracking, causal hypergraph relations, and semantic compression
-- **Autonomous Task Execution** -- PhasedExecutor with 6-phase pipeline: context scout, architect, engineer, code review, validate, fix loop
-- **Self-Healing** -- Analyzes failures, queries similar past failures, applies reflexion-based learning, and escalates only as a last resort
-- **Continuous Learning** -- Sona trajectory learning with EWC++ regularization, MemRL two-phase ranking, and autonomous curiosity-driven discovery
-- **Multi-Channel Communication** -- Telegram, phone, SMS, Slack, Discord, email fallback chain with inter-instance messaging
-- **IDE Capabilities** -- LSP, Git, AST analysis, profiling, debugging, database introspection, Wolfram Alpha, and Playwright browser automation
-- **Multi-Project Support** -- Isolated MCP instances per project with optional shared core brain for cross-project knowledge
+## What This Actually Does
+
+- **Persistent Memory** -- Every decision, pattern, and fix is stored with semantic search, provenance tracking, and causal relationships. Nothing gets lost between sessions. Nothing gets re-learned.
+- **Autonomous Execution** -- Hands it a task, it scouts context, architects a solution, engineers the code, reviews it for security, validates, and self-corrects. Six phases, no hand-holding.
+- **Self-Healing** -- When something breaks, it doesn't just retry. It analyzes the failure, checks if it's seen something similar before, applies what it learned, and tries a different approach. Five escalation tiers before it asks you.
+- **Continuous Learning** -- Every query, every task outcome, every failure-fix chain makes the next run smarter. Trajectory learning with drift protection so it doesn't degrade over time.
+- **Multi-Project Isolation** -- Run it across your entire portfolio. Each project gets isolated memory, independent task queues, and its own security containment — with an optional shared knowledge base so lessons from one project benefit all of them.
+- **Full-Stack Tooling** -- LSP, Git, AST analysis, profiling, debugging, database introspection, browser automation, static analysis. It doesn't shell out to other tools — it has them built in.
+- **Multi-Channel Comms** -- Telegram, phone, SMS, Slack, Discord, email. Six-channel fallback chain. Walk away from your desk and manage it from your phone.
 
 ## Quick Start
 
@@ -67,52 +69,51 @@ npm run launch:daemon    # Daemon + webhooks
 
 ## Architecture
 
+242 TypeScript files. 32 subsystems. Four interfaces.
+
 ```
 INTERFACES: MCP Server | CLI | Telegram Bot | HTTP Webhooks
-     |
-CORE ----> CODEX [PhasedExecutor, ParallelEngineer, SelfHealer, EscalationGate]
-     |
-     +---> MEMORY [MemoryEngine -> Storage, VectorDB, Embeddings, Provenance,
-     |             Causal, Patterns, ShadowSearch, Sona, MemRL, GNN, Router]
-     |
-     +---> COMMS [Telegram -> Phone -> SMS -> Slack -> Discord -> Email]
-     |
-     +---> CAPABILITIES [LSP, Git, AST, Profiler, Debug, Playwright,
-                         StaticAnalysis, DepGraph, DocMining, DB Introspection]
+     │
+CORE ──► CODEX    Task execution — architect, engineer, review, validate, fix
+     │
+     ├──► MEMORY   Vector search, provenance, causal graphs, learning engines
+     │
+     ├──► COMMS    Six-channel fallback, inter-instance messaging, AFK mode
+     │
+     └──► CAPABILITIES   LSP, Git, AST, profiler, debugger, browser, DB, docs
 ```
 
 ## Documentation
 
-Full documentation is available in the [`docs/`](docs/) directory, built with [MkDocs Material](https://squidfundamentals.com/mkdocs-material/).
+Full documentation in [`docs/`](docs/), built with [MkDocs Material](https://squidfundamentals.com/mkdocs-material/).
 
-| Section | Description |
+| Section | What's There |
 |---------|-------------|
-| [Getting Started](docs/getting-started/installation.md) | Installation, configuration, quick start |
-| [Architecture](docs/architecture/overview.md) | System design, data flow, components |
-| [MCP Tools](docs/tools/index.md) | Complete 160+ tool reference |
-| [CODEX/RUBIX](docs/codex/index.md) | Task execution pipeline |
-| [Learning System](docs/learning/index.md) | Sona, MemRL, trajectory learning |
-| [Reference](docs/reference/environment-variables.md) | Environment variables, glossary |
+| [Getting Started](docs/getting-started/installation.md) | Install, configure, running in 5 minutes |
+| [Architecture](docs/architecture/overview.md) | System design, data flow, every component |
+| [MCP Tools](docs/tools/index.md) | All 160+ tools, documented |
+| [CODEX Engine](docs/codex/index.md) | The six-phase execution pipeline |
+| [Learning System](docs/learning/index.md) | How it gets smarter over time |
+| [Reference](docs/reference/environment-variables.md) | Env vars, glossary, file reference |
 
 ## Requirements
 
 - **Node.js** >= 18
-- **OpenAI API key** -- for text-embedding-3-small (768-dim vectors)
-- **Anthropic API key** -- for Claude code generation
+- **OpenAI API key** — embeddings (text-embedding-3-small, 768-dim)
+- **Anthropic API key** — Claude code generation
 
 ### Optional
 
-- **Telegram Bot Token** -- for standalone Telegram bot mode
-- **Ollama** -- for local LLM fallback
-- **Wolfram Alpha App ID** -- for computational queries
+- **Telegram Bot Token** — standalone bot + AFK remote control
+- **Ollama** — local LLM fallback (no API costs for routine tasks)
+- **Wolfram Alpha App ID** — computational queries
 
 ## License
 
-AGPL-3.0 with Additional Terms -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+**AGPL-3.0 with Additional Terms** — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Key points:
-- **Runtime integration** with God-Agent's memory, MCP tools, or learning systems makes your application a covered work under AGPL-3.0 (full source disclosure required)
-- **Generated output** used commercially requires attribution
-- **Commercial licenses** are available that exempt you from AGPL-3.0 and the Additional Terms
+- Runtime integration with RUBIX memory, tools, or learning systems = covered work under AGPL-3.0
+- Commercial use of generated output requires attribution
+- **Commercial licenses available** — no AGPL obligations, no Additional Terms
 
-For commercial licensing inquiries, contact the copyright holder.
+For commercial licensing: contact the copyright holder.
