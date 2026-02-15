@@ -142,6 +142,35 @@ function checkTriggerTasks(dataDir) {
 // Coordination directive — injected into every prompt's system-reminder
 const COORD_DIRECTIVE = '[COORD] BEFORE editing any file: god_comms_broadcast(type:"status",payload:{files:[paths],action:"start",reason:"brief why"}). AFTER done: broadcast action:"done". BEFORE touching a file: check god_comms_inbox — if another instance has action:"start" on same file, WAIT for their "done". AFTER git commit/push: broadcast action:"commit" with payload:{repo,branch,commits:[{hash,message,files}],pushed:bool}. All spawned subagents MUST follow this rule.';
 
+// Session-start directive — injected ONLY on the first prompt of a new session
+const SESSION_START_DIRECTIVE = `[SESSION_START — MANDATORY] This is the FIRST prompt of this session. You MUST complete these steps BEFORE responding to the user's message (unless the user explicitly says "skip recall" or "no recall"):
+1. Call god_comms_heartbeat with your instance identity (instanceId, name, role)
+2. Call god_comms_inbox to check for unread messages from other instances
+3. Invoke /recall to load core memories, session history, and topic-relevant context
+4. Ack any messages you've processed with god_comms_ack
+ONLY AFTER completing these steps, respond to the user's actual prompt. This is NON-NEGOTIABLE.`;
+
+/**
+ * Detect whether this is the first prompt of a new session.
+ * Uses a temp file keyed by session_id. If file doesn't exist → first prompt.
+ * Creates the file after detection so subsequent prompts are not flagged.
+ */
+function isSessionStart(sessionId) {
+  const fs = require('fs');
+  const os = require('os');
+  if (!sessionId) return true; // No session ID = assume first prompt
+  const markerPath = path.join(os.tmpdir(), `rubix-session-${sessionId}.started`);
+  if (fs.existsSync(markerPath)) {
+    return false;
+  }
+  try {
+    fs.writeFileSync(markerPath, new Date().toISOString(), 'utf8');
+  } catch {
+    // If we can't write the marker, still return true (safe default)
+  }
+  return true;
+}
+
 // Trivial prompts that don't need memory recall
 const TRIVIAL_PATTERN = /^(yes|no|ok|y|n|sure|thanks|thank you|continue|go ahead|do it|correct|right|yep|nope|done|good|great|fine|k|ty|thx|please|proceed|confirmed|approved|deny|denied|allow|reject)\b/i;
 
@@ -151,6 +180,10 @@ async function main() {
 
   const prompt = input.prompt || '';
   const cwd = input.cwd || process.cwd();
+  const sessionId = input.session_id || null;
+
+  // Detect session start (first prompt of this session)
+  const firstPrompt = isSessionStart(sessionId);
 
   // Smart skip: trivial or very short prompts
   const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
@@ -163,6 +196,7 @@ async function main() {
       const dd = (mcpCfg && project) ? (mcpCfg[project.instance]?.dataDir || './data') : './data';
       const ddResolved = path.isAbsolute(dd) ? dd : path.join(RUBIX_ROOT, dd);
       console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
+      if (firstPrompt) console.log(SESSION_START_DIRECTIVE);
       console.log(COORD_DIRECTIVE);
       // Quick comms inbox check even on trivial prompts
       const inboxCheck = checkCommsInbox(ddResolved);
@@ -193,6 +227,7 @@ async function main() {
     const ddEarlyResolved = path.isAbsolute(ddEarly) ? ddEarly : path.join(RUBIX_ROOT, ddEarly);
     console.log(`[PROJECT] Active: ${project.name} | Instance: ${project.instance} | Tools: ${project.tools} | Time: ${now}`);
   }
+  if (firstPrompt) console.log(SESSION_START_DIRECTIVE);
   console.log(COORD_DIRECTIVE);
 
   // Resolve data dir (shared by comms, polyglot, and CLI fallback)
