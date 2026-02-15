@@ -24,8 +24,16 @@
     "automation",
     "codegen"
   ],
-  "author": "",
+  "author": "Robert Ruby II",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BobbyRuby/rubix-protocol.git"
+  },
+  "homepage": "https://github.com/BobbyRuby/rubix-protocol",
+  "bugs": {
+    "url": "https://github.com/BobbyRuby/rubix-protocol/issues"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
     "@modelcontextprotocol/sdk": "^1.25.2",

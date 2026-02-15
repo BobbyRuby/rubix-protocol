@@ -292,7 +292,7 @@ Separate instances per client:
 ## Support
 
 - **Documentation**: See guides linked above
-- **Issues**: https://github.com/rubix-protocol/god-agent/issues
+- **Issues**: https://github.com/BobbyRuby/rubix-protocol/issues
 - **CLAUDE.md**: Check "DIRECTIVE: MULTI-PROJECT CONTEXT" section
 
 ---

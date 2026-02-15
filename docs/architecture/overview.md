@@ -5,7 +5,7 @@
 ```mermaid
 graph TB
     subgraph "Entry Points"
-        MCP[MCP Server<br/>80+ tools]
+        MCP[MCP Server<br/>160+ tools]
         CLI[CLI<br/>Commands]
         TG[Telegram Bot<br/>Standalone]
         SCHED[Scheduler<br/>Daemon]
@@ -69,7 +69,7 @@ graph TB
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **MCP Server** | `src/mcp-server.ts` | Model Context Protocol server exposing 80+ tools to Claude Code |
+| **MCP Server** | `src/mcp-server.ts` | Model Context Protocol server exposing 160+ tools to Claude Code |
 | **CLI** | `src/cli/index.ts` | Command-line interface for direct interaction |
 | **Telegram Bot** | `src/telegram/TelegramBot.ts` | Standalone bot for task submission and escalation |
 | **Scheduler** | `src/scheduler/SchedulerDaemon.ts` | Background daemon for cron/event-based tasks |

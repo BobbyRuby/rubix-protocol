@@ -12,6 +12,8 @@ Tools for interacting with the RUBIX autonomous task execution system.
 | [god_codex_decision](#god_codex_decision) | Make decision |
 | [god_codex_cancel](#god_codex_cancel) | Cancel task |
 | [god_codex_log](#god_codex_log) | Get work log |
+| [god_codex_logs](#god_codex_logs) | Get execution logs |
+| [god_codex_estimate](#god_codex_estimate) | Estimate complexity |
 | [god_codex_wait](#god_codex_wait) | Extend timeout |
 
 ---
@@ -373,6 +375,162 @@ if (status.status === 'waiting_for_user') {
     answer: "..."
   });
 }
+```
+
+---
+
+## god_codex_logs
+
+Get execution logs from a completed or running task.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | No | Task ID to get logs for (defaults to current task) |
+| `lines` | number | No | Number of log lines to return (default: 50) |
+
+### Response
+
+```json
+{
+  "success": true,
+  "taskId": "task_abc123...",
+  "logs": [
+    {
+      "timestamp": "2024-01-15T10:00:01Z",
+      "level": "info",
+      "phase": "context_scout",
+      "message": "Scanning codebase for relevant context"
+    },
+    {
+      "timestamp": "2024-01-15T10:00:03Z",
+      "level": "info",
+      "phase": "context_scout",
+      "message": "Found 12 relevant files, 3 patterns loaded"
+    },
+    {
+      "timestamp": "2024-01-15T10:00:05Z",
+      "level": "info",
+      "phase": "architect",
+      "message": "Designing solution: complexity=high, components=4"
+    },
+    {
+      "timestamp": "2024-01-15T10:00:15Z",
+      "level": "warn",
+      "phase": "engineer",
+      "message": "Dependency conflict detected: express@4 vs express@5"
+    },
+    {
+      "timestamp": "2024-01-15T10:00:20Z",
+      "level": "error",
+      "phase": "validator",
+      "message": "Type error in src/auth/controller.ts:42"
+    }
+  ],
+  "totalLines": 128,
+  "returned": 50
+}
+```
+
+### Example
+
+```typescript
+// Get last 50 lines of current task
+const logs = await mcp__rubix__god_codex_logs();
+
+// Get logs for a specific task
+const logs = await mcp__rubix__god_codex_logs({
+  taskId: "task_abc123",
+  lines: 100
+});
+
+// Filter to errors
+const errors = logs.logs.filter(l => l.level === 'error');
+console.log(`${errors.length} errors found`);
+
+// Show logs by phase
+for (const entry of logs.logs) {
+  console.log(`[${entry.phase}] ${entry.level}: ${entry.message}`);
+}
+```
+
+---
+
+## god_codex_estimate
+
+Estimate complexity and resource requirements for a task before execution.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `task` | string | Yes | Task description to estimate |
+| `codebase` | string | No | Path to codebase for context-aware estimation |
+
+### Response
+
+```json
+{
+  "success": true,
+  "estimation": {
+    "complexity": "high",
+    "phases": [
+      { "name": "context_scout", "estimatedTokens": 15000 },
+      { "name": "architect", "estimatedTokens": 25000 },
+      { "name": "engineer", "estimatedTokens": 80000 },
+      { "name": "code_review", "estimatedTokens": 20000 },
+      { "name": "validator", "estimatedTokens": 15000 }
+    ],
+    "modelRouting": {
+      "architect": "opus",
+      "engineer": "parallel_sonnet",
+      "validator": "sonnet"
+    },
+    "estimatedComponents": 4,
+    "estimatedFiles": 8,
+    "estimatedTotalTokens": 155000,
+    "estimatedTimeMinutes": 5,
+    "risks": [
+      "Multiple file dependencies may require parallel engineering",
+      "Integration testing recommended due to cross-module changes"
+    ]
+  }
+}
+```
+
+### Complexity Levels
+
+| Level | Description | Typical Model |
+|-------|-------------|---------------|
+| `low` | Single file, simple change | Haiku |
+| `medium` | Multiple files, moderate logic | Sonnet |
+| `high` | Cross-module, complex architecture | Opus + Parallel Sonnet |
+
+### Example
+
+```typescript
+// Estimate a task before committing
+const estimate = await mcp__rubix__god_codex_estimate({
+  task: "Add user authentication with JWT and role-based access control",
+  codebase: "D:/my-app"
+});
+
+console.log(`Complexity: ${estimate.estimation.complexity}`);
+console.log(`Estimated tokens: ${estimate.estimation.estimatedTotalTokens}`);
+console.log(`Estimated time: ${estimate.estimation.estimatedTimeMinutes} minutes`);
+console.log(`Model routing: ${JSON.stringify(estimate.estimation.modelRouting)}`);
+
+// Review risks before proceeding
+for (const risk of estimate.estimation.risks) {
+  console.log(`Risk: ${risk}`);
+}
+
+// If happy with estimate, run the task
+await mcp__rubix__god_codex_do({
+  description: "Add user authentication with JWT and role-based access control",
+  codebase: "D:/my-app"
+});
 ```
 
 ---

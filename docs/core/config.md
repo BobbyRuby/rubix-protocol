@@ -37,22 +37,22 @@ const config = await loadConfig({ path: './custom-codex.yaml' });
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_DATA_DIR` | `./data` | Database directory |
-| `GOD_AGENT_HNSW_MAX_ELEMENTS` | `100000` | Max vectors in HNSW |
-| `GOD_AGENT_HNSW_EF_CONSTRUCTION` | `200` | Construction quality |
-| `GOD_AGENT_HNSW_EF_SEARCH` | `100` | Search quality |
-| `GOD_AGENT_HNSW_M` | `16` | Connections per node |
-| `GOD_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
-| `GOD_AGENT_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
+| `RUBIX_DATA_DIR` | `./data` | Database directory |
+| `RUBIX_HNSW_MAX_ELEMENTS` | `100000` | Max vectors in HNSW |
+| `RUBIX_HNSW_EF_CONSTRUCTION` | `200` | Construction quality |
+| `RUBIX_HNSW_EF_SEARCH` | `100` | Search quality |
+| `RUBIX_HNSW_M` | `16` | Connections per node |
+| `RUBIX_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
+| `RUBIX_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 
 ### L-Score (Provenance)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_LSCORE_DECAY` | `0.9` | Parent decay factor |
-| `GOD_AGENT_LSCORE_MIN` | `0.01` | Minimum L-Score |
-| `GOD_AGENT_LSCORE_THRESHOLD` | `0.3` | Enforcement threshold |
-| `GOD_AGENT_ENFORCE_LSCORE_THRESHOLD` | `true` | Whether to enforce |
+| `RUBIX_LSCORE_DECAY` | `0.9` | Parent decay factor |
+| `RUBIX_LSCORE_MIN` | `0.01` | Minimum L-Score |
+| `RUBIX_LSCORE_THRESHOLD` | `0.3` | Enforcement threshold |
+| `RUBIX_ENFORCE_LSCORE_THRESHOLD` | `true` | Whether to enforce |
 
 ### RUBIX Execution
 

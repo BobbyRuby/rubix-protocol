@@ -15,22 +15,22 @@ Complete reference for all environment variables and configuration options.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_DATA_DIR` | `./data` | Database storage location |
-| `GOD_AGENT_HNSW_MAX_ELEMENTS` | `100000` | Maximum vectors in HNSW index |
-| `GOD_AGENT_HNSW_EF_CONSTRUCTION` | `200` | Construction quality (higher = better) |
-| `GOD_AGENT_HNSW_EF_SEARCH` | `100` | Search quality (higher = slower but better) |
-| `GOD_AGENT_HNSW_M` | `16` | Connections per node |
-| `GOD_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
-| `GOD_AGENT_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
+| `RUBIX_DATA_DIR` | `./data` | Database storage location |
+| `RUBIX_HNSW_MAX_ELEMENTS` | `100000` | Maximum vectors in HNSW index |
+| `RUBIX_HNSW_EF_CONSTRUCTION` | `200` | Construction quality (higher = better) |
+| `RUBIX_HNSW_EF_SEARCH` | `100` | Search quality (higher = slower but better) |
+| `RUBIX_HNSW_M` | `16` | Connections per node |
+| `RUBIX_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `RUBIX_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 
 ### L-Score (Provenance)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_LSCORE_DECAY` | `0.9` | Parent contribution decay factor |
-| `GOD_AGENT_LSCORE_MIN` | `0.01` | Minimum L-Score threshold |
-| `GOD_AGENT_LSCORE_THRESHOLD` | `0.3` | Enforcement threshold |
-| `GOD_AGENT_ENFORCE_LSCORE_THRESHOLD` | `true` | Whether to enforce threshold |
+| `RUBIX_LSCORE_DECAY` | `0.9` | Parent contribution decay factor |
+| `RUBIX_LSCORE_MIN` | `0.01` | Minimum L-Score threshold |
+| `RUBIX_LSCORE_THRESHOLD` | `0.3` | Enforcement threshold |
+| `RUBIX_ENFORCE_LSCORE_THRESHOLD` | `true` | Whether to enforce threshold |
 
 ### RUBIX Code Generation
 
@@ -85,7 +85,7 @@ Create `.claude/mcp.json` in your project root:
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "ANTHROPIC_API_KEY": "sk-ant-...",
-        "GOD_AGENT_DATA_DIR": "./data",
+        "RUBIX_DATA_DIR": "./data",
         "RUBIX_MODEL": "claude-opus-4-5-20251101",
         "RUBIX_ULTRATHINK": "true"
       }

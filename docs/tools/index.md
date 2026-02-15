@@ -1,27 +1,32 @@
 # MCP Tools Reference
 
-The god-agent exposes **80+ MCP tools** through the MCP server for use by Claude Code.
+The god-agent exposes **160+ MCP tools** through the MCP server for use by Claude Code.
 
 ## Tool Categories
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| [Memory Tools](memory-tools.md) | 10 | Store, query, edit, delete memories |
-| [Causal Tools](causal-tools.md) | 4 | Causal relations and contradictions |
-| [Learning Tools](learning-tools.md) | 12 | Sona learning and routing |
-| [Scheduler Tools](scheduler-tools.md) | 7 | Task scheduling |
-| [Playwright Tools](playwright-tools.md) | 8 | Browser automation |
-| [CODEX Tools](codex-tools.md) | 7 | RUBIX task execution |
-| [Partner Tools](partner-tools.md) | 3 | Collaborative partner |
-| [Containment Tools](containment-tools.md) | 6 | Path permissions |
-| [Capability Tools](capability-tools.md) | 40+ | LSP, Git, AST, etc. |
-| [Review Tools](review-tools.md) | 4 | Code review |
-| [Notification Tools](notification-tools.md) | 6 | Notifications |
-| [Deep Work Tools](deepwork-tools.md) | 6 | Focus sessions |
-| [Config Tools](config-tools.md) | 5 | Configuration |
-| [Failure Tools](failure-tools.md) | 4 | Failure learning |
-| [Communication Tools](communication-tools.md) | 2 | Escalation channels |
-| [Curiosity Tools](curiosity-tools.md) | 4 | Autonomous exploration |
+| [Memory Tools](memory-tools.md) | 10 | Store, query, edit, delete, trace memories |
+| [Compression Tools](compression-tools.md) | 6 | Compressed storage, expanded queries, self-knowledge |
+| [Causal Tools](causal-tools.md) | 4 | Causal relations and path finding |
+| [Learning Tools](learning-tools.md) | 12 | Sona learning, MemRL, routing |
+| [Reflexion Tools](reflexion-tools.md) | 3 | Failure reflection and lesson extraction |
+| [Distillation Tools](distillation-tools.md) | 4 | Weekly memory distillation and insight extraction |
+| [Autorecall Tools](autorecall-tools.md) | 3 | Automatic memory recall and feedback |
+| [Scheduler Tools](scheduler-tools.md) | 7 | Cron and event-based task scheduling |
+| [Playwright Tools](playwright-tools.md) | 8 | Browser automation and verification |
+| [CODEX Tools](codex-tools.md) | 9 | PhasedExecutor task execution pipeline |
+| [Partner Tools](partner-tools.md) | 3 | Collaborative partner knowledge gaps |
+| [Containment Tools](containment-tools.md) | 6 | File system path permissions |
+| [Guardian Tools](guardian-tools.md) | 2 | Post-execution audit and agent card |
+| [Capability Tools](capability-tools.md) | 40+ | LSP, Git, AST, profiler, debug, DB, Wolfram |
+| [Review Tools](review-tools.md) | 4 | Code review and OWASP security scanning |
+| [Notification Tools](notification-tools.md) | 6 | Slack, Discord notifications |
+| [Communication Tools](communication-tools.md) | 14 | Escalation, inter-instance messaging, AFK, triggers |
+| [Deep Work Tools](deepwork-tools.md) | 6 | Focus sessions and checkpoints |
+| [Config Tools](config-tools.md) | 5 | Configuration management |
+| [Failure Tools](failure-tools.md) | 4 | Failure pattern tracking and resolution |
+| [Curiosity Tools](curiosity-tools.md) | 5 | Autonomous and web-based exploration |
 
 ## Quick Reference
 

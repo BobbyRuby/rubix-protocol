@@ -1,8 +1,8 @@
 site_name: RUBIX/God-Agent Documentation
 site_description: Comprehensive documentation for the RUBIX autonomous AI developer agent
 site_author: RUBIX Protocol
-repo_url: https://github.com/rubix-protocol/god-agent
-repo_name: rubix-protocol/god-agent
+repo_url: https://github.com/BobbyRuby/rubix-protocol
+repo_name: BobbyRuby/rubix-protocol
 
 theme:
   name: material
@@ -68,7 +68,7 @@ plugins:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/rubix-protocol/god-agent
+      link: https://github.com/BobbyRuby/rubix-protocol
 
 nav:
   - Home: index.md
@@ -89,6 +89,16 @@ nav:
     - Task Execution: architecture/task-execution.md
     - Learning System: architecture/learning-system.md
     - Routing System: architecture/routing-system.md
+    - Causal Memory: architecture/causal-memory.md
+    - Shadow Search: architecture/adversarial-shadow-search.md
+    - GNN Enhancement: architecture/gnn-enhancement.md
+    - Distillation: architecture/distillation.md
+    - Reflexion: architecture/reflexion.md
+    - Failure Memory: architecture/failure-memory.md
+    - Guardian: architecture/guardian.md
+    - Code Review: architecture/code-review.md
+    - Pattern Matching: architecture/pattern-matching.md
+    - Bootstrap: architecture/bootstrap.md
   - Core System:
     - core/index.md
     - MemoryEngine: core/memory-engine.md
@@ -106,6 +116,8 @@ nav:
     - CollaborativePartner: codex/collaborative-partner.md
     - ContainmentManager: codex/containment-manager.md
     - PhasedExecutor: codex/phased-executor.md
+    - Parallel Engineer: codex/parallel-engineer.md
+    - Skill Detector: codex/skill-detector.md
     - Types: codex/types.md
   - Memory System:
     - memory/index.md
@@ -151,6 +163,11 @@ nav:
     - Failure Tools: tools/failure-tools.md
     - Communication Tools: tools/communication-tools.md
     - Curiosity Tools: tools/curiosity-tools.md
+    - Compression Tools: tools/compression-tools.md
+    - Reflexion Tools: tools/reflexion-tools.md
+    - Distillation Tools: tools/distillation-tools.md
+    - Autorecall Tools: tools/autorecall-tools.md
+    - Guardian Tools: tools/guardian-tools.md
   - Prompts:
     - prompts/index.md
     - Compression Prompt: prompts/compression-prompt.md

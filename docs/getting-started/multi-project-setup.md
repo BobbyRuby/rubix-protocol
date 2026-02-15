@@ -465,8 +465,6 @@ god_codex_do({ ... })  // Which project?
 
 - [CLI Usage Guide](./multi-project-cli-usage.md) - Detailed CLI commands and workflows
 - [Manual Configuration](./multi-project-manual-config.md) - Manual setup instructions
-- [Troubleshooting Guide](./multi-project-troubleshooting.md) - Common issues and solutions
-- [Advanced Features](./multi-project-advanced.md) - Advanced usage patterns
 
 ---
 

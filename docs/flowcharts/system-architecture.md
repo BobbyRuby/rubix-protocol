@@ -7,7 +7,7 @@ High-level architecture of the RUBIX/god-agent system.
 ```mermaid
 graph TB
     subgraph "Entry Points"
-        MCP[MCP Server<br/>80+ tools]
+        MCP[MCP Server<br/>160+ tools]
         CLI[CLI<br/>Commands]
         TG[Telegram Bot<br/>Standalone]
         SCHED[Scheduler<br/>Daemon]
@@ -85,7 +85,7 @@ graph TB
 ### Entry Points
 | Component | Purpose |
 |-----------|---------|
-| MCP Server | Model Context Protocol interface (80+ tools) |
+| MCP Server | Model Context Protocol interface (160+ tools) |
 | CLI | Command-line interface |
 | Telegram Bot | Standalone chat interface |
 | Scheduler | Background cron/event daemon |

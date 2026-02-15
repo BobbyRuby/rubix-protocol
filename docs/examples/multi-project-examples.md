@@ -734,4 +734,3 @@ const checkTaskA = setInterval(() => {
 
 - [Multi-Project Setup](../getting-started/multi-project-setup.md)
 - [CLI Usage Guide](../getting-started/multi-project-cli-usage.md)
-- [Troubleshooting](../getting-started/multi-project-troubleshooting.md)

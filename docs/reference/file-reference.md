@@ -229,7 +229,7 @@ Defines 18 positional token schemas:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/mcp-server.ts` | ~3000 | MCP server with 80+ tools |
+| `src/mcp-server.ts` | ~3000 | MCP server with 160+ tools |
 | `src/index.ts` | ~50 | Main exports |
 | `src/cli/index.ts` | ~200 | CLI commands |
 | `src/telegram/TelegramBot.ts` | ~500 | Standalone Telegram bot |
@@ -294,7 +294,7 @@ Defines 18 positional token schemas:
 | Notification | 3 | ~400 |
 | Other | 6 | ~1,150 |
 | Entry Points | 5 | ~3,800 |
-| **Total** | **80+** | **~23,636** |
+| **Total** | **160+** | **~23,636** |
 
 ## Next Steps
 

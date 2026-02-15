@@ -62,7 +62,7 @@ class ProvenanceThresholdError extends GodAgentError {
 **When thrown:**
 - Storing with parent entries that have low L-Scores
 - Calculated L-Score drops below threshold
-- Enforcement is enabled (`GOD_AGENT_ENFORCE_LSCORE_THRESHOLD=true`)
+- Enforcement is enabled (`RUBIX_ENFORCE_LSCORE_THRESHOLD=true`)
 
 **Handling:**
 ```typescript

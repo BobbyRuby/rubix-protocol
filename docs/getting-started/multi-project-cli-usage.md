@@ -931,9 +931,7 @@ Configure instances for monorepo packages:
 
 ## Next Steps
 
-- [Troubleshooting Guide](./multi-project-troubleshooting.md) - Detailed troubleshooting
 - [Manual Configuration](./multi-project-manual-config.md) - Manual setup details
-- [Advanced Features](./multi-project-advanced.md) - Advanced patterns
 - [Examples](../examples/multi-project-examples.md) - Real-world examples
 
 ---

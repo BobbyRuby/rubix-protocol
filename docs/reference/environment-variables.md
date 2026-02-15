@@ -24,31 +24,49 @@ ANTHROPIC_API_KEY=sk-ant-api03-...
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_DATA_DIR` | `./data` | Directory for database files |
+| `RUBIX_DATA_DIR` | `./data` | Directory for database files |
+
+### Multi-Project
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUBIX_PROJECT_ROOT` | *(none)* | Absolute path to the project directory this instance manages |
+| `RUBIX_PROJECT_NAME` | *(directory name)* | Human-readable project name (used in logs and context) |
+| `RUBIX_CORE_BRAIN_DATA_DIR` | *(none)* | Path to shared knowledge base for cross-project learning |
+| `RUBIX_MODE` | `auto` | Execution mode override (`auto`, `mcp-only`, `daemon`) |
+
+```bash
+# Multi-project instance configuration
+RUBIX_DATA_DIR=./data/projects/backend-api
+RUBIX_PROJECT_ROOT=/home/user/projects/backend-api
+RUBIX_PROJECT_NAME="Backend API"
+RUBIX_CORE_BRAIN_DATA_DIR=./data/core-brain
+RUBIX_MODE=auto
+```
 
 ### HNSW Vector Database
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_HNSW_MAX_ELEMENTS` | `100000` | Maximum vectors to store |
-| `GOD_AGENT_HNSW_EF_CONSTRUCTION` | `200` | Construction quality (higher = better) |
-| `GOD_AGENT_HNSW_EF_SEARCH` | `100` | Search quality (higher = better) |
-| `GOD_AGENT_HNSW_M` | `16` | Connections per node |
+| `RUBIX_HNSW_MAX_ELEMENTS` | `100000` | Maximum vectors to store |
+| `RUBIX_HNSW_EF_CONSTRUCTION` | `200` | Construction quality (higher = better) |
+| `RUBIX_HNSW_EF_SEARCH` | `100` | Search quality (higher = better) |
+| `RUBIX_HNSW_M` | `16` | Connections per node |
 
 ```bash
 # Production settings (higher quality)
-GOD_AGENT_HNSW_MAX_ELEMENTS=500000
-GOD_AGENT_HNSW_EF_CONSTRUCTION=400
-GOD_AGENT_HNSW_EF_SEARCH=200
-GOD_AGENT_HNSW_M=32
+RUBIX_HNSW_MAX_ELEMENTS=500000
+RUBIX_HNSW_EF_CONSTRUCTION=400
+RUBIX_HNSW_EF_SEARCH=200
+RUBIX_HNSW_M=32
 ```
 
 ### Embeddings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
-| `GOD_AGENT_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
+| `RUBIX_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
+| `RUBIX_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 
 ---
 
@@ -56,19 +74,19 @@ GOD_AGENT_HNSW_M=32
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_LSCORE_DECAY` | `0.9` | Parent score decay factor |
-| `GOD_AGENT_LSCORE_MIN` | `0.01` | Minimum L-Score |
-| `GOD_AGENT_LSCORE_THRESHOLD` | `0.3` | Threshold for enforcement |
-| `GOD_AGENT_ENFORCE_LSCORE_THRESHOLD` | `true` | Enforce threshold |
+| `RUBIX_LSCORE_DECAY` | `0.9` | Parent score decay factor |
+| `RUBIX_LSCORE_MIN` | `0.01` | Minimum L-Score |
+| `RUBIX_LSCORE_THRESHOLD` | `0.3` | Threshold for enforcement |
+| `RUBIX_ENFORCE_LSCORE_THRESHOLD` | `true` | Enforce threshold |
 
 ```bash
 # Strict provenance (production)
-GOD_AGENT_LSCORE_DECAY=0.85
-GOD_AGENT_LSCORE_THRESHOLD=0.4
-GOD_AGENT_ENFORCE_LSCORE_THRESHOLD=true
+RUBIX_LSCORE_DECAY=0.85
+RUBIX_LSCORE_THRESHOLD=0.4
+RUBIX_ENFORCE_LSCORE_THRESHOLD=true
 
 # Relaxed (development)
-GOD_AGENT_ENFORCE_LSCORE_THRESHOLD=false
+RUBIX_ENFORCE_LSCORE_THRESHOLD=false
 ```
 
 ---
@@ -191,22 +209,28 @@ OPENAI_API_KEY=sk-proj-abc123...
 ANTHROPIC_API_KEY=sk-ant-api03-xyz789...
 
 # Data Storage
-GOD_AGENT_DATA_DIR=./data
+RUBIX_DATA_DIR=./data
+
+# Multi-Project (per-instance, optional)
+# RUBIX_PROJECT_ROOT=/home/user/projects/backend-api
+# RUBIX_PROJECT_NAME="Backend API"
+# RUBIX_CORE_BRAIN_DATA_DIR=./data/core-brain
+# RUBIX_MODE=auto
 
 # HNSW Vector Settings (production)
-GOD_AGENT_HNSW_MAX_ELEMENTS=500000
-GOD_AGENT_HNSW_EF_CONSTRUCTION=300
-GOD_AGENT_HNSW_EF_SEARCH=150
-GOD_AGENT_HNSW_M=24
+RUBIX_HNSW_MAX_ELEMENTS=500000
+RUBIX_HNSW_EF_CONSTRUCTION=300
+RUBIX_HNSW_EF_SEARCH=150
+RUBIX_HNSW_M=24
 
 # Embeddings
-GOD_AGENT_EMBEDDING_MODEL=text-embedding-3-small
-GOD_AGENT_EMBEDDING_DIMENSIONS=768
+RUBIX_EMBEDDING_MODEL=text-embedding-3-small
+RUBIX_EMBEDDING_DIMENSIONS=768
 
 # L-Score
-GOD_AGENT_LSCORE_DECAY=0.9
-GOD_AGENT_LSCORE_THRESHOLD=0.3
-GOD_AGENT_ENFORCE_LSCORE_THRESHOLD=true
+RUBIX_LSCORE_DECAY=0.9
+RUBIX_LSCORE_THRESHOLD=0.3
+RUBIX_ENFORCE_LSCORE_THRESHOLD=true
 
 # RUBIX Settings
 RUBIX_MODEL=claude-opus-4-5-20250514
@@ -245,8 +269,8 @@ Environment variables are loaded with this priority:
 3. **Defaults** - Built-in values
 
 ```typescript
-// Example: GOD_AGENT_DATA_DIR
-// 1. Check process.env.GOD_AGENT_DATA_DIR
+// Example: RUBIX_DATA_DIR
+// 1. Check process.env.RUBIX_DATA_DIR
 // 2. Check .env file
 // 3. Use default: "./data"
 ```

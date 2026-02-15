@@ -65,7 +65,7 @@ Create `.claude/mcp.json` in your project root:
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "ANTHROPIC_API_KEY": "sk-ant-...",
-        "GOD_AGENT_DATA_DIR": "./data"
+        "RUBIX_DATA_DIR": "./data"
       }
     }
   }
@@ -109,7 +109,7 @@ Once Claude Code restarts, verify the tools are available:
 /mcp
 ```
 
-You should see 80+ tools prefixed with `mcp__rubix__god_*`.
+You should see 160+ tools prefixed with `mcp__rubix__god_*`.
 
 ### Test Memory Storage
 
@@ -142,7 +142,7 @@ By default, the SQLite database is created at:
 Configure with:
 
 ```bash
-export GOD_AGENT_DATA_DIR="/custom/path"
+export RUBIX_DATA_DIR="/custom/path"
 ```
 
 ## Troubleshooting

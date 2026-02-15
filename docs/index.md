@@ -7,7 +7,7 @@
 ```mermaid
 graph TB
     subgraph "Entry Points"
-        MCP[MCP Server<br/>80+ tools]
+        MCP[MCP Server<br/>160+ tools]
         CLI[CLI<br/>Commands]
         TG[Telegram Bot<br/>Standalone]
         SCHED[Scheduler<br/>Daemon]
@@ -31,11 +31,15 @@ graph TB
     end
 
     subgraph "RUBIX Execution"
-        TE[TaskExecutor<br/>Orchestrator]
-        TD2[TaskDecomposer]
-        CG[CodeGenerator]
+        PE[PhasedExecutor<br/>6-Phase Pipeline]
+        PAR[ParallelEngineer<br/>Topo-Sort Batching]
         SH[SelfHealer]
         EG[EscalationGate]
+    end
+
+    subgraph "Communication"
+        CM[CommsManager<br/>Multi-Channel Escalation]
+        TGB[Telegram<br/>Bot + AFK Mode]
     end
 
     subgraph "Providers"
@@ -45,7 +49,7 @@ graph TB
 
     MCP --> ME
     CLI --> ME
-    TG --> TE
+    TG --> PE
     SCHED --> ME
 
     ME --> SQL
@@ -56,13 +60,15 @@ graph TB
     ME --> SS
     ME --> GNN
 
-    TE --> TD2
-    TE --> CG
-    TE --> SH
-    TE --> EG
+    PE --> PAR
+    PE --> SH
+    PE --> EG
+    PE --> CM
 
-    CG --> CLAUDE
-    CG --> OLLAMA
+    CM --> TGB
+
+    PAR --> CLAUDE
+    PAR --> OLLAMA
 ```
 
 ## Key Features
@@ -84,7 +90,7 @@ graph TB
 - **EWC++ Regularization**: Prevents catastrophic forgetting
 - **Auto-Prune/Boost**: Removes failing patterns, strengthens successful ones
 
-### 80+ MCP Tools
+### 160+ MCP Tools
 Access to memory, causal reasoning, learning, scheduling, browser automation, code review, and more.
 
 ## Quick Start
@@ -116,7 +122,7 @@ node dist/mcp-server.js
 | [Memory System](memory/compression-schemas.md) | Compression, embeddings, async writes |
 | [Learning System](learning/sona-engine.md) | Sona engine, weights, regularization |
 | [Providers](providers/provider-factory.md) | LLM providers, Ollama, factory |
-| [MCP Tools](tools/index.md) | Complete 80+ tool reference |
+| [MCP Tools](tools/index.md) | Complete 160+ tool reference |
 | [Prompts](prompts/all-prompts.md) | LLM prompts used in the system |
 | [Flowcharts](flowcharts/system-architecture.md) | Visual architecture diagrams |
 | [Reference](reference/environment-variables.md) | Environment variables, file listing |
@@ -131,7 +137,7 @@ ANTHROPIC_API_KEY=sk-ant-... # For code generation
 
 ### Optional
 ```bash
-GOD_AGENT_DATA_DIR=./data     # Database location
+RUBIX_DATA_DIR=./data         # Database location
 RUBIX_MODEL=claude-opus-4-5-20251101  # Model for RUBIX
 OLLAMA_ENDPOINT=http://localhost:11434  # Local LLM
 TELEGRAM_BOT_TOKEN=...        # For Telegram bot
@@ -142,22 +148,36 @@ See [Environment Variables Reference](reference/environment-variables.md) for co
 ## Source Code Structure
 
 ```
-god-agent/src/
+rubix-protocol/src/
 ├── core/           # MemoryEngine, types, config, errors
-├── codex/          # RUBIX task execution system (24 files)
+├── codex/          # PhasedExecutor, ParallelEngineer, SelfHealer
 ├── memory/         # Compression schemas, LLM compressor
-├── storage/        # SQLite persistence
-├── learning/       # Sona trajectory learning
+├── storage/        # SQLite persistence (15 tables)
+├── vector/         # HNSW 768-dim vector database
+├── learning/       # Sona trajectory learning, MemRL
 ├── routing/        # TinyDancer query router
+├── provenance/     # L-Score reliability tracking
+├── causal/         # Hypergraph causal relations
+├── adversarial/    # ShadowSearch contradiction detection
+├── gnn/            # GNN embedding enhancement
+├── distillation/   # Weekly memory distillation
+├── reflexion/      # Learning from failures
+├── failure/        # Failure pattern tracking
+├── review/         # Code review + OWASP security
+├── discovery/      # Agent card, bootstrap
+├── curiosity/      # Autonomous exploration
 ├── providers/      # LLM provider abstraction
 ├── capabilities/   # 10 IDE capabilities (LSP, Git, AST...)
-├── communication/  # Multi-channel escalation
-├── notification/   # Slack, Discord, webhooks
+├── communication/  # Multi-channel escalation + inter-instance comms
+├── notification/   # Slack, Discord
 ├── scheduler/      # Cron-based task scheduling
-├── mcp-server.ts   # Main MCP server (80+ tools)
-└── telegram/       # Standalone Telegram bot
+├── deepwork/       # Focus session management
+├── playwright/     # Browser automation
+├── telegram/       # Standalone Telegram bot
+├── mcp-server.ts   # Main MCP server (160+ tools)
+└── index.ts        # Main exports
 ```
 
 ## License
 
-MIT License - See [LICENSE](https://github.com/rubix-protocol/god-agent/blob/main/LICENSE) for details.
+MIT License - See [LICENSE](https://github.com/BobbyRuby/rubix-protocol/blob/main/LICENSE) for details.

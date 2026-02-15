@@ -8,6 +8,7 @@ Tools for managing the Collaborative Partner's proactive curiosity system.
 |------|---------|
 | [god_curiosity_list](#god_curiosity_list) | List probes |
 | [god_curiosity_explore](#god_curiosity_explore) | Explore probe |
+| [god_curiosity_web_explore](#god_curiosity_web_explore) | Web explore topic |
 | [god_budget_status](#god_budget_status) | Budget status |
 | [god_budget_history](#god_budget_history) | Budget history |
 
@@ -190,6 +191,110 @@ const topResult = await mcp__rubix__god_curiosity_explore({});
 3. **Research**: Search codebase, docs, and memory
 4. **Synthesis**: Generate findings and recommendations
 5. **Learning**: Store insights for future use
+
+---
+
+## god_curiosity_web_explore
+
+Explore a topic using web search and Playwright browser automation.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `topic` | string | Yes | Topic to explore |
+| `keywords` | string[] | No | Additional search keywords to guide exploration |
+| `maxPages` | number | No | Maximum pages to visit (default: 3) |
+
+### Response
+
+```json
+{
+  "success": true,
+  "topic": "JWT token refresh best practices",
+  "exploration": {
+    "sources": [
+      {
+        "url": "https://auth0.com/blog/refresh-tokens-what-are-they-and-when-to-use-them",
+        "title": "Refresh Tokens: What They Are and When to Use Them",
+        "relevance": 0.95
+      },
+      {
+        "url": "https://datatracker.ietf.org/doc/html/rfc6749#section-1.5",
+        "title": "RFC 6749 - OAuth 2.0 Refresh Tokens",
+        "relevance": 0.88
+      },
+      {
+        "url": "https://stackoverflow.com/questions/27726066/jwt-refresh-token-flow",
+        "title": "JWT Refresh Token Flow - Stack Overflow",
+        "relevance": 0.82
+      }
+    ],
+    "findings": [
+      "Refresh tokens should be stored securely (httpOnly cookies, not localStorage)",
+      "Implement token rotation: issue new refresh token on each use, invalidate the old one",
+      "Set short access token TTL (5-15 min) with longer refresh token TTL (days/weeks)",
+      "Use absolute expiration on refresh tokens to limit session lifetime"
+    ],
+    "recommendations": [
+      "Adopt sliding window refresh with absolute maximum lifetime",
+      "Store refresh tokens server-side with device fingerprinting",
+      "Implement refresh token families to detect token reuse attacks"
+    ],
+    "learnings": [
+      "Token rotation prevents replay attacks on stolen refresh tokens",
+      "Refresh token families enable detecting compromised token chains"
+    ]
+  },
+  "pagesVisited": 3,
+  "tokensUsed": 65000,
+  "explorationTimeMs": 18500
+}
+```
+
+### Example
+
+```typescript
+// Explore a topic with default settings
+const result = await mcp__rubix__god_curiosity_web_explore({
+  topic: "JWT token refresh best practices"
+});
+
+console.log(`Visited ${result.pagesVisited} pages`);
+console.log("\nFindings:");
+for (const finding of result.exploration.findings) {
+  console.log(`- ${finding}`);
+}
+
+// Explore with keywords and more pages
+const deepResult = await mcp__rubix__god_curiosity_web_explore({
+  topic: "React Server Components performance",
+  keywords: ["streaming", "suspense", "bundle size"],
+  maxPages: 5
+});
+
+console.log("\nSources:");
+for (const source of deepResult.exploration.sources) {
+  console.log(`[${source.relevance}] ${source.title}`);
+  console.log(`  ${source.url}`);
+}
+```
+
+### Exploration Process
+
+1. **Keyword Generation**: Combines topic with provided keywords for search queries
+2. **Web Search**: Searches the web for relevant pages
+3. **Page Navigation**: Uses Playwright to visit top results
+4. **Content Extraction**: Extracts relevant content from each page
+5. **Synthesis**: Analyzes findings with Claude to produce structured results
+6. **Learning Storage**: Stores valuable insights for future use
+
+### Notes
+
+- Requires Playwright to be available (falls back to text-only exploration if not)
+- Each page visit counts toward the curiosity token budget
+- Pages are visited in relevance order; stops early if budget is exceeded
+- Results are stored as learnings and can be recalled in future sessions
 
 ---
 

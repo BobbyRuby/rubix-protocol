@@ -388,7 +388,7 @@ For documentation bugs:
 
 ### External
 
-- [God-Agent Repository](https://github.com/rubix-protocol/god-agent)
+- [God-Agent Repository](https://github.com/BobbyRuby/rubix-protocol)
 - [MkDocs Documentation](https://www.mkdocs.org/)
 - [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/)
 

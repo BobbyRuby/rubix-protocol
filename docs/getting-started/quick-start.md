@@ -22,7 +22,7 @@ You should see tools like:
 - `mcp__rubix__god_store`
 - `mcp__rubix__god_query`
 - `mcp__rubix__god_codex_do`
-- ... (80+ tools)
+- ... (160+ tools)
 
 ## Step 2: Store Your First Memory
 
@@ -299,5 +299,5 @@ await mcp__rubix__god_codex_do({
 ## Next Steps
 
 - [Architecture Overview](../architecture/overview.md) - Understand how RUBIX works
-- [MCP Tools Reference](../tools/index.md) - Explore all 80+ tools
+- [MCP Tools Reference](../tools/index.md) - Explore all 160+ tools
 - [Task Execution](../architecture/task-execution.md) - Deep dive into RUBIX execution

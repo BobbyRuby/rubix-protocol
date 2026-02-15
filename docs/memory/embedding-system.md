@@ -36,12 +36,12 @@ flowchart TD
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GOD_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
-| `GOD_AGENT_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
-| `GOD_AGENT_HNSW_MAX_ELEMENTS` | `100000` | Max vectors |
-| `GOD_AGENT_HNSW_EF_CONSTRUCTION` | `200` | Build quality |
-| `GOD_AGENT_HNSW_EF_SEARCH` | `100` | Search quality |
-| `GOD_AGENT_HNSW_M` | `16` | Connections per node |
+| `RUBIX_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model |
+| `RUBIX_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
+| `RUBIX_HNSW_MAX_ELEMENTS` | `100000` | Max vectors |
+| `RUBIX_HNSW_EF_CONSTRUCTION` | `200` | Build quality |
+| `RUBIX_HNSW_EF_SEARCH` | `100` | Search quality |
+| `RUBIX_HNSW_M` | `16` | Connections per node |
 
 ## HNSW Parameters
 

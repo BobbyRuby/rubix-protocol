@@ -228,8 +228,8 @@ export class AgentCardGenerator {
         'Capable of autonomous code generation, testing, security review, and self-healing.',
       provider: {
         name: 'RUBIX Protocol',
-        url: 'https://github.com/rubix-protocol',
-        repository: 'https://github.com/rubix-protocol/god-agent'
+        url: 'https://github.com/BobbyRuby',
+        repository: 'https://github.com/BobbyRuby/rubix-protocol'
       },
       capabilities,
       endpoints: [

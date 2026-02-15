@@ -94,7 +94,7 @@ Statistical measure of parameter importance used by EWC++ to determine which wei
 Enhancement layer that enriches embeddings using graph structure (provenance, causal relations) via message passing.
 
 ### god_* Tools
-MCP tools exposed by god-agent (80+ total). Named with `god_` prefix for namespacing.
+MCP tools exposed by god-agent (160+ total). Named with `god_` prefix for namespacing.
 
 ---
 
@@ -130,7 +130,7 @@ Standard protocol for language intelligence features like go-to-definition, find
 ## M
 
 ### MCP (Model Context Protocol)
-Anthropic's protocol for Claude to interact with external tools and services. god-agent exposes 80+ MCP tools.
+Anthropic's protocol for Claude to interact with external tools and services. god-agent exposes 160+ MCP tools.
 
 ### Memory Entry
 A stored piece of information with content, tags, importance, source, and provenance tracking.

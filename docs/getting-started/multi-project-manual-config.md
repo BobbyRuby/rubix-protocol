@@ -77,7 +77,7 @@ For each project, add an instance entry:
     "rubix-{PROJECT_ID}": {
       "command": "node",
       "args": ["dist/mcp-server.js"],
-      "cwd": "{GOD_AGENT_ROOT}",
+      "cwd": "{RUBIX_ROOT}",
       "env": {
         "OPENAI_API_KEY": "{YOUR_OPENAI_KEY}",
         "ANTHROPIC_API_KEY": "{YOUR_ANTHROPIC_KEY}",
@@ -93,7 +93,7 @@ For each project, add an instance entry:
 **Replace placeholders:**
 
 - `{PROJECT_ID}`: Unique identifier (e.g., `backend-api`, `frontend`)
-- `{GOD_AGENT_ROOT}`: Absolute path to god-agent directory
+- `{RUBIX_ROOT}`: Absolute path to god-agent directory
 - `{YOUR_OPENAI_KEY}`: Your OpenAI API key
 - `{YOUR_ANTHROPIC_KEY}`: Your Anthropic API key
 - `{PROJECT_PATH}`: Absolute path to your project
@@ -683,5 +683,3 @@ test -d "D:\projects\backend-api" && echo "project exists"
 ## Next Steps
 
 - [CLI Usage Guide](./multi-project-cli-usage.md) - Using configured instances
-- [Troubleshooting](./multi-project-troubleshooting.md) - Detailed issue resolution
-- [Advanced Features](./multi-project-advanced.md) - Advanced configuration patterns

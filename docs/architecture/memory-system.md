@@ -353,14 +353,14 @@ class AsyncWriteQueue {
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOD_AGENT_DATA_DIR` | `./data` | Database location |
-| `GOD_AGENT_HNSW_MAX_ELEMENTS` | `100000` | Max vectors |
-| `GOD_AGENT_HNSW_EF_CONSTRUCTION` | `200` | Build quality |
-| `GOD_AGENT_HNSW_EF_SEARCH` | `100` | Search quality |
-| `GOD_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-| `GOD_AGENT_EMBEDDING_DIMENSIONS` | `768` | Vector size |
-| `GOD_AGENT_LSCORE_DECAY` | `0.9` | L-Score decay |
-| `GOD_AGENT_LSCORE_THRESHOLD` | `0.3` | Min L-Score |
+| `RUBIX_DATA_DIR` | `./data` | Database location |
+| `RUBIX_HNSW_MAX_ELEMENTS` | `100000` | Max vectors |
+| `RUBIX_HNSW_EF_CONSTRUCTION` | `200` | Build quality |
+| `RUBIX_HNSW_EF_SEARCH` | `100` | Search quality |
+| `RUBIX_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
+| `RUBIX_EMBEDDING_DIMENSIONS` | `768` | Vector size |
+| `RUBIX_LSCORE_DECAY` | `0.9` | L-Score decay |
+| `RUBIX_LSCORE_THRESHOLD` | `0.3` | Min L-Score |
 
 ## Usage Examples
 
