@@ -25,7 +25,7 @@
     "codegen"
   ],
   "author": "Robert Ruby II",
-  "license": "MIT",
+  "license": "AGPL-3.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/BobbyRuby/rubix-protocol.git"

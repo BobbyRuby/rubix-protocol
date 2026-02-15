@@ -108,4 +108,6 @@ Full documentation is available in the [`docs/`](docs/) directory, built with [M
 
 ## License
 
-MIT License -- see [LICENSE](LICENSE) for details.
+AGPL-3.0 -- see [LICENSE](LICENSE) for details.
+
+Commercial licensing available. Contact the copyright holder for terms.
