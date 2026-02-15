@@ -1,0 +1,112 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(sudo rm *)",
+      "Bash(sudo rmdir *)",
+      "Bash(git rm *)",
+      "Bash(git branch -D *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(git checkout -- *)"
+    ],
+    "allow": [
+      "Bash",
+      "mcp__rubix-frm-brain__*",
+      "Read",
+      "Edit",
+      "Write",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "rubix-frm-brain"
+  ],
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-recall-hook.cjs",
+            "timeout": 30,
+            "statusMessage": "Recalling memories..."
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-permission-hook.cjs",
+            "timeout": 400,
+            "statusMessage": "Awaiting AFK permission..."
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-notification-hook.cjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-comms-stop-hook.cjs",
+            "timeout": 15,
+            "statusMessage": "Checking comms & auto-storing..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "EnterPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-plan-hook.cjs",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-stm-hook.cjs",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-session-end-hook.cjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
