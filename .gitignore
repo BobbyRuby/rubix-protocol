@@ -52,3 +52,9 @@ install.sh
 
 # Development environment (working copy)
 god-agent-dev/
+
+# Local utility scripts
+kid-proofing/
+
+# Claude Code local config
+god-agent/
