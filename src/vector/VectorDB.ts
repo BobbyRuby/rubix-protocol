@@ -194,6 +194,19 @@ export class VectorDB {
     }));
   }
 
+  /**
+   * Retrieve a stored vector by its label
+   */
+  getVector(label: number): Float32Array | null {
+    if (this.useHNSW && this.hnswIndex) {
+      const vec = this.hnswIndex.getVector(label);
+      if (vec) return new Float32Array(vec);
+    }
+    const bfVec = this.bruteForceVectors.get(label);
+    if (bfVec) return new Float32Array(bfVec);
+    return null;
+  }
+
   private cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) {
       throw new Error('Vectors must have same dimensions');

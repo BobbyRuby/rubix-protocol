@@ -377,6 +377,14 @@ export class HNSWIndex {
   }
 
   /**
+   * Retrieve stored vector by label
+   */
+  getVector(label: number): number[] | null {
+    const node = this.nodes.get(label);
+    return node ? node.vector : null;
+  }
+
+  /**
    * Get vector count
    */
   getCount(): number {

@@ -1287,6 +1287,11 @@ export class MemoryEngine {
     return this.storage;
   }
 
+  getVectorDb(): VectorDB { return this.vectorDb; }
+  getEmbeddingService(): EmbeddingService { return this.embeddings; }
+  getShadowSearch(): ShadowSearch { return this.shadowSearch; }
+  getProvenanceStore(): ProvenanceStore { return this.provenance; }
+
   // ==========================================
   // GNN ENHANCEMENT OPERATIONS
   // ==========================================
@@ -1315,11 +1320,9 @@ export class MemoryEngine {
 
     // Create embedding lookup function for neighbors
     const embeddingLookup = (id: string): Float32Array | null => {
-      const neighborEntry = this.storage.getEntry(id);
-      if (!neighborEntry) return null;
-      // For neighbors, we'd ideally cache embeddings, but for now regenerate
-      // This could be optimized with a vector store lookup
-      return null; // Let GNN handle missing embeddings gracefully
+      const neighborLabel = this.storage.getVectorLabel(id);
+      if (neighborLabel === null) return null;
+      return this.vectorDb.getVector(neighborLabel);
     };
 
     return this.gnn.enhance(entryId, embedding, embeddingLookup);

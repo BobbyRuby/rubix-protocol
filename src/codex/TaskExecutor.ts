@@ -11,6 +11,7 @@
 
 import { randomUUID } from 'crypto';
 import type { MemoryEngine } from '../core/MemoryEngine.js';
+import type { ReflexionService } from '../reflexion/index.js';
 import type { ExtendedThinkingConfig } from '../core/types.js';
 import type { PlaywrightManager } from '../playwright/PlaywrightManager.js';
 import type { VerificationService } from '../playwright/VerificationService.js';
@@ -2431,6 +2432,23 @@ Summary: ${result.summary}`;
    */
   getAlternatives(): AlternativesFinder {
     return this.alternatives;
+  }
+
+  setReflexionService(service: ReflexionService): void {
+    this.healer.setReflexionService(service);
+    if (this.phasedExecutor) {
+      this.phasedExecutor.setReflexionService(service);
+    }
+  }
+
+  wireShadowSearch(engine: MemoryEngine): void {
+    this.alternatives.setShadowSearch(
+      engine.getShadowSearch(),
+      engine.getVectorDb(),
+      engine.getEmbeddingService(),
+      engine.getStorage(),
+      engine.getProvenanceStore()
+    );
   }
 
   /**

@@ -7019,6 +7019,23 @@ This is project-specific context that persists across sessions.`;
         this.taskExecutor.enablePhasedExecution(process.cwd());
         console.log('[MCP Server] PhasedExecution enabled - using 6-phase tokenized flow (primary execution path)');
 
+        // Wire ReflexionService for verbal failure analysis
+        try {
+          const reflexion = await this.getReflexionService();
+          this.taskExecutor!.setReflexionService(reflexion);
+          console.log('[MCP Server] ReflexionService wired - verbal failure analysis enabled');
+        } catch (error) {
+          console.warn('[MCP Server] Failed to wire ReflexionService:', error);
+        }
+
+        // Wire ShadowSearch for contradiction-based alternative finding during healing
+        try {
+          this.taskExecutor!.wireShadowSearch(engine);
+          console.log('[MCP Server] ShadowSearch wired into AlternativesFinder');
+        } catch (error) {
+          console.warn('[MCP Server] Failed to wire ShadowSearch:', error);
+        }
+
         console.log('[MCP Server] TaskExecutor initialized - RUBIX ready');
       } catch (error) {
         console.error('[MCP Server] Failed to initialize TaskExecutor subsystems:', error);
