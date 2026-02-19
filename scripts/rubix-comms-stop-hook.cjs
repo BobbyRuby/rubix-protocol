@@ -33,7 +33,9 @@ const {
   synthesizeStmContent,
   filePathToSkillTags,
   readLastStmStore,
-  writeLastStmStore
+  writeLastStmStore,
+  getUndiagnosedFiles,
+  clearQcLedger
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -208,6 +210,24 @@ async function main() {
     deletePendingRating(dataDirResolved);
   }
 
+  // ─── Phase 2.5: QC Debt Check ───
+  const undiagnosedFiles = getUndiagnosedFiles(dataDirResolved);
+  if (undiagnosedFiles.length > 0) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════');
+    console.log(`[QC DEBT] ${undiagnosedFiles.length} file(s) edited but never diagnosed:`);
+    for (const { file, lang } of undiagnosedFiles) {
+      const tools = (lang === 'typescript' || lang === 'javascript')
+        ? 'god_lsp_diagnostics + god_analyze_lint + god_analyze_types'
+        : 'god_lsp_diagnostics';
+      console.log(`  ${path.basename(file)} (${lang}) → ${tools}`);
+    }
+    console.log('Run diagnostics on these files before finishing.');
+    console.log('═══════════════════════════════════════════════════');
+    console.log('');
+    needsContinue = true;
+  }
+
   // ─── Phase 3: Auto-STM store from journal ───
   const journal = readStmJournal(dataDirResolved);
   if (journal && journal.signals && journal.signals.length > 0 && !journal.manualStmCalled) {
@@ -267,8 +287,9 @@ async function main() {
       }
     }
 
-    // Clear the journal regardless
+    // Clear the journal + QC ledger regardless (fresh journal = fresh ledger)
     deleteStmJournal(dataDirResolved);
+    clearQcLedger(dataDirResolved);
   }
 
   // ─── Final exit ───

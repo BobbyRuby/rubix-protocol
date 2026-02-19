@@ -20,7 +20,8 @@ const {
   resolveMcpConfig,
   readHookIdentity,
   readStmJournal,
-  getLspLanguageForFile
+  getLspLanguageForFile,
+  readQcLedger
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -123,17 +124,27 @@ function getUnreadSummary(dataDir, instanceId) {
 
 /**
  * Build [LSP+LINT] directive from recently-edited files in STM journal.
- * Returns a multi-line string or null if no LSP-supported files were edited.
+ * Filters out files that already have a QC ledger entry (already diagnosed).
+ * Returns a multi-line string or null if no undiagnosed LSP-supported files remain.
  */
 function getLspDirective(dataDir) {
   const journal = readStmJournal(dataDir);
   if (!journal || !journal.signals || journal.signals.length === 0) return null;
+
+  // Read QC ledger to filter out already-diagnosed files
+  const ledger = readQcLedger(dataDir);
+  const diagnosedFiles = (ledger && ledger.files) ? ledger.files : {};
 
   const lspFiles = new Map(); // lang -> Set<filePath>
   for (const sig of journal.signals) {
     if ((sig.type === 'edit' || sig.type === 'write') && sig.file) {
       const lang = sig.lspLang || getLspLanguageForFile(sig.file);
       if (lang) {
+        // Skip files already diagnosed in the QC ledger
+        const basename = path.basename(sig.file);
+        const relParts = sig.file.replace(/\\/g, '/');
+        if (diagnosedFiles[sig.file] || diagnosedFiles[basename] || diagnosedFiles[relParts]) continue;
+
         if (!lspFiles.has(lang)) lspFiles.set(lang, new Set());
         lspFiles.get(lang).add(sig.file);
       }

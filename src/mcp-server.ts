@@ -15,7 +15,7 @@ import {
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { readdirSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, relative, isAbsolute } from 'path';
 
 import { MemoryEngine, MemorySource, CausalRelationType, ReasoningRoute } from './index.js';
 import { FailureMemoryService } from './failure/FailureMemoryService.js';
@@ -8706,6 +8706,39 @@ This is project-specific context that persists across sessions.`;
       const result = await caps.getDiagnostics(input.file);
       const totalErrors = result.reduce((sum, r) => sum + r.errorCount, 0);
       const totalWarnings = result.reduce((sum, r) => sum + r.warningCount, 0);
+
+      // Write QC ledger entry when diagnosing a specific file
+      if (input.file) {
+        try {
+          const resolvedDataDir = isAbsolute(this.dataDir) ? this.dataDir : join(process.cwd(), this.dataDir);
+          const ledgerPath = join(resolvedDataDir, 'qc-ledger.json');
+          let ledger: { files: Record<string, { at: string; errors: number; warnings: number }> } = { files: {} };
+          if (existsSync(ledgerPath)) {
+            try {
+              const raw = readFileSync(ledgerPath, 'utf8');
+              if (raw.trim()) ledger = JSON.parse(raw);
+            } catch { /* start fresh */ }
+          }
+          // Normalize path: relative to project root for matching with STM journal entries
+          const relPath = isAbsolute(input.file)
+            ? relative(this.projectRoot, input.file)
+            : input.file;
+          ledger.files[relPath] = {
+            at: new Date().toISOString(),
+            errors: totalErrors,
+            warnings: totalWarnings
+          };
+          // Also store the basename for loose matching
+          const base = input.file.split(/[/\\]/).pop();
+          if (base && base !== relPath) {
+            ledger.files[base] = ledger.files[relPath];
+          }
+          if (!existsSync(resolvedDataDir)) mkdirSync(resolvedDataDir, { recursive: true });
+          writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+        } catch {
+          // QC ledger write is best-effort — never fail the diagnostics response
+        }
+      }
 
       return {
         content: [{

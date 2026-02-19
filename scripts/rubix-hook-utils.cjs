@@ -640,6 +640,88 @@ function isReadOnlyBash(command) {
   return READ_ONLY_BASH_PATTERNS.some(p => p.test(trimmed));
 }
 
+// ─── QC Ledger helpers (qc-ledger.json) ───
+
+/**
+ * Read the QC ledger from {dataDir}/qc-ledger.json.
+ * Returns { files: { relativePath: { at, errors, warnings } } } or null.
+ */
+function readQcLedger(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'qc-ledger.json');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write/merge into the QC ledger at {dataDir}/qc-ledger.json.
+ * Merges file entries into existing ledger (doesn't overwrite).
+ */
+function writeQcLedger(dataDir, ledger) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    const existing = readQcLedger(dataDir) || { files: {} };
+    if (ledger && ledger.files) {
+      Object.assign(existing.files, ledger.files);
+    }
+    fs.writeFileSync(path.join(dataDir, 'qc-ledger.json'), JSON.stringify(existing, null, 2));
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Delete the QC ledger file.
+ */
+function clearQcLedger(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'qc-ledger.json');
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Get files that were edited (have lspLang in STM journal) but NOT yet diagnosed (not in QC ledger).
+ * Returns array of { file, lang } entries.
+ */
+function getUndiagnosedFiles(dataDir) {
+  const journal = readStmJournal(dataDir);
+  if (!journal || !journal.signals || journal.signals.length === 0) return [];
+
+  const ledger = readQcLedger(dataDir);
+  const diagnosedFiles = (ledger && ledger.files) ? ledger.files : {};
+
+  const lspFiles = new Map(); // file -> lang
+  for (const sig of journal.signals) {
+    if ((sig.type === 'edit' || sig.type === 'write') && sig.file) {
+      const lang = sig.lspLang || getLspLanguageForFile(sig.file);
+      if (lang && !lspFiles.has(sig.file)) {
+        lspFiles.set(sig.file, lang);
+      }
+    }
+  }
+
+  const undiagnosed = [];
+  for (const [file, lang] of lspFiles) {
+    // Normalize: check both the raw path and the basename for ledger matches
+    const basename = path.basename(file);
+    const relParts = file.replace(/\\/g, '/');
+    const isDiagnosed = diagnosedFiles[file] || diagnosedFiles[basename] || diagnosedFiles[relParts];
+    if (!isDiagnosed) {
+      undiagnosed.push({ file, lang });
+    }
+  }
+
+  return undiagnosed;
+}
+
 /**
  * Read the last auto-store timestamp from {dataDir}/stm-last-store.json.
  * Returns epoch ms or 0.
@@ -699,5 +781,10 @@ module.exports = {
   writeLastStmStore,
   // LSP helpers
   LSP_EXTENSION_MAP,
-  getLspLanguageForFile
+  getLspLanguageForFile,
+  // QC Ledger helpers
+  readQcLedger,
+  writeQcLedger,
+  clearQcLedger,
+  getUndiagnosedFiles
 };

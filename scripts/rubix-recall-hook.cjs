@@ -23,7 +23,8 @@ const {
   detectPromptSkills,
   getPolyglotEntries,
   readHookIdentity,
-  writePendingRating
+  writePendingRating,
+  getUndiagnosedFiles
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -245,6 +246,14 @@ async function main() {
     const urgentTag = inbox.urgent > 0 ? ` (${inbox.urgent} URGENT)` : '';
     const from = inbox.senders.length > 0 ? ` from: ${inbox.senders.join(', ')}` : '';
     console.log(`[COMMS] ${inbox.total} unread message(s)${urgentTag}${from} — call god_comms_heartbeat then god_comms_inbox to read`);
+  }
+
+  // Check for undiagnosed QC files (lightweight — reads 2 JSON files)
+  const undiagnosed = getUndiagnosedFiles(dataDirResolved);
+  if (undiagnosed.length > 0) {
+    const fileList = undiagnosed.slice(0, 5).map(u => path.basename(u.file)).join(', ');
+    const extra = undiagnosed.length > 5 ? ` (+${undiagnosed.length - 5} more)` : '';
+    console.log(`[QC PENDING] ${undiagnosed.length} file(s) edited but not diagnosed: ${fileList}${extra} → god_lsp_diagnostics`);
   }
 
   // Check trigger task status

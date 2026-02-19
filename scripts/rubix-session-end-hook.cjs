@@ -20,7 +20,8 @@ const {
   computeStmImportance,
   synthesizeStmContent,
   filePathToSkillTags,
-  writeLastStmStore
+  writeLastStmStore,
+  clearQcLedger
 } = require('./rubix-hook-utils.cjs');
 
 async function main() {
@@ -87,6 +88,7 @@ async function main() {
       // Silent failure
     }
     deleteStmJournal(dataDirResolved);
+    clearQcLedger(dataDirResolved);
   }
 
   // ─── Store session-end marker ───
