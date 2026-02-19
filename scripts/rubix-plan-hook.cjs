@@ -18,7 +18,9 @@ const {
   readStdin,
   detectProject,
   resolveMcpConfig,
-  readHookIdentity
+  readHookIdentity,
+  readStmJournal,
+  getLspLanguageForFile
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -119,6 +121,39 @@ function getUnreadSummary(dataDir, instanceId) {
   }
 }
 
+/**
+ * Build [LSP+LINT] directive from recently-edited files in STM journal.
+ * Returns a multi-line string or null if no LSP-supported files were edited.
+ */
+function getLspDirective(dataDir) {
+  const journal = readStmJournal(dataDir);
+  if (!journal || !journal.signals || journal.signals.length === 0) return null;
+
+  const lspFiles = new Map(); // lang -> Set<filePath>
+  for (const sig of journal.signals) {
+    if ((sig.type === 'edit' || sig.type === 'write') && sig.file) {
+      const lang = sig.lspLang || getLspLanguageForFile(sig.file);
+      if (lang) {
+        if (!lspFiles.has(lang)) lspFiles.set(lang, new Set());
+        lspFiles.get(lang).add(sig.file);
+      }
+    }
+  }
+  if (lspFiles.size === 0) return null;
+
+  const lines = ['[LSP+LINT] Recently-edited files have LSP + linter coverage. Before planning, check for errors:'];
+  for (const [lang, files] of lspFiles) {
+    const names = [...files].slice(0, 5).map(f => path.basename(f)).join(', ');
+    const tools = (lang === 'typescript' || lang === 'javascript')
+      ? 'god_lsp_diagnostics + god_analyze_lint + god_analyze_types'
+      : 'god_lsp_diagnostics';
+    lines.push(`  ${lang}: ${names} → ${tools}`);
+  }
+  lines.push('  Start servers first: god_lsp_start({language})');
+  lines.push('  Check structure: god_lsp_symbols({query}) for key types/functions');
+  return lines.join('\n');
+}
+
 async function main() {
   const input = await readStdin() || {};
 
@@ -157,6 +192,10 @@ async function main() {
   if (unread.count > 0) {
     console.log(`[COMMS] ${unread.count} unread message(s) from: ${unread.senders.join(', ')} — check god_comms_inbox after heartbeat`);
   }
+
+  // LSP + linter directive for recently-edited files
+  const lspDirective = getLspDirective(dataDirResolved);
+  if (lspDirective) console.log(lspDirective);
 
   // Always exit 0 — allow plan mode to proceed
   process.exit(0);

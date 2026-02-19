@@ -24,7 +24,8 @@ const {
   resolveMcpConfig,
   readStmJournal,
   writeStmJournal,
-  isReadOnlyBash
+  isReadOnlyBash,
+  getLspLanguageForFile
 } = require('./rubix-hook-utils.cjs');
 
 const MAX_SIGNALS = 50;
@@ -48,6 +49,8 @@ async function main() {
       file: file,
       timestamp: new Date().toISOString()
     };
+    const lspLang = getLspLanguageForFile(file);
+    if (lspLang) signal.lspLang = lspLang;
   } else if (toolName === 'write') {
     const file = toolInput.file_path || '';
     if (!file) return;
@@ -56,6 +59,8 @@ async function main() {
       file: file,
       timestamp: new Date().toISOString()
     };
+    const lspLang = getLspLanguageForFile(file);
+    if (lspLang) signal.lspLang = lspLang;
   } else if (toolName === 'bash') {
     const command = toolInput.command || '';
     if (isReadOnlyBash(command)) return;
@@ -107,6 +112,15 @@ async function main() {
   // Append signal
   journal.signals.push(signal);
   writeStmJournal(dataDirResolved, journal);
+
+  // Emit QC nudge for LSP-supported files
+  if (signal.lspLang) {
+    const basename = path.basename(signal.file);
+    const tools = (signal.lspLang === 'typescript' || signal.lspLang === 'javascript')
+      ? 'god_lsp_diagnostics + god_analyze_lint + god_analyze_types'
+      : 'god_lsp_diagnostics';
+    console.log(`[QC] ${basename} modified — ${tools} available for error checking`);
+  }
 }
 
 main().catch(() => {

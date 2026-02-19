@@ -591,6 +591,28 @@ const EXT_SKILL_MAP = {
 };
 
 /**
+ * Map file extensions to LSP language IDs for code intelligence tools.
+ */
+const LSP_EXTENSION_MAP = {
+  '.ts': 'typescript', '.tsx': 'typescript',
+  '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+  '.php': 'php', '.phtml': 'php',
+  '.css': 'css', '.scss': 'css', '.less': 'css',
+  '.html': 'html', '.htm': 'html',
+  '.sql': 'sql'
+};
+
+/**
+ * Get LSP language ID for a file path based on extension.
+ * Returns null if the file type has no LSP support.
+ */
+function getLspLanguageForFile(filePath) {
+  if (!filePath) return null;
+  const ext = path.extname(filePath).toLowerCase();
+  return LSP_EXTENSION_MAP[ext] || null;
+}
+
+/**
  * Extract polyglot skill tags from a file path based on extension.
  */
 function filePathToSkillTags(filePath) {
@@ -674,5 +696,8 @@ module.exports = {
   filePathToSkillTags,
   isReadOnlyBash,
   readLastStmStore,
-  writeLastStmStore
+  writeLastStmStore,
+  // LSP helpers
+  LSP_EXTENSION_MAP,
+  getLspLanguageForFile
 };
