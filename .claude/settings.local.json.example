@@ -2,11 +2,11 @@
   "_comment": "Machine-specific overrides. Copy to settings.local.json and customize. Hooks, deny list, and core permissions are in the tracked settings.json — you only need machine-specific additions here.",
   "permissions": {
     "allow": [
-      "mcp__YOUR-MCP-SERVER-NAME__*",
+      "mcp__rubix-brain__*",
       "WebFetch(domain:example.com)"
     ]
   },
   "enabledMcpjsonServers": [
-    "YOUR-MCP-SERVER-NAME"
+    "rubix-brain"
   ]
 }

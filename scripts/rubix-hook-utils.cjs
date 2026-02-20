@@ -24,9 +24,9 @@ const PROJECT_MAPPINGS = [
       /god-agent/i,
       /\/var\/www\/html\/rubix/i
     ],
-    instance: 'rubix-frm-brain',
+    instance: 'rubix-brain',
     name: 'God-Agent',
-    tools: 'mcp__rubix-frm-brain__*',
+    tools: 'mcp__rubix-brain__*',
     coreSkills: ['polyglot:wordpress', 'polyglot:javascript', 'polyglot:leaflet']
   }
 ];

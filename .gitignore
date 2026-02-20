@@ -40,6 +40,10 @@ god-agent.pid
 .claude/settings.local.json
 .claude/cloud-servers.json
 
+# Memory exports (contain learned preferences — never commit)
+scripts/memory-export-*.json
+scripts/import-core-memories.cjs
+
 # Temp
 nul
 tmpclaude-*-cwd/
