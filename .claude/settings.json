@@ -79,7 +79,7 @@
           {
             "type": "command",
             "command": "node scripts/rubix-plan-hook.cjs",
-            "timeout": 5000
+            "timeout": 5
           }
         ]
       }
