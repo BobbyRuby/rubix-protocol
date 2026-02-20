@@ -21,14 +21,15 @@ const {
   readHookIdentity,
   readStmJournal,
   getLspLanguageForFile,
-  readQcLedger
+  readQcLedger,
+  readLastPrompt
 } = require('./rubix-hook-utils.cjs');
 
 /**
  * Broadcast plan-mode entry to comms.db via direct SQLite write.
  * Uses a write connection (not readonly) to INSERT a status message.
  */
-function broadcastPlanStart(dataDir, instanceId, projectName) {
+function broadcastPlanStart(dataDir, instanceId, projectName, planContext) {
   try {
     const Database = require('better-sqlite3');
     const dbPath = path.join(dataDir, 'comms.db');
@@ -42,8 +43,13 @@ function broadcastPlanStart(dataDir, instanceId, projectName) {
         action: 'plan_start',
         instance: instanceId,
         project: projectName,
+        context: planContext || null,
         timestamp: now
       });
+
+      const subject = planContext
+        ? `Planning: ${planContext.substring(0, 100)}`
+        : 'Entered plan mode';
 
       db.prepare(`
         INSERT INTO messages (id, from_instance, to_instance, type, priority, subject, payload, status, created_at, expires_at)
@@ -51,7 +57,7 @@ function broadcastPlanStart(dataDir, instanceId, projectName) {
       `).run(
         id,
         instanceId,
-        'Entered plan mode',
+        subject,
         payload,
         now,
         new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() // expires in 4h
@@ -187,8 +193,12 @@ async function main() {
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
 
-  // Broadcast plan-mode entry to other instances
-  const broadcasted = broadcastPlanStart(dataDirResolved, instanceId, projectName);
+  // Read the user's last prompt to include as plan context
+  const lastPrompt = readLastPrompt(dataDirResolved);
+  const planContext = lastPrompt?.prompt || null;
+
+  // Broadcast plan-mode entry to other instances (now with context)
+  const broadcasted = broadcastPlanStart(dataDirResolved, instanceId, projectName, planContext);
 
   // Check for unread comms (instance-aware if identity known)
   const unread = getUnreadSummary(dataDirResolved, identity ? instanceId : null);
@@ -197,7 +207,8 @@ async function main() {
   console.log(`[PLAN MODE] Instance: ${instanceLabel} | Project: ${projectName} | Time: ${timeStr}`);
 
   if (broadcasted) {
-    console.log(`[COMMS] Broadcasted plan_start to all instances`);
+    const ctxSnippet = planContext ? `: "${planContext.substring(0, 150)}"` : '';
+    console.log(`[COMMS] Broadcasted plan_start to all instances${ctxSnippet}`);
   }
 
   if (unread.count > 0) {

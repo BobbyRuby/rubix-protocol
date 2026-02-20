@@ -24,7 +24,8 @@ const {
   getPolyglotEntries,
   readHookIdentity,
   writePendingRating,
-  getUndiagnosedFiles
+  getUndiagnosedFiles,
+  writeLastPrompt
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -239,6 +240,9 @@ async function main() {
   const dataDirResolved = path.isAbsolute(dataDirRaw)
     ? dataDirRaw
     : path.join(RUBIX_ROOT, dataDirRaw);
+
+  // Save prompt for plan hook context
+  writeLastPrompt(dataDirResolved, prompt);
 
   // Check comms inbox for unread messages
   const inbox = checkCommsInbox(dataDirResolved);

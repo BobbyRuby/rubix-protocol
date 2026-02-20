@@ -749,6 +749,44 @@ function writeLastStmStore(dataDir) {
   }
 }
 
+// ─── Last-prompt helpers (last-prompt.json) ───
+
+/**
+ * Write the user's latest prompt to {dataDir}/last-prompt.json.
+ * Read by the plan hook to include context in plan-mode broadcasts.
+ */
+function writeLastPrompt(dataDir, prompt) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'last-prompt.json'), JSON.stringify({
+      prompt: (prompt || '').substring(0, 500),
+      timestamp: Date.now()
+    }));
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Read the last prompt from {dataDir}/last-prompt.json.
+ * Returns { prompt, timestamp } or null.
+ */
+function readLastPrompt(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'last-prompt.json');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    // Only return if recent (< 5 min) to avoid stale context
+    if (parsed && parsed.timestamp && (Date.now() - parsed.timestamp) < 5 * 60 * 1000) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   RUBIX_ROOT,
   AFK_STATE_PATH,
@@ -786,5 +824,8 @@ module.exports = {
   readQcLedger,
   writeQcLedger,
   clearQcLedger,
-  getUndiagnosedFiles
+  getUndiagnosedFiles,
+  // Last-prompt helpers
+  writeLastPrompt,
+  readLastPrompt
 };
