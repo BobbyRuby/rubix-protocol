@@ -41,6 +41,7 @@ export type {
   PatternSlot,
   PatternMatch,
   MemoryEngineConfig,
+  VectorConfig,
   HNSWConfig,
   EmbeddingConfig,
   StorageConfig,

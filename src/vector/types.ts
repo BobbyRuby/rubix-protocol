@@ -20,11 +20,6 @@ export interface VectorSearchResult {
 export interface VectorDBConfig {
   dimensions: number;
   maxElements: number;
-  efConstruction: number;
-  efSearch: number;
-  M: number;
-  spaceName: 'l2' | 'ip' | 'cosine';
-  indexPath: string;
 }
 
 export interface EmbeddingServiceConfig {

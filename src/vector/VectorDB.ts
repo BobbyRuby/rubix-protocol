@@ -1,73 +1,85 @@
 /**
- * Vector Database with HNSW Search
+ * Vector Database with sqlite-vec
  *
- * High-performance vector storage and search using HNSW (Hierarchical Navigable
- * Small World) algorithm. Achieves O(log n) search complexity compared to O(n)
- * brute-force, providing ~10-50x speedup for 10k+ vectors.
+ * ACID-safe vector storage and KNN search using sqlite-vec extension.
+ * Replaces the previous JSON/HNSW implementation with crash-proof SQLite storage.
  *
  * Features:
- * - HNSW-based approximate nearest neighbor search
+ * - sqlite-vec based nearest neighbor search (cosine distance)
  * - 768-dimension validation (embedding boundary assertion)
- * - L2-normalization validation
- * - Automatic fallback to brute-force if HNSW fails
- * - JSON persistence (HNSW graph structure preserved)
+ * - L2-normalization validation and auto-correction
+ * - ACID persistence via SQLite WAL (no manual save/load)
+ * - Auto-migration from legacy vectors.hnsw JSON files
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, readFileSync, renameSync } from 'fs';
+import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 import type { VectorDBConfig, VectorSearchResult } from './types.js';
-import { HNSWIndex } from './HNSWIndex.js';
-
-interface StoredVector {
-  label: number;
-  vector: number[];
-}
 
 // L2 norm tolerance for validation (vectors should be unit length)
 const L2_NORM_TOLERANCE = 0.01;
-const EXPECTED_DIMENSIONS = 768;
 
 export class VectorDB {
   private config: VectorDBConfig;
-  private hnswIndex: HNSWIndex | null = null;
-  private bruteForceVectors: Map<number, number[]> = new Map(); // Fallback storage
-  private useHNSW: boolean = true;
+  private db: Database.Database;
   private initialized: boolean = false;
 
-  constructor(config: VectorDBConfig) {
+  // Cached prepared statements
+  private stmtInsert!: Database.Statement;
+  private stmtSearch!: Database.Statement;
+  private stmtDelete!: Database.Statement;
+  private stmtHas!: Database.Statement;
+  private stmtGetVector!: Database.Statement;
+  private stmtCount!: Database.Statement;
+
+  constructor(config: VectorDBConfig, db?: Database.Database) {
     this.config = config;
+    if (db) {
+      this.db = db;
+    } else {
+      // Standalone mode — create in-memory DB (for tests)
+      this.db = new Database(':memory:');
+    }
   }
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    try {
-      // Initialize HNSW index
-      this.hnswIndex = new HNSWIndex({
-        dimensions: this.config.dimensions,
-        maxElements: this.config.maxElements,
-        M: this.config.M,
-        efConstruction: this.config.efConstruction,
-        efSearch: this.config.efSearch,
-      });
+    // Load sqlite-vec extension
+    sqliteVec.load(this.db);
 
-      // Load existing data if available
-      if (existsSync(this.config.indexPath)) {
-        await this.load();
-      }
+    // Create virtual table for vector storage
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_vectors
+      USING vec0(embedding float[${this.config.dimensions}] distance_metric=cosine)
+    `);
 
-      this.useHNSW = true;
-    } catch (error) {
-      console.warn('HNSW initialization failed, falling back to brute-force:', error);
-      this.useHNSW = false;
-
-      // Load brute-force fallback data if available
-      if (existsSync(this.config.indexPath)) {
-        await this.loadBruteForce();
-      }
-    }
+    // Prepare cached statements
+    this.prepareStatements();
 
     this.initialized = true;
+  }
+
+  private prepareStatements(): void {
+    this.stmtInsert = this.db.prepare(
+      'INSERT INTO vec_vectors(rowid, embedding) VALUES (?, ?)'
+    );
+    this.stmtSearch = this.db.prepare(
+      'SELECT rowid, distance FROM vec_vectors WHERE embedding MATCH ? AND k = ? ORDER BY distance'
+    );
+    this.stmtDelete = this.db.prepare(
+      'DELETE FROM vec_vectors WHERE rowid = ?'
+    );
+    this.stmtHas = this.db.prepare(
+      'SELECT 1 FROM vec_vectors WHERE rowid = ?'
+    );
+    this.stmtGetVector = this.db.prepare(
+      'SELECT embedding FROM vec_vectors WHERE rowid = ?'
+    );
+    this.stmtCount = this.db.prepare(
+      'SELECT count(*) as cnt FROM vec_vectors'
+    );
   }
 
   /**
@@ -77,7 +89,7 @@ export class VectorDB {
     if (vector.length !== this.config.dimensions) {
       throw new Error(
         `Vector dimension mismatch: expected ${this.config.dimensions}, got ${vector.length}. ` +
-        `Ensure embeddings are ${EXPECTED_DIMENSIONS}-dimensional.`
+        `Ensure embeddings are ${this.config.dimensions}-dimensional.`
       );
     }
   }
@@ -96,17 +108,30 @@ export class VectorDB {
   }
 
   /**
-   * Normalize a vector to unit length
+   * Normalize a vector to unit length, returning Float32Array
    */
-  private normalizeVector(vector: Float32Array | number[]): number[] {
-    const arr = Array.isArray(vector) ? vector : Array.from(vector);
+  private normalizeVector(vector: Float32Array | number[]): Float32Array {
+    const result = new Float32Array(vector.length);
     let sumSquares = 0;
-    for (let i = 0; i < arr.length; i++) {
-      sumSquares += arr[i] * arr[i];
+    for (let i = 0; i < vector.length; i++) {
+      sumSquares += vector[i] * vector[i];
     }
     const norm = Math.sqrt(sumSquares);
-    if (norm === 0) return arr;
-    return arr.map(v => v / norm);
+    if (norm === 0) {
+      result.set(vector);
+      return result;
+    }
+    for (let i = 0; i < vector.length; i++) {
+      result[i] = vector[i] / norm;
+    }
+    return result;
+  }
+
+  /**
+   * Convert Float32Array to Buffer for sqlite-vec BLOB storage
+   */
+  private float32ToBuffer(arr: Float32Array): Buffer {
+    return Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength);
   }
 
   add(label: number, vector: Float32Array): void {
@@ -114,30 +139,12 @@ export class VectorDB {
       throw new Error('VectorDB not initialized. Call initialize() first.');
     }
 
-    // Validate dimensions (768-dim assertion)
     this.assertDimensions(vector);
 
-    // Validate and optionally fix L2 normalization
     const { isValid } = this.validateL2Norm(vector);
-    let normalizedVector: number[];
+    const normalized = isValid ? vector : this.normalizeVector(vector);
 
-    if (!isValid) {
-      // Auto-normalize if not already unit length
-      normalizedVector = this.normalizeVector(vector);
-    } else {
-      normalizedVector = Array.from(vector);
-    }
-
-    if (this.useHNSW && this.hnswIndex) {
-      try {
-        this.hnswIndex.add(label, normalizedVector);
-      } catch (error) {
-        console.warn('HNSW add failed, using brute-force fallback:', error);
-        this.bruteForceVectors.set(label, normalizedVector);
-      }
-    } else {
-      this.bruteForceVectors.set(label, normalizedVector);
-    }
+    this.stmtInsert.run(BigInt(label), this.float32ToBuffer(normalized));
   }
 
   search(vector: Float32Array, k: number): VectorSearchResult[] {
@@ -145,196 +152,67 @@ export class VectorDB {
       throw new Error('VectorDB not initialized. Call initialize() first.');
     }
 
-    // Validate dimensions
     this.assertDimensions(vector);
 
-    // Normalize query vector
-    const normalizedQuery = this.normalizeVector(vector);
+    const normalized = this.normalizeVector(vector);
+    const rows = this.stmtSearch.all(this.float32ToBuffer(normalized), k) as Array<{ rowid: number | bigint; distance: number }>;
 
-    if (this.useHNSW && this.hnswIndex && this.hnswIndex.getCount() > 0) {
-      try {
-        const results = this.hnswIndex.search(normalizedQuery, k);
-        return results.map(r => ({
-          id: '', // Will be resolved by the caller using vector_mappings
-          label: r.label,
-          distance: r.distance,
-          score: r.score
-        }));
-      } catch (error) {
-        console.warn('HNSW search failed, using brute-force fallback:', error);
-        return this.bruteForceSearch(normalizedQuery, k);
-      }
-    }
-
-    // Brute-force fallback
-    return this.bruteForceSearch(normalizedQuery, k);
-  }
-
-  private bruteForceSearch(queryVector: number[], k: number): VectorSearchResult[] {
-    if (this.bruteForceVectors.size === 0) {
-      return [];
-    }
-
-    const results: Array<{ label: number; distance: number; score: number }> = [];
-
-    for (const [label, storedVector] of this.bruteForceVectors.entries()) {
-      const score = this.cosineSimilarity(queryVector, storedVector);
-      const distance = 1 - score;
-      results.push({ label, distance, score });
-    }
-
-    results.sort((a, b) => b.score - a.score);
-    const topK = results.slice(0, Math.min(k, results.length));
-
-    return topK.map(r => ({
-      id: '',
-      label: r.label,
+    return rows.map(r => ({
+      id: '',  // Resolved by caller using vector_mappings
+      label: Number(r.rowid),
       distance: r.distance,
-      score: r.score
+      score: 1 - r.distance
     }));
   }
 
-  /**
-   * Retrieve a stored vector by its label
-   */
-  getVector(label: number): Float32Array | null {
-    if (this.useHNSW && this.hnswIndex) {
-      const vec = this.hnswIndex.getVector(label);
-      if (vec) return new Float32Array(vec);
-    }
-    const bfVec = this.bruteForceVectors.get(label);
-    if (bfVec) return new Float32Array(bfVec);
-    return null;
+  delete(label: number): boolean {
+    if (!this.initialized) return false;
+
+    const result = this.stmtDelete.run(BigInt(label));
+    return result.changes > 0;
   }
 
-  private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) {
-      throw new Error('Vectors must have same dimensions');
-    }
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-
-    const magnitude = Math.sqrt(normA) * Math.sqrt(normB);
-    if (magnitude === 0) return 0;
-
-    return dotProduct / magnitude;
-  }
-
-  async save(): Promise<void> {
+  update(label: number, vector: Float32Array): boolean {
     if (!this.initialized) {
       throw new Error('VectorDB not initialized. Call initialize() first.');
     }
 
-    const dir = dirname(this.config.indexPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    this.assertDimensions(vector);
+
+    if (!this.has(label)) {
+      return false;
     }
 
-    if (this.useHNSW && this.hnswIndex) {
-      // Save HNSW index (preserves graph structure)
-      const serialized = this.hnswIndex.serialize();
-      writeFileSync(
-        this.config.indexPath,
-        JSON.stringify({
-          type: 'hnsw',
-          data: serialized
-        })
-      );
-    } else {
-      // Save brute-force data
-      const data: StoredVector[] = [];
-      for (const [label, vector] of this.bruteForceVectors.entries()) {
-        data.push({ label, vector });
-      }
-      writeFileSync(
-        this.config.indexPath,
-        JSON.stringify({
-          type: 'brute-force',
-          data
-        })
-      );
-    }
+    const { isValid } = this.validateL2Norm(vector);
+    const normalized = isValid ? vector : this.normalizeVector(vector);
+
+    // sqlite-vec doesn't support in-place update; delete + re-insert
+    this.stmtDelete.run(BigInt(label));
+    this.stmtInsert.run(BigInt(label), this.float32ToBuffer(normalized));
+    return true;
   }
 
-  async load(): Promise<void> {
-    if (!existsSync(this.config.indexPath)) {
-      throw new Error(`Index file not found: ${this.config.indexPath}`);
-    }
-
-    const content = readFileSync(this.config.indexPath, 'utf-8').trim();
-    if (!content) {
-      // Empty file - treat as no data (will be recreated on next save)
-      console.warn(`VectorDB: Index file is empty, will rebuild: ${this.config.indexPath}`);
-      return;
-    }
-    const parsed = JSON.parse(content);
-
-    // Handle legacy format (array of StoredVector)
-    if (Array.isArray(parsed)) {
-      // Legacy brute-force format - migrate to HNSW
-      for (const item of parsed as StoredVector[]) {
-        if (this.useHNSW && this.hnswIndex) {
-          this.hnswIndex.add(item.label, item.vector);
-        }
-        this.bruteForceVectors.set(item.label, item.vector);
-      }
-      return;
-    }
-
-    // New format with type indicator
-    if (parsed.type === 'hnsw' && this.hnswIndex) {
-      this.hnswIndex = HNSWIndex.deserialize(parsed.data);
-      this.useHNSW = true;
-    } else if (parsed.type === 'brute-force' || !parsed.type) {
-      // Brute-force or unknown format
-      const data = parsed.data || parsed;
-      if (Array.isArray(data)) {
-        for (const item of data as StoredVector[]) {
-          if (this.useHNSW && this.hnswIndex) {
-            this.hnswIndex.add(item.label, item.vector);
-          }
-          this.bruteForceVectors.set(item.label, item.vector);
-        }
-      }
-    }
-
-    this.initialized = true;
+  has(label: number): boolean {
+    if (!this.initialized) return false;
+    const row = this.stmtHas.get(BigInt(label));
+    return row !== undefined;
   }
 
-  private async loadBruteForce(): Promise<void> {
-    if (!existsSync(this.config.indexPath)) {
-      return;
-    }
+  getVector(label: number): Float32Array | null {
+    if (!this.initialized) return null;
 
-    const content = readFileSync(this.config.indexPath, 'utf-8').trim();
-    if (!content) {
-      console.warn(`VectorDB: Index file is empty, skipping brute-force load: ${this.config.indexPath}`);
-      return;
-    }
-    const parsed = JSON.parse(content);
+    const row = this.stmtGetVector.get(BigInt(label)) as { embedding: Buffer } | undefined;
+    if (!row) return null;
 
-    // Handle both legacy and new formats
-    const data = Array.isArray(parsed) ? parsed : (parsed.data || []);
-
-    this.bruteForceVectors.clear();
-    for (const item of data as StoredVector[]) {
-      this.bruteForceVectors.set(item.label, item.vector);
-    }
+    // Convert Buffer back to Float32Array
+    const buf = row.embedding;
+    return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
   }
 
   getCount(): number {
-    if (this.useHNSW && this.hnswIndex) {
-      return this.hnswIndex.getCount();
-    }
-    return this.bruteForceVectors.size;
+    if (!this.initialized) return 0;
+    const row = this.stmtCount.get() as { cnt: number };
+    return row.cnt;
   }
 
   getMaxElements(): number {
@@ -345,122 +223,149 @@ export class VectorDB {
     return this.config.dimensions;
   }
 
-  setEfSearch(ef: number): void {
-    if (this.useHNSW && this.hnswIndex) {
-      this.hnswIndex.setEfSearch(ef);
-    }
+  clear(): void {
+    if (!this.initialized) return;
+
+    this.db.exec('DROP TABLE IF EXISTS vec_vectors');
+    this.db.exec(`
+      CREATE VIRTUAL TABLE vec_vectors
+      USING vec0(embedding float[${this.config.dimensions}] distance_metric=cosine)
+    `);
+    this.prepareStatements();
+  }
+
+  // No-ops: sqlite-vec auto-persists via SQLite WAL
+  async save(): Promise<void> { /* no-op */ }
+  async load(): Promise<void> { /* no-op */ }
+  setEfSearch(_ef: number): void { /* no-op */ }
+
+  isUsingHNSW(): boolean {
+    return false;
   }
 
   getStats(): {
     currentCount: number;
     maxElements: number;
     dimensions: number;
-    efSearch: number;
-    M: number;
-    spaceName: string;
-    searchMode: 'hnsw' | 'brute-force';
-    hnswStats?: {
-      nodeCount: number;
-      maxLevel: number;
-      avgConnections: number;
-    };
+    searchMode: 'sqlite-vec';
   } {
-    const base = {
+    return {
       currentCount: this.getCount(),
       maxElements: this.config.maxElements,
       dimensions: this.config.dimensions,
-      efSearch: this.config.efSearch,
-      M: this.config.M,
-      spaceName: this.config.spaceName,
-      searchMode: (this.useHNSW ? 'hnsw' : 'brute-force') as 'hnsw' | 'brute-force'
+      searchMode: 'sqlite-vec'
     };
-
-    if (this.useHNSW && this.hnswIndex) {
-      const hnswStats = this.hnswIndex.getStats();
-      return {
-        ...base,
-        hnswStats: {
-          nodeCount: hnswStats.nodeCount,
-          maxLevel: hnswStats.maxLevel,
-          avgConnections: hnswStats.avgConnections
-        }
-      };
-    }
-
-    return base;
   }
 
-  delete(label: number): boolean {
-    let deleted = false;
-
-    if (this.useHNSW && this.hnswIndex) {
-      deleted = this.hnswIndex.delete(label);
+  /**
+   * Migrate vectors from legacy vectors.hnsw JSON file.
+   * Called once during initialize() if the file exists.
+   */
+  migrateFromHNSW(hnswPath: string): { migrated: number; skipped: boolean } {
+    if (!existsSync(hnswPath)) {
+      return { migrated: 0, skipped: true };
     }
 
-    // Also delete from brute-force backup
-    if (this.bruteForceVectors.has(label)) {
-      this.bruteForceVectors.delete(label);
-      deleted = true;
+    // If vec_vectors already has data, skip migration and just rename the file
+    const existing = this.getCount();
+    if (existing > 0) {
+      console.log(`[VectorDB] vec_vectors already has ${existing} vectors, skipping HNSW migration`);
+      try {
+        renameSync(hnswPath, hnswPath + '.migrated');
+      } catch { /* ignore rename errors */ }
+      return { migrated: 0, skipped: true };
     }
 
-    return deleted;
-  }
-
-  update(label: number, vector: Float32Array): boolean {
-    if (!this.initialized) {
-      throw new Error('VectorDB not initialized. Call initialize() first.');
-    }
-
-    // Validate dimensions
-    this.assertDimensions(vector);
-
-    // Normalize vector
-    const { isValid } = this.validateL2Norm(vector);
-    const normalizedVector = isValid ? Array.from(vector) : this.normalizeVector(vector);
-
-    if (this.useHNSW && this.hnswIndex) {
-      if (!this.hnswIndex.has(label)) {
-        return false;
+    let content: string;
+    try {
+      content = readFileSync(hnswPath, 'utf-8').trim();
+      if (!content) {
+        console.warn('[VectorDB] HNSW file is empty, skipping migration');
+        try { renameSync(hnswPath, hnswPath + '.migrated'); } catch { /* ignore */ }
+        return { migrated: 0, skipped: true };
       }
-      // HNSW doesn't support in-place update, so delete and re-add
-      this.hnswIndex.delete(label);
-      this.hnswIndex.add(label, normalizedVector);
+    } catch (err) {
+      console.warn('[VectorDB] Failed to read HNSW file, skipping migration:', err);
+      return { migrated: 0, skipped: true };
     }
 
-    // Update brute-force backup
-    if (this.bruteForceVectors.has(label)) {
-      this.bruteForceVectors.set(label, normalizedVector);
-      return true;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch (err) {
+      console.warn('[VectorDB] HNSW file is corrupted JSON, skipping migration:', err);
+      try { renameSync(hnswPath, hnswPath + '.corrupted'); } catch { /* ignore */ }
+      return { migrated: 0, skipped: true };
     }
 
-    return this.useHNSW && this.hnswIndex ? true : false;
-  }
+    // Extract vectors from all 3 legacy formats
+    const vectors: Array<{ label: number; vector: number[] }> = [];
 
-  has(label: number): boolean {
-    if (this.useHNSW && this.hnswIndex) {
-      return this.hnswIndex.has(label);
+    if (Array.isArray(parsed)) {
+      // Legacy brute-force format: [{label, vector}]
+      for (const item of parsed as Array<{ label: number; vector: number[] }>) {
+        if (item.label !== undefined && Array.isArray(item.vector)) {
+          vectors.push(item);
+        }
+      }
+    } else if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      if (obj.type === 'hnsw' && obj.data && typeof obj.data === 'object') {
+        // HNSW serialized format: {type:'hnsw', data:{nodes:[{id, vector}]}}
+        const data = obj.data as Record<string, unknown>;
+        if (Array.isArray(data.nodes)) {
+          for (const node of data.nodes as Array<{ id: number; vector: number[] }>) {
+            if (node.id !== undefined && Array.isArray(node.vector)) {
+              vectors.push({ label: node.id, vector: node.vector });
+            }
+          }
+        }
+      } else if (obj.type === 'brute-force' && Array.isArray(obj.data)) {
+        // Brute-force wrapped: {type:'brute-force', data:[{label, vector}]}
+        for (const item of obj.data as Array<{ label: number; vector: number[] }>) {
+          if (item.label !== undefined && Array.isArray(item.vector)) {
+            vectors.push(item);
+          }
+        }
+      }
     }
-    return this.bruteForceVectors.has(label);
-  }
 
-  clear(): void {
-    if (this.useHNSW && this.hnswIndex) {
-      this.hnswIndex.clear();
+    if (vectors.length === 0) {
+      console.log('[VectorDB] No vectors found in HNSW file');
+      try { renameSync(hnswPath, hnswPath + '.migrated'); } catch { /* ignore */ }
+      return { migrated: 0, skipped: true };
     }
-    this.bruteForceVectors.clear();
-  }
 
-  /**
-   * Check if HNSW is being used (vs brute-force fallback)
-   */
-  isUsingHNSW(): boolean {
-    return this.useHNSW && this.hnswIndex !== null;
-  }
+    console.log(`[VectorDB] Migrating ${vectors.length} vectors from HNSW to sqlite-vec...`);
 
-  /**
-   * Get the raw HNSW index for advanced operations
-   */
-  getHNSWIndex(): HNSWIndex | null {
-    return this.hnswIndex;
+    // Batch INSERT in a transaction
+    let migrated = 0;
+    const insertTxn = this.db.transaction(() => {
+      for (const { label, vector } of vectors) {
+        if (vector.length !== this.config.dimensions) {
+          console.warn(`[VectorDB] Skipping vector ${label}: dimension mismatch (${vector.length} != ${this.config.dimensions})`);
+          continue;
+        }
+        const f32 = new Float32Array(vector);
+        const normalized = this.normalizeVector(f32);
+        try {
+          this.stmtInsert.run(BigInt(label), this.float32ToBuffer(normalized));
+          migrated++;
+        } catch (err) {
+          console.warn(`[VectorDB] Failed to migrate vector ${label}:`, err);
+        }
+      }
+    });
+    insertTxn();
+
+    console.log(`[VectorDB] Migration complete: ${migrated}/${vectors.length} vectors migrated`);
+
+    // Rename the old file
+    try {
+      renameSync(hnswPath, hnswPath + '.migrated');
+      console.log(`[VectorDB] Renamed ${hnswPath} → ${hnswPath}.migrated`);
+    } catch { /* ignore rename errors */ }
+
+    return { migrated, skipped: false };
   }
 }

@@ -7,7 +7,7 @@
 import { config as loadDotenv } from 'dotenv';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import type { MemoryEngineConfig, HNSWConfig, EmbeddingConfig, StorageConfig, LScoreConfig, CodexLLMConfig } from './types.js';
+import type { MemoryEngineConfig, VectorConfig, EmbeddingConfig, StorageConfig, LScoreConfig, CodexLLMConfig } from './types.js';
 import type { ProviderConfig, DepartmentConfig } from '../providers/types.js';
 
 // Get the directory where this module is located
@@ -30,12 +30,8 @@ export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {
   // Resolve relative paths against god-agent root, not process.cwd()
   const baseDir = rawDir.startsWith('.') ? resolve(godAgentRoot, rawDir) : rawDir;
 
-  const hnswConfig: HNSWConfig = {
+  const vectorConfig: VectorConfig = {
     maxElements: parseInt(process.env.RUBIX_HNSW_MAX_ELEMENTS ?? '100000', 10),
-    efConstruction: parseInt(process.env.RUBIX_HNSW_EF_CONSTRUCTION ?? '200', 10),
-    efSearch: parseInt(process.env.RUBIX_HNSW_EF_SEARCH ?? '100', 10),
-    M: parseInt(process.env.RUBIX_HNSW_M ?? '16', 10),
-    spaceName: 'cosine'
   };
 
   const embeddingConfig: EmbeddingConfig = {
@@ -48,7 +44,6 @@ export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {
 
   const storageConfig: StorageConfig = {
     sqlitePath: join(baseDir, 'memory.db'),
-    indexPath: join(baseDir, 'vectors.hnsw'),
     enableWAL: true
   };
 
@@ -62,7 +57,7 @@ export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {
   return {
     dataDir: baseDir,
     vectorDimensions: embeddingConfig.dimensions,
-    hnswConfig,
+    vectorConfig,
     embeddingConfig,
     storageConfig,
     lScoreConfig
@@ -80,8 +75,8 @@ export function validateConfig(config: MemoryEngineConfig): string[] {
     errors.push('vectorDimensions must be positive');
   }
 
-  if (config.hnswConfig.maxElements <= 0) {
-    errors.push('hnswConfig.maxElements must be positive');
+  if (config.vectorConfig.maxElements <= 0) {
+    errors.push('vectorConfig.maxElements must be positive');
   }
 
   if (config.lScoreConfig.depthDecay <= 0 || config.lScoreConfig.depthDecay > 1) {
@@ -102,7 +97,7 @@ export function mergeConfig(
   return {
     ...base,
     ...overrides,
-    hnswConfig: { ...base.hnswConfig, ...overrides.hnswConfig },
+    vectorConfig: { ...base.vectorConfig, ...overrides.vectorConfig },
     embeddingConfig: { ...base.embeddingConfig, ...overrides.embeddingConfig },
     storageConfig: { ...base.storageConfig, ...overrides.storageConfig },
     lScoreConfig: { ...base.lScoreConfig, ...overrides.lScoreConfig }

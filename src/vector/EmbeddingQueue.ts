@@ -138,9 +138,6 @@ export class EmbeddingQueue {
         }
       }
 
-      // Persist vector index
-      await this.vectorDb.save();
-
     } catch (error) {
       console.error('[EmbeddingQueue] Batch embedding failed:', error);
       // Mark all as failed

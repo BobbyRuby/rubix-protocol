@@ -260,7 +260,7 @@ describe('Phase 6: SQLite Access Tracking', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });

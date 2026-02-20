@@ -37,7 +37,7 @@ describe('Phase 7: EgoGraphExtractor', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });
@@ -407,7 +407,7 @@ describe('Phase 7: EnhancementLayer', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });

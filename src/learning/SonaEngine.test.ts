@@ -40,7 +40,7 @@ describe('SonaEngine', () => {
 
   beforeEach(() => {
     testDbPath = uniqueDbPath('sona');
-    storage = new SQLiteStorage({ sqlitePath: testDbPath, indexPath: testDbPath + '.idx', enableWAL: false });
+    storage = new SQLiteStorage({ sqlitePath: testDbPath, enableWAL: false });
     sona = new SonaEngine(storage);
   });
 
@@ -226,7 +226,7 @@ describe('TrajectoryStore', () => {
 
   beforeEach(() => {
     testDbPath = uniqueDbPath('trajectory');
-    storage = new SQLiteStorage({ sqlitePath: testDbPath, indexPath: testDbPath + '.idx', enableWAL: false });
+    storage = new SQLiteStorage({ sqlitePath: testDbPath, enableWAL: false });
     trajectoryStore = new TrajectoryStore(storage);
     trajectoryStore.initialize();
   });
@@ -286,7 +286,7 @@ describe('WeightManager', () => {
 
   beforeEach(() => {
     testDbPath = uniqueDbPath('weights');
-    storage = new SQLiteStorage({ sqlitePath: testDbPath, indexPath: testDbPath + '.idx', enableWAL: false });
+    storage = new SQLiteStorage({ sqlitePath: testDbPath, enableWAL: false });
     weightManager = new WeightManager(storage);
     weightManager.initialize();
   });
@@ -348,7 +348,7 @@ describe('EWCRegularizer', () => {
 
   beforeEach(() => {
     testDbPath = uniqueDbPath('ewc');
-    storage = new SQLiteStorage({ sqlitePath: testDbPath, indexPath: testDbPath + '.idx', enableWAL: false });
+    storage = new SQLiteStorage({ sqlitePath: testDbPath, enableWAL: false });
     weightManager = new WeightManager(storage);
     weightManager.initialize();
     ewc = new EWCRegularizer(weightManager);

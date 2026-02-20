@@ -31,7 +31,7 @@ describe('Phase 4: Provenance Threshold Enforcement', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       },
       // Enable threshold enforcement with default 0.3 threshold
@@ -154,7 +154,7 @@ describe('Phase 4: Pattern Success Tracking', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });
@@ -240,7 +240,7 @@ describe('Phase 4: Pattern Pruning', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });
@@ -373,7 +373,7 @@ describe('Phase 4: Threshold Disabled', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       },
       // Disable threshold enforcement

@@ -42,7 +42,7 @@ describe('Phase 9: TaskStore', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });
@@ -477,7 +477,7 @@ describe('Phase 9: ContextBuilder', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });
@@ -645,7 +645,7 @@ describe('Phase 9: SchedulerDaemon', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });

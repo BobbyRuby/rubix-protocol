@@ -200,19 +200,18 @@ export interface VectorDBStats {
 export interface MemoryEngineConfig {
   dataDir: string;
   vectorDimensions: number;
-  hnswConfig: HNSWConfig;
+  vectorConfig: VectorConfig;
   embeddingConfig: EmbeddingConfig;
   storageConfig: StorageConfig;
   lScoreConfig: LScoreConfig;
 }
 
-export interface HNSWConfig {
+export interface VectorConfig {
   maxElements: number;
-  efConstruction: number;
-  efSearch: number;
-  M: number;
-  spaceName: 'l2' | 'ip' | 'cosine';
 }
+
+/** @deprecated Use VectorConfig instead */
+export type HNSWConfig = VectorConfig;
 
 export interface EmbeddingConfig {
   provider: 'openai' | 'local';
@@ -224,7 +223,6 @@ export interface EmbeddingConfig {
 
 export interface StorageConfig {
   sqlitePath: string;
-  indexPath: string;
   enableWAL: boolean;
 }
 

@@ -6,7 +6,7 @@
  */
 
 import { existsSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 import { SQLiteStorage } from '../storage/SQLiteStorage.js';
@@ -164,15 +164,13 @@ export class MemoryEngine {
     // Initialize components
     this.storage = new SQLiteStorage(this.config.storageConfig);
 
-    this.vectorDb = new VectorDB({
-      dimensions: this.config.vectorDimensions,
-      maxElements: this.config.hnswConfig.maxElements,
-      efConstruction: this.config.hnswConfig.efConstruction,
-      efSearch: this.config.hnswConfig.efSearch,
-      M: this.config.hnswConfig.M,
-      spaceName: this.config.hnswConfig.spaceName,
-      indexPath: this.config.storageConfig.indexPath
-    });
+    this.vectorDb = new VectorDB(
+      {
+        dimensions: this.config.vectorDimensions,
+        maxElements: this.config.vectorConfig.maxElements,
+      },
+      this.storage.getDb()
+    );
 
     this.embeddings = new EmbeddingService({
       provider: this.config.embeddingConfig.provider,
@@ -251,6 +249,11 @@ export class MemoryEngine {
     if (this.initialized) return;
 
     await this.vectorDb.initialize();
+
+    // Auto-migrate from legacy vectors.hnsw if it exists
+    const hnswPath = join(this.config.dataDir, 'vectors.hnsw');
+    this.vectorDb.migrateFromHNSW(hnswPath);
+
     await this.causal.initialize();
     this.sona.initialize();
     this.memrl.initialize();
@@ -297,7 +300,6 @@ export class MemoryEngine {
         this.storage.clearPendingEmbedding(successIds);
       }
 
-      await this.vectorDb.save();
       console.log(`[MemoryEngine] Recovered ${result.processed} embeddings (${result.failed.length} failed)`);
     }
 
@@ -412,7 +414,6 @@ export class MemoryEngine {
         if (successIds.length > 0) {
           this.storage.clearPendingEmbedding(successIds);
         }
-        await this.vectorDb.save();
       }
     }
 
@@ -493,11 +494,6 @@ export class MemoryEngine {
     // OPTIMIZED: Invalidate query cache when data changes
     this.queryCache.invalidate();
 
-    // Save vector index if we modified it
-    if (updates.content !== undefined && updates.content !== entry.content) {
-      await this.vectorDb.save();
-    }
-
     return this.storage.getEntry(id);
   }
 
@@ -542,7 +538,8 @@ export class MemoryEngine {
 
     // Search vector index - fetch more candidates for MemRL Phase A/B ranking
     // MemRL needs more candidates to effectively apply Q-value re-ranking
-    const searchLimit = tagCandidates ? 5000 : Math.max(topK * 5, 50);
+    // Cap at 4096 — sqlite-vec KNN hard limit
+    const searchLimit = Math.min(tagCandidates ? 4096 : Math.max(topK * 5, 50), 4096);
     const vectorResults = this.vectorDb.search(embedding, searchLimit);
 
     // ============================================
@@ -1565,15 +1562,13 @@ export class MemoryEngine {
     this.storage.clearAllVectorMappings();
 
     // Create new VectorDB with proper config
-    this.vectorDb = new VectorDB({
-      dimensions: this.config.vectorDimensions,
-      maxElements: this.config.hnswConfig.maxElements,
-      efConstruction: this.config.hnswConfig.efConstruction,
-      efSearch: this.config.hnswConfig.efSearch,
-      M: this.config.hnswConfig.M,
-      spaceName: this.config.hnswConfig.spaceName,
-      indexPath: this.config.storageConfig.indexPath
-    });
+    this.vectorDb = new VectorDB(
+      {
+        dimensions: this.config.vectorDimensions,
+        maxElements: this.config.vectorConfig.maxElements,
+      },
+      this.storage.getDb()
+    );
     await this.vectorDb.initialize();
 
     // Re-add vectors for remaining entries
@@ -1583,7 +1578,6 @@ export class MemoryEngine {
       this.vectorDb.add(label, embedding);
     }
 
-    await this.vectorDb.save();
     console.log('[MemoryEngine] Vector index rebuilt successfully');
   }
 
@@ -1614,13 +1608,6 @@ export class MemoryEngine {
     console.log(`[MemoryEngine] Flushing ${this.embeddingQueue.pendingCount} pending embeddings...`);
     const result = await this.embeddingQueue.flush();
 
-    if (result.processed > 0) {
-      // Clear pending flags for successfully embedded entries
-      // Note: We can't easily get the IDs here since they're already removed from queue
-      // The clearPendingEmbedding happens in store() after threshold flush
-      await this.vectorDb.save();
-    }
-
     return result.processed;
   }
 
@@ -1642,7 +1629,6 @@ export class MemoryEngine {
     }
     this.embeddingQueue.stopPeriodicFlush();
 
-    await this.vectorDb.save();
     this.storage.close();
     this.initialized = false;
   }

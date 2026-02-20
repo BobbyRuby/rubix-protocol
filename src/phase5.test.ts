@@ -30,7 +30,7 @@ describe('Phase 5: Temporal Hyperedges', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });

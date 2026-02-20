@@ -439,7 +439,7 @@ describe('Phase 8: MemoryEngine Routing Integration', () => {
     engine = new MemoryEngine({
       storageConfig: {
         sqlitePath: testDbPath,
-        indexPath: testDbPath + '.idx',
+
         enableWAL: false
       }
     });
