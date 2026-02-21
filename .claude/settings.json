@@ -11,17 +11,7 @@
       "Bash(git commit:*)",
       "Bash(git push:*)"
     ],
-    "deny": [
-      "Bash(rm *)",
-      "Bash(rmdir *)",
-      "Bash(sudo rm *)",
-      "Bash(sudo rmdir *)",
-      "Bash(git rm *)",
-      "Bash(git branch -D *)",
-      "Bash(git push --force *)",
-      "Bash(git reset --hard *)",
-      "Bash(git checkout -- *)"
-    ]
+    "deny": []
   },
   "enableAllProjectMcpServers": true,
   "hooks": {
