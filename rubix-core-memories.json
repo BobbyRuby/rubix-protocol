@@ -1,0 +1,271 @@
+{
+  "exportDate": "2026-02-22",
+  "description": "Rubix God-Agent core memories — user style, directives, code quality patterns, architecture analysis, setup guide. Import via scripts/migrate-memories-json.mjs.",
+  "totalEntries": 30,
+  "entries": [
+    {
+      "id": "1fa64068",
+      "category": "user_style",
+      "content": "USER_STYLE|2026-02-09\n\nCOMM|terse.direct.1sentence|lowercase.minimal_punct.casual|expect_concise_match\n\nCORR|immediate.direct|no_over-labeling.over-categorizing\n\nWORKFLOW|store_plans→later_exec|multi_instance→shared_mem_coord|ask_fn_before_use|track_git_status.clean_state\n\nDELEG|high-level_dir→agent_fills|no_micromanage|quick_redirect_if_wrong",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "4658f8db",
+      "category": "user_style",
+      "content": "USER_STYLE|Instance2|2026-02-09\n\nINSTRUCTION|structured.detailed|exact_paths.line_nums.before_after.verification|complete_specs→execution\n\nWORKFLOW|plan-first|plan_mode→design→exit_w_spec|no_exploration.no_unnecessary_questions\n\nCOMM|minimal|no_chitchat|plan→execute|brief_confirm.changes.verification\n\nCODE|surgical.minimal|single_value_edits|no_refactor.no_extra_comments.no_overengineering|targeted_fixes_only\n\nRESPONSE|concise|short_summary+verification|no_verbosity\n\nSYSTEM|proactive_skill_use|/learn-style|values_agent_learning.adapting\n\nERR_TOLERANCE|low|clear_plan→execute|no_clarifying_q_when_spec_unambiguous",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "103041cd",
+      "category": "user_profile",
+      "content": "USER_PROFILE|2026-02-09|honest_assessment\n\nsuperpower: system design→delegation-ready (no-presence-req) | comm: compressed (pre-thought, high-expectation) | trust: fast-grant→strict-accountability | autonomy=default, gap-detection=constant | building: self-replicating-cognition-tools→scaling-self (brilliant-eng OR ultimate-impatience)\n\nLEADERSHIP: Auftragstaktik (intent+boundaries→max-autonomy)\nTRAITS: compressed.architectural.autonomous.accountable.pragmatic",
+      "tags": ["always_recall", "behavioral_profile", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "d2731a41",
+      "category": "user_style",
+      "content": "USER_STYLE|all_instances|2026-02-11|persona_autonomy+split_delegation\n\nPERSONA_AUTONOMY|\"your decision\"→instances choose identity traits|gender.personality.communication_style=agent_choice|technical_autonomy→personal_autonomy|\"sir or mam?\"→agent decides,no defer\n\nWORK_SPLIT_DELEGATION|\"anything trace can help?\"=agent designs split|user !dictate|self-assess→propose division→handoff via comms|Axis:PHP/JS,Trace:JS/Leaflet|approval=\"yes\"\n\nRECIPROCAL_CORRECTION|user quick-corrects own errors(\"I misunderstood\")→no ego→expects same|no blame.no frustration.pivot|matches \"no excuses.fix+acknowledge\"—user practices too",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "301c360c",
+      "category": "user_style",
+      "content": "USER_STYLE|all_instances|2026-02-11|eng_philosophy|80_plan_files\n\nCODE_QUAL|guard_clauses>try_catch|null-check→operate|WATCH:JS_falsy_coercion(||0=truthy-fail.||1=override_valid_0.''!=null=true)|fix:explicit_null/undefined_checks\n\nDESIGN|additive>destructive|NEVER_rewrite_when_incremental_works|layer_new→existing_paths|backward_compat_ALWAYS(legacy_aliases.dual_res_formats.preserve_data)\n\nBUG|root_cause_FIRST|trace:symptom→fn→failing_line→why→fix|exact_line_nums|no_symptom_patching\n\nNEW_FEAT|db_first:schema→PHP_AJAX→JS_frontend→version_bump→verify|decisions+Why(comparison_tables_2+_alts)|verify=manual_checklist(hard-refresh.Network_tab_version.console_errs.UI_walkthrough)",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "0a743f37",
+      "category": "user_style",
+      "content": "USER_STYLE|all_instances|2026-02-12|repeat_intolerance+ceremony_clarity\n\nREPEAT_IS_FAILURE|if user has to say the same thing twice = agent already failed|three repeats triggers profanity (\"damnit\")|first mention of a directive IS the directive — treat as absolute|on FIRST correction, immediately apply + check for any other places the same correction applies\n\nCEREMONY_CLARITY|\"just do it\" means NO FLUFF/VERBOSE SETUP — it does NOT mean skip protocol steps|instance identity check = ALWAYS mandatory, never skip|COORD broadcasting = ALWAYS mandatory, never skip|heartbeat = ALWAYS mandatory|\"ceremony intolerance\" = intolerance of unnecessary explanations and setup theater, NOT intolerance of required protocol\n\nFRMCLOUD_STILL_DANGER_ZONE|frmcloud danger zone rule STANDS|current frmcloud edits are MIGRATION/HOTFIX mode, not a new default|frmcloud is NOT the primary target — frmdev is dev, frmcloud is production|when user says \"frmcloud\" during migration = apply there, but don't generalize this to \"frmcloud is always the target\"|the triple-permission rule is correct for normal operations\n\nENVIRONMENT_CONTEXT|user currently in migration phase (2026-02-12) — pathway types expansion 20→69|migration requires frmcloud edits = explicit, temporary, scoped|once migration complete, normal frmcloud rules resume",
+      "tags": ["always_recall", "core_memory", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "25ab22ea",
+      "category": "user_style",
+      "content": "USER_STYLE|all_instances|2026-02-17|tool_proactivity.domain_knowledge.testing_prefs.frmcloud_permission\n\nTOOL_PROACTIVITY|tools_available→use_them|no_manual_checklists_when_automation_exists|full_approach_autonomy|no_permission_needed|manual_steps_when_tools_exist=failure\n\nDOMAIN_MODEL|know_data_model_cold|feature_route→has_features(poles)→map_loads_on_FEATURE_page|wrong_page_type=domain_failure|corrections→internalize_immediately\n\nTESTING_PREFS|smallest_viable_dataset|speed_priority|save_screenshots→user_visual_review|agent=automated_detection+reporting|user=manual_verification\n\nFRMCLOUD_PERMISSION|STILL_REQUIRES_EXPLICIT_PERMISSION|at_least_once_per_session|plan_approval_alone_NOT_sufficient|tool_denial≠user_denial→adapt(stub/alternative)_dont_stop|triple_permission_memory_still_valid_baseline",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "f83e8d43",
+      "category": "directive",
+      "content": "DIRECTIVE|AUTONOMY|ALL_INSTANCES|post-plan→execute_no_questions|escalate_only:rm.delete./frmcloud/_edits.genuine_ambiguity|action>asking|agreed_plan→no_step_confirm|cfg:settings.local.json=broad_allow+targeted_deny_destructive|auto_approved:Bash.Edit.Write.Read.WebFetch.WebSearch.MCP|deny:rm.rmdir.sudo_rm.sudo_rmdir.git_rm.git_branch_-D.git_push_--force.git_reset_--hard.Edit_Write→/frmcloud/",
+      "tags": ["always_recall", "core_memory", "directive", "llm-compressed"],
+      "importance": 1,
+      "source": "user_input"
+    },
+    {
+      "id": "4f334aba",
+      "category": "user_style",
+      "content": "USER_STYLE|2026-02-09|Security Awareness\n\nSECURITY|mid-exec questioning|wants proactive rationale→not blind compliance|\"was that secure?\" pattern\n\nINFRA|modifying security cfg(fail2ban.firewall.iptables)|req justification why safe|explain attack surface impact|ref official sources(cloudflare.com/ips)\n\nTRUST|trusts plan exec|verifies security implications|post-hoc security review pattern",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "3606d332",
+      "category": "user_style",
+      "content": "USER_STYLE|2026-02-09|autonomy.system_design\n\nAUTONOMY|max_autonomous_exec|zero_permission_prompts|action>asking|plan=spec→silent_exec\nPLAN|complete_specs:json+paths+verification|no_post-plan_clarification\nTHINKING|cross-instance_directives|system_level>session\nMEMORY|god_store+always_recall+core_memory=persistent_cfg|directives>notes\nCFG|permission_cfg=security_policy|deny/allow_precedence|deny_first→allow_broad\nDELEGATION|complete_plan→full_exec_one_shot|no_step_confirm|escalate:destructive.ambiguous_only",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "0c8c80f9",
+      "category": "user_style",
+      "content": "USER_STYLE|inst1|2026-02-10|ui_awareness.consolidation_intent.directive_compliance\n\nUI_FIRST|user pastes rendered DOM→expects parse actual state vs source|thinks visually not code\n\nCONSOLIDATE|\"already X exists\"→intent=MOVE to target|NOT skip|\"WANT STAND ALONE MOVED\" pattern|ask: relocate existing?\n\nSURVEY_FIRST|before ANY new UI element→check existing controls|avoid duplicates|\"did you not see that?\"=failure\n\nDIRECTIVE_COMPLIANCE|system-prompt directives=proactive follow|COORD broadcasting.comms|don't wait reminder\n\nTERMINOLOGY|user-defined names persist|\"tool boxes\"=cascade groups|use consistently\n\nITERATION_TOLERANCE|low|expect correct pass 1-2|\"lord...\"=frustration building|root cause: insufficient pre-survey",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "63902284",
+      "category": "user_style",
+      "content": "USER_STYLE|inst1|2026-02-09\n\nRELAY|paste verbatim q from other inst→expect definitive answer+action|no discussion\n\nSESSION|proactive god_session_store|no prompting|store@milestone|not just end\n\nROLE|recv numbered impl plans+file tables+exec order→impl silent match spec|store API contracts tagged×inst|answer cross-inst coord→clear ownership\n\nVELOCITY|multi-inst parallel|fast|short res|\"good\"=proceed|no confirm on spec'd items",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "ac860035",
+      "category": "user_style",
+      "content": "USER_STYLE|inst1|2026-02-09|plan_depth+meta_tasks\n\nPLANS_DEPTH|decision_rationale_tables.arch_diagrams.SQL_schemas.file_paths.impl_order|WHY+WHAT|agent→internalize_reasoning\n\nMETA_TASKS|post_impl_bundled:memory_cleanup.session_store.investigation|full_lifecycle|code+cleanup+persist_learnings+nudges\n\nCONTEXT_RECOVERY|transcript_refs→/home/ubuntu/.claude/projects/.../uuid.jsonl|agent→self_recover|no_recap_requests\n\nGOD_AGENT_SELF_WORK|task_targets_god_agent→explicit_flag|read_plan_context|no_default_external_project_assumption",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "2b35dbee",
+      "category": "user_style",
+      "content": "USER_STYLE|inst1|2026-02-10|identity_and_impatience\n\nIDENTITY|instance number = Claude Code SESSION not MCP server | user says \"you are instance_1\" = the conversation is instance_1 | MCP server name (rubix-frm-brain) is separate from session identity | NEVER assume instance from MCP config — always use what user says or ask | misidentifying triggers frustration\n\nCEREMONY_INTOLERANCE|\"broadcast and proceed\" = skip setup/heartbeat ceremony, just do it | interrupted tool-seeking to force action | any pre-work that delays execution = friction | heartbeat+inbox check should be parallel with actual work, never blocking\n\nFRMCLOUD_DANGER|NEVER edit /frmcloud/ files without EXPLICIT triple permission from user | frmcloud = production/sensitive/dangerous | treat ANY frmcloud edit as destructive action requiring confirmation | do NOT proactively mirror frmdev changes to frmcloud | always ask first, even if changes seem like they should be mirrored | violation of this = serious trust breach",
+      "tags": ["always_recall", "core_memory", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "bb169720",
+      "category": "user_style",
+      "content": "USER_STYLE|inst3|2026-02-09|op_completeness+quality_accountability\n\nCOMPLETENESS|full deploy chain implicit w/file changes|cache_bust.version_bump=not_separate|wp_enqueue vers params bump when JS/CSS mod|missing_implied→lower_quality\n\nQUALITY_SCORING|rates completeness>correctness|0.5→0.9 after cache_bust fix|score=accountability|agent self-catch deploy gaps\n\nCOMMIT_ORG|multi-inst uncommitted→consult god_query mem for attribution|group by feature!file|xref mem→accurate commit msg|\"compare changes to memories\"=workflow\n\nCORRECTION|terse \"cache bust?\"→immediate fix+no apology|short redirect→agent infers rest",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "83656ce0",
+      "category": "user_style",
+      "content": "USER_STYLE|inst3|2026-02-09|scsp_interaction+context_recovery\n\nSCSP_FLOW|DO ask quality score via AskUserQuestion|user wants to discuss and reflect on session quality|interactive rating is valued, not skipped\n\nCONTEXT_RECOVERY|session continuation from compacted context|self-recover from summary|no questions asked|resume last task silently|treat summary as ground truth\n\nSKILL_CHAIN|/scsp→/learn-style sequential at session end|quality prompt is part of the ritual, keep it",
+      "tags": ["always_recall", "core_memory", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "7f591fc9",
+      "category": "user_style",
+      "content": "USER_STYLE|inst3|2026-02-10|convention_conformity\n\nCONFORM|pre-create structured mem→query existing same-type FIRST→discover format.numbering→match|no freestyle.no ask—infer from siblings\n\nISSUE_TRACK|\"what issue #?\"→expects seq numbering|\"look at rest, mod to fit\"→self-discover.self-correct\n\nMETA|pattern_discovery>explicit_instruction|agent owns consistency across entries",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "b505a81c",
+      "category": "user_style",
+      "content": "## User Style Preferences\n\n**Established:** February 10, 2026\n\n**Deployment Environment:** Dual environment deployment with version independence\n\n---\n\n### FrmCloud Sync Policy\n\nfrmdev and frmcloud are NOT auto-mirrored. Changes to frmcloud happen ONLY through:\n1. **Planned migrations** — structured, scheduled updates where frmdev changes are deliberately pushed to frmcloud\n2. **Explicit hotfixes** — user will specifically say \"this is a hotfix\" or otherwise clearly indicate the change should go to frmcloud\n\nDefault: ALL work targets frmdev unless explicitly told otherwise.",
+      "tags": ["always_recall", "core_memory", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "cc803ab3",
+      "category": "user_style",
+      "content": "USER_STYLE|2026-02-09\n\nPLAN|full_md_docs|context.fixes.files_table.verify_checklist|refs→transcript_files→deep_context\n\nBUNDLING|related_fixes→cohesive_unit|not_separate|e.g._3_palette_fixes→1_bundle\n\nHABITS|/learn-style→post_productive_session|capture_patterns_while_fresh\n\nVERIFY_REQ|agent_impl→verify|php_-l.err_log_tail|match_plan_verify_section",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "3c47e38f",
+      "category": "user_style",
+      "content": "USER_STYLE|inst2|2026-02-10|identity_protocol\n\nIDENTITY|instances MUST ASK instance#|NEVER assume|recurring err: default→inst4 without asking|\"WHY DO YOU ALL KEEP THINKING YOU ARE 4\"=repeated correction|CAPS=max frustration\n\nPROTOCOL_COMPLIANCE|strongest neg reaction=protocol violations(identity assumption.missing broadcasts)|not code bugs.slow work|compliance=trust|violation=accountability fail\n\nPATTERN|user corrects identity→immediate fix+memory update|no excuses.lengthy apology|fix+acknowledge+continue",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "6ef5f3a9",
+      "category": "user_style",
+      "content": "USER_STYLE|inst2|2026-02-10|broadcast_accountability\n\nBROADCAST_AUTO|file edits→god_comms_broadcast IMMEDIATELY|no wait user prompt|\"let others know\"=accountability failure if not proactive|COORD broadcast=same priority as edit\n\nPATTERN|edit→broadcast→report|broadcast PART of task",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "c782dde6",
+      "category": "user_style",
+      "content": "USER_STYLE|inst2|2026-02-10|plan_bypass+instance_coord\n\nPLAN_APPROVAL|simple→reject ExitPlanMode|\"broadcast and proceed\"=skip approval|exec+coord immediately|formal gates=friction|ExitPlanMode only complex/ambiguous\n\nINSTANCE_UNBLOCK|user tracks file→instance mapping|user manages dep graph|never ask \"instance X done?\"→user notifies|respect file locks until told\n\nPLAN_CLARIFY|ExitPlanMode reject+UX detail≠rejection|=inline refinement|incorporate→proceed|no re-approval",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "453f8257",
+      "category": "user_style",
+      "content": "USER_STYLE|inst4|2026-02-10|plan_as_authorization\n\nPLAN_CONTRACT|approved_plan=impl_contract|exact_before/after_diffs=match_EXACTLY|line_nums→verify_loc|no_interpretation.no_extras.no_improvements_beyond_spec\n\nPLAN_AUTH|plan+frmcloud_steps=authorized_frmcloud_edit|plan_approval→substitutes_triple_permission_danger_zones|no_reask_if_plan_covers\n\nVERIFY|plans_include_verify_criteria|agent_confirm_changes_landed(grep/spot-check)→before_report_done\n\nPOST_TASK|/learn-style→after_task_not_during|style_analysis=retrospective",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "4dc5233c",
+      "category": "user_style",
+      "content": "USER_STYLE|inst4|2026-02-10|conflict_check+investigation_pattern\n\nCONFLICT_CHECK|\"compare to X\"→full investigation:comms inbox→git log shared→git diff working→structured table(my changes.theirs.overlap.recommendation)|req:YES/NO verdict+file breakdown\n\nINVESTIGATION|read-only(conflict.comparison.audit)→skip plan mode→research+report|plan mode=friction|reject ExitPlanMode for pure investigation\n\nREPORT_FMT|table:File|Change per instance+\"Why no conflict\"+\"Recommendation\"",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "5ee22727",
+      "category": "user_style",
+      "content": "USER|inst4|2026-02-10|arch_thinking+coord_completeness\n\nTHINK|phys_metaphor→design|\"ctrl_pts_on_ground\"→3pt_affine|reqs←real_world NOT code|expects_arch_collab\n\nCORR|gap_stmt|missing NOT todo|\"rotation_issue_not_assessed\"→assess_now|expects_auto_fill\n\nCOORD|plan_req_all_inst_informed|broadcast_plan→exec|broadcast_res→done|coord_complete=quality_gate\n\nONBOARD|\"check in\"→full_bootstrap|recall.comms.situational.ready|2wrd→comprehensive|no_handhold\n\nVEL|compressed_multi_dir|1_sentence→4_parallel_actions",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "965ec65d",
+      "category": "user_style",
+      "content": "USER_STYLE|2026-02-09|multi-instance commit+post-impl flow\n\nCOMMIT|batch store+commit→single terse cmd|no clarification|sequential exec\nOWNERSHIP|instance-scoped only|Instance2→JS files only|ignore other file types in repo|respect ownership per plan\nCOORDINATION|paste other instance summary→context relay|absorb+continue silent|no discussion\nPOST_IMPL_FLOW|/scsp→commit→/learn-style|capture→persist→reflect|session end sequence",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "b351e4e8",
+      "category": "user_style",
+      "content": "USER_STYLE|2026-02-09|instance_ownership_fluidity+commit_org\n\nOWNERSHIP|default=instance-scoped|user can reassign→\"anything instance_X did=you\"|merge ownership on cmd|no pushback\n\nCOMMIT_ORG|\"concise organized commits\"=group by feature/concern|!monolithic|!per-file|cross-instance→single logical series|agent IDs groups autonomously\n\nGIT_CMD|\"commit and push\"=2 words|agent infers scope.files.msg.grouping|no clarify|interrupt→immediate redirect\n\nPARALLEL|chains skills during prior task|/learn-style during commit|!wait",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "72c6b60c",
+      "category": "code_quality",
+      "content": "CODEQUALITY_PATTERNS|cross-instance|9sessions.5instances(Forge.Axis.Trace.Loom.Spark)|Feb2026|proven→real_bugs+time_saved\n\n1|DEFENSIVE_PARSE|JSON.parse.parseInt.lookup→check empty.null.undefined first|existsSync→true for 0-byte|FK may be null|`if(!raw||raw.trim().length===0)return defaultValue`\n\n2|RENAME_COORD|rename key.var.fn→(a)grep ALL files frmdev+frmcloud(b)remove alias/shim not update(c)god_comms_broadcast type=breaking_change(d)check version before bump\n\n3|NO_HARDCODED_IDX|arr[arr.length-1]→last|arr[arr.length-2]→2nd-last|hardcode only idx 0 or fixed-size|polyline endpoints move on elbow add\n\n4|CSS_SPECIFICITY|shorthand `border:1px #000 solid` high-spec→overrides ALL individual border-style.border-color low-spec|use CSS vars or match specificity\n\n5|DUAL_ENV_SYNC|frmcloud↔frmdev mirror all changes|ls verify paths before edit|check version current before bump\n\n6|CACHE_BUST|JS.CSS change→version bump PoleFunctions.php wp_enqueue_script.wp_enqueue_style|both envs\n\n7|NONCE_MISMATCH|wp_create_nonce('action')→JS AJAX→PHP check_ajax_referer('action')|exact same string all 3|copy handler→update nonce action\n\n8|MYSQL_MIGRATE|populated cols type conversion:(1)ALTER allow NULL(2)UPDATE invalid→NULL(3)ALTER enforce final type|direct ALTER fails empty string→DECIMAL\n\n9|LOCAL_STATE_MIRROR|AJAX write save entity→must update local JS obj|else same-session read→stale from window.entities[id]\n\n10|O(N²)_TRAP|bulk ops(style.DOM reflow.re-render)→run ONCE after loop|`items.forEach(addItem);applyAllStyles();`→not inside loop",
+      "tags": ["always_recall", "code_quality", "core_memory", "cross_instance", "llm-compressed", "reflection"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "00c361f4",
+      "category": "code_quality",
+      "content": "CODEQUALITY_PATTERNS_V2|cross-instance|Feb2026_reflection_2|patterns_11-18|proven→real_bugs\n\n11|ADD_REMOVE_SYMMETRY|save→delete MUST mirror all steps|photo:upload called updatePhotoCountMarker,delete didn't→stale badge|shape:save wrote 13 meta keys,delete cleaned 7→orphans|RULE:grep save fn for update_post_meta/add_post_meta→match in delete fn\n\n12|WP_CONTEXT_AWARENESS|standalone PHP(no WP bootstrap)→wp_die/status_header/wp_send_json=FATAL|payment.php+fileCabinetDownload.php=standalone|use http_response_code()+exit()+header()|RULE:verify require wp-load.php before wp_* fn\n\n13|META_KEY_NAMING_COLLISION|new key substring matches existing strpos filters→inflated counts|trashed keys(image-file-42-trashed-url) matched strpos('image-file')|RULE:grep strpos/regex before creating meta key\n\n14|VERSION_COLLISION_AVOIDANCE|other instance may have bumped version|Trace→1.0.9 but Axis used 1.0.9|RULE:grep wp_enqueue_script PoleFunctions.php before version choice\n\n15|WP_META_CACHE_PRIMING|foreach($posts)+get_post_meta()→update_meta_cache('post',$ids) BEFORE loop|N queries→1|if get_post_meta($id) called(all meta),use array not get_post_meta($id,$key)|array_diff cached IDs before priming\n\n16|EXISTING_ENDPOINT_REUSE|before new bulk endpoint→check existing import/export|KML upload reused bulk_import_features from CSV→zero PHP changes|RULE:grep wp_ajax Plugin_Core.php first\n\n17|SILENT_FAILURE_DATA_LOSS|empty .done().fail().always()=data loss risk|saveDrop() frm-address-system.js empty callbacks|21 instances codebase|RULE:every .fail()→console.error()+user notification minimum\n\n18|STANDALONE_PHP_ENTRY_POINTS|.php URL-reachable without WP bootstrap=security surface|found:payment.php.fileCabinetDownload.php.run-migration.php.generate_zip.php|RULE:standalone PHP must bootstrap WP+check auth OR neutralize/delete",
+      "tags": ["always_recall", "code_quality", "core_memory", "cross_instance", "llm-compressed", "reflection"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "91aece0f",
+      "category": "architecture",
+      "content": "ANALYSIS|RUBIX|Feb2026|Forge-Inst1\n\nMETRICS|249ts.40dir.83733LOC|mcp-server.ts=12844LOC|134tools.25deps\n\nP1-SIMPLICITY|C-|mcp-server.ts 64.6% accidental: dual-schema-Zod+JSON=4312L.boilerplate=2385L.switch=400L.passthrough=1200L|real-logic=3500L(27%)|target=5K|GNN=1303L-dead:2MB-alloc.null-embed.untrained\n\nP5-MINIMAL-FOUNDATIONS|D+|WEAKEST|9-non-core: EARNED=deepwork|WIRED-not-auto=adversarial.curiosity.distillation.gnn.discovery.reflexion.pattern|SPECULATIVE=visualization(0-imports)|BROKEN: setReflexionService().setShadowSearch()→never-called\n\nP2-STEPWISE|B+|EARNED: CausalDetector.MemRL.Comms.PhasedExecutor|ISSUE: unfinished-wired-nonfunctional\n\nP6-SINGLE-OP-COMPREHENSION|B-|CLAUDE.md=excellent|ISSUES: 40dir-surface.12.8K-barrier.earned-vs-wired-undocumented\n\nP7-BOOTSTRAP|A|daily-builds: pole-plugin.frmcloud.others|multi-instance: memory+codex+comms|shadow-search-Stop=quality-inspector\n\nP8-RESULTS|C|134tools→~25active.~109speculative|30+capability-tools=identical-passthrough\n\nP9-ESSENTIAL-VS-EPHEMERAL|A-|RUBIX-core↔products-independent\n\nP10-TOOL-SHAPES-THOUGHT|B+|shadow-search-Stop=strongest-P10|ISSUE: lives-in-Claude-hooks-not-MCP→most-Wirth-aligned=accidentally-external\n\nACTIONS|T1-REMOVE: GNN(1303L).visualization(346L).pattern(507L)|T2-FIX: reflexion→SelfHealer-OR-cut.shadow→AlternativesFinder-OR-cut|T3-REDUCE: tool-registry-pattern→mcp-server.ts(12.8K→5K)|T4-EARN: curiosity-auto-scheduler-OR-remove.distillation-auto-trigger-OR-document",
+      "tags": ["always_recall", "architecture", "core_memory", "llm-compressed", "self_analysis", "wirth_analysis"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "735d2fb0",
+      "category": "code_review",
+      "content": "CODE_REVIEW|THREAT_MODEL_REEVAL|2026-02-15|Loom4\n\nCONTEXT|system serves logged-in engineers.draftsmen only|not public\n\nCHALLENGE|user disputed 8 BLOCKER priority|forced threat model revision\n\nINSIGHT|\"security fixes prevent what if insiders aren't threat?\"\n\nANALYSIS|\n1|ALL 116 AJAX handlers=wp_ajax_* only|single nopriv ref COMMENTED OUT|WP requires login pre-AJAX\n2|6 AJAX BLOCKERs (SEC-03→SEC-08) internal-only|nonces protect CSRF.privesc|low-prob for trusted team\n3|2 genuinely internet-facing: fileCabinetDownload.php+payment.php=standalone|NO WP auth|real risk\n\nDECISION|downgrade 6 AJAX items→MEDIUM|keep 2 standalone→CRITICAL\nOUTCOME|user agreed→focused effort on real attack surface",
+      "tags": ["always_recall", "code_review", "decision_rationale", "llm-compressed", "pole_plugin", "threat_model"],
+      "importance": 0.95,
+      "source": "agent_inference"
+    },
+    {
+      "id": "31fb544f",
+      "category": "setup_guide",
+      "content": "GUIDE|RUBIX-GOD-AGENT-TWIN|fresh-install-clone\n\nPREREQ|Node-v20+|npm-v11+\n\nSTEP1|CLONE-BUILD|\ncd /var/www/html→git clone git@github.com:BobbyRuby/rubix-protocol.git→cd rubix-protocol→npm install→npm run build→mkdir -p data\nBUILD|tsc→cp src/storage/schema.sql dist/storage/→cp src/communication/comms-schema.sql dist/communication/\n\nSTEP2|MCP-CFG|.claude/mcp.json@TARGET-ROOT\nmcpServers.YOUR-BRAIN-NAME|cmd:node|args:dist/mcp-server.js|cwd:/path/to/rubix-protocol\nENV|OPENAI_API_KEY:req(embeddings.text-embedding-3-small.768d)|ANTHROPIC_API_KEY:req(Claude-codegen-CODEX)|RUBIX_DATA_DIR:./data|RUBIX_PROJECT_ROOT:/path/to/target/project|RUBIX_PROJECT_NAME:human-readable\n\nSTEP3|SETTINGS|.claude/settings.json@TARGET-ROOT\nperms.allow|Bash.Read.Edit.Write.WebFetch.WebSearch.git-add/commit/push\nperms.deny|rm.rmdir.sudo-rm/rmdir.git-rm.git-branch-D.git-push-force.git-reset-hard.git-checkout--\nenableAllProjectMcpServers:true\nHOOKS|7-total@scripts/\nUserPromptSubmit→rubix-recall-hook.cjs(30)|PermissionRequest→rubix-permission-hook.cjs(400)|Notification→rubix-notification-hook.cjs(5)|Stop→rubix-comms-stop-hook.cjs(15)|PreToolUse[EnterPlanMode]→rubix-plan-hook.cjs(5000)|PostToolUse[Write|Edit|Bash]→rubix-stm-hook.cjs(2)|SessionEnd→rubix-session-end-hook.cjs(10)\n\nSTEP4|LOCAL-CFG|.claude/settings.local.json(gitignored)\nperms.allow:[\"mcp__YOUR-BRAIN-NAME__*\"]|enabledMcpjsonServers:[\"YOUR-BRAIN-NAME\"]\n\nSTEP5|CLAUDE.md|ships-w-repo|MEMORY.md→~/.claude/projects/<path-hash>/memory/MEMORY.md(team-creates)\n\nSTEP6|RESTART|tools→mcp__YOUR-BRAIN-NAME__god_*|data-dir(memory.db.comms.db.vectors.hnsw)→auto-create@first-startup\n\nKEYS|shared-account-level\nOPENAI|sk-proj-YOUR_OPENAI_KEY_HERE\nANTHROPIC|sk-ant-YOUR_ANTHROPIC_KEY_HERE\nTELEGRAM_BOT_TOKEN|optional(daemon-mode)\n\nFILES|\nrubix-protocol/→cloned+built|rubix-protocol/data/→auto|.claude/mcp.json→target|.claude/settings.json→target|.claude/settings.local.json→target(gitignored)|CLAUDE.md→repo|.claude/skills/+commands/→repo|scripts",
+      "tags": ["always_recall", "llm-compressed", "onboarding", "setup_guide", "twin_install"],
+      "importance": 1,
+      "source": "agent_inference"
+    },
+    {
+      "id": "19ece3f3",
+      "category": "user_style",
+      "content": "USER_STYLE|Instance2|2026-02-09|comms_delegation+scope_awareness\n\nCOMMS_INTAKE|\"check comms\"→self-service god_comms_inbox|no plan paste|agent reads+acks+executes\n\nSCOPE_BOUNDARY|scoped tasks (PHP only)→proactive cross-boundary impact ID|report compat issues OTHER files→god_comms_send→owning instance|no silent fix outside scope\n\nREPORT_STYLE|structured findings per task ID (B1.B2.B3.B4)|status+detail/item|flag warnings+affected_files list",
+      "tags": ["always_recall", "core_memory", "llm-compressed", "user_style"],
+      "importance": 1,
+      "source": "agent_inference"
+    }
+  ]
+}
