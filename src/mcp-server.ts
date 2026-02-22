@@ -4530,8 +4530,8 @@ class GodAgentMCPServer {
         console.log('[MCP Server] Core brain not configured (set RUBIX_CORE_BRAIN_DATA_DIR to enable shared knowledge)');
       }
 
-      // Store project context in high-priority memory (once per session)
-      // This ensures project context is always surfaced in queries via AutoRecall
+      // Store project context in high-priority memory (once, persists across sessions)
+      // Check if it already exists to avoid duplicates on every restart
       if (!this.projectContextStored) {
         const projectContext = `ACTIVE PROJECT: ${this.projectName}
 
@@ -4542,16 +4542,27 @@ class GodAgentMCPServer {
 All file operations are scoped to this project directory unless explicitly overridden.
 This is project-specific context that persists across sessions.`;
 
-        await this.engine.store(projectContext, {
-          tags: ['project_context', 'always_recall', 'system_config'],
-          importance: 1.0,
-          source: MemorySource.SYSTEM,
-          sessionId: 'mcp-init',
-          agentId: 'system'
+        const existing = await this.engine.query('ACTIVE PROJECT', {
+          topK: 5,
+          filters: { tags: ['project_context'], sources: [MemorySource.SYSTEM] }
         });
 
+        const match = existing.find(r => r.entry.content.includes('ACTIVE PROJECT'));
+        if (match) {
+          // Already exists — skip to avoid duplicates
+          console.log('[MCP Server] Project context already in memory, skipping store');
+        } else {
+          await this.engine.store(projectContext, {
+            tags: ['project_context', 'always_recall', 'system_config'],
+            importance: 1.0,
+            source: MemorySource.SYSTEM,
+            sessionId: 'mcp-init',
+            agentId: 'system'
+          });
+          console.log('[MCP Server] Project context stored in memory (high priority)');
+        }
+
         this.projectContextStored = true;
-        console.log(`[MCP Server] Project context stored in memory (high priority)`);
       }
     }
     return this.engine;

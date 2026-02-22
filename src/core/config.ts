@@ -23,6 +23,18 @@ console.log(`[Config] Loading .env from: ${envPath}`);
 console.log(`[Config] process.cwd(): ${process.cwd()}`);
 
 const dotenvResult = loadDotenv({ path: envPath });
+
+// API keys from .env ALWAYS take precedence over inherited process env.
+// This prevents stale keys when the MCP server process inherits an outdated
+// OPENAI_API_KEY from the parent (Claude Code caches mcp.json env at startup).
+const apiKeyOverrides = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'];
+for (const key of apiKeyOverrides) {
+  if (dotenvResult.parsed?.[key] && dotenvResult.parsed[key] !== process.env[key]) {
+    console.log(`[Config] Overriding ${key} from .env (process env had stale value)`);
+    process.env[key] = dotenvResult.parsed[key];
+  }
+}
+
 console.log(`[Config] dotenv result: ${JSON.stringify(dotenvResult)}`);
 
 export function getDefaultConfig(dataDir?: string): MemoryEngineConfig {

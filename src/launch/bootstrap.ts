@@ -136,8 +136,8 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
       console.warn('[Bootstrap] Capability prewarm error:', err.message);
     });
 
-  // 5. Store project context in high-priority memory (optional but recommended)
-  // This ensures project context is always surfaced in queries via AutoRecall
+  // 5. Store project context in high-priority memory (once, persists across sessions)
+  // Check if it already exists to avoid duplicates on every restart
   if (options.storeProjectContext !== false) {
     const projectContext = `ACTIVE PROJECT: ${projectName}
 
@@ -148,15 +148,24 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
 All file operations are scoped to this project directory unless explicitly overridden.
 This is project-specific context that persists across sessions.`;
 
-    await engine.store(projectContext, {
-      tags: ['project_context', 'always_recall', 'system_config'],
-      importance: 1.0,
-      source: MemorySource.SYSTEM,
-      sessionId: 'bootstrap',
-      agentId: 'system'
+    const existing = await engine.query('ACTIVE PROJECT', {
+      topK: 5,
+      filters: { tags: ['project_context'], sources: [MemorySource.SYSTEM] }
     });
 
-    console.log('[Bootstrap] Project context stored in memory (high priority)');
+    const match = existing.find(r => r.entry.content.includes('ACTIVE PROJECT'));
+    if (match) {
+      console.log('[Bootstrap] Project context already in memory, skipping store');
+    } else {
+      await engine.store(projectContext, {
+        tags: ['project_context', 'always_recall', 'system_config'],
+        importance: 1.0,
+        source: MemorySource.SYSTEM,
+        sessionId: 'bootstrap',
+        agentId: 'system'
+      });
+      console.log('[Bootstrap] Project context stored in memory (high priority)');
+    }
   }
 
   return { engine, executor, containment, capabilities, projectRoot, projectName };
