@@ -124,11 +124,11 @@ export class LSPManager {
   }
 
   /**
-   * Initialize LSP servers
+   * Initialize LSP manager (no-op — servers start on demand)
    */
   async initialize(): Promise<void> {
-    // Start TypeScript language server by default
-    await this.startServer('typescript');
+    // Servers are started lazily when needed (via startServer or ensureServerForFile)
+    // This avoids blocking initialization if a server binary is missing
   }
 
   /**

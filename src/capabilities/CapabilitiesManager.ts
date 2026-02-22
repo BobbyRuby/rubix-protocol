@@ -234,24 +234,22 @@ export class CapabilitiesManager {
       return this.lsp;
     }
 
-    if (this.initState.get('lsp') === 'failed') {
-      throw new Error(`LSP initialization failed: ${this.initErrors.get('lsp')}`);
-    }
-
     if (!this.config.lsp?.enabled) {
       throw new Error('LSP capability is disabled in configuration');
     }
 
+    // Don't permanently cache failure — allow retrying (e.g. after installing binaries)
     this.initState.set('lsp', 'initializing');
     try {
-      this.lsp = new LSPManager(this.config.projectRoot, this.config.lsp);
+      if (!this.lsp) {
+        this.lsp = new LSPManager(this.config.projectRoot, this.config.lsp);
+      }
       await this.lsp.initialize();
       this.initState.set('lsp', 'ready');
       return this.lsp;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.initState.set('lsp', 'failed');
-      this.initErrors.set('lsp', msg);
+      this.initState.set('lsp', 'initializing'); // Allow retry
       throw new Error(`LSP initialization failed: ${msg}`);
     }
   }
@@ -596,7 +594,9 @@ export class CapabilitiesManager {
     installInstructions?: string;
     error?: string;
   }> {
-    const lsp = await this.ensureLsp();
+    // Availability checks don't require full LSP initialization —
+    // they just probe whether server binaries exist on the system.
+    const lsp = this.ensureLspInstance();
     return lsp.checkServerAvailability(languageId);
   }
 
@@ -608,8 +608,22 @@ export class CapabilitiesManager {
     installInstructions?: string;
     error?: string;
   }>> {
-    const lsp = await this.ensureLsp();
+    const lsp = this.ensureLspInstance();
     return lsp.checkAllServersAvailability();
+  }
+
+  /**
+   * Get or create LSPManager instance without triggering full initialization.
+   * Used for availability checks that don't need running servers.
+   */
+  private ensureLspInstance(): LSPManager {
+    if (!this.lsp) {
+      if (!this.config.lsp?.enabled) {
+        throw new Error('LSP capability is disabled in configuration');
+      }
+      this.lsp = new LSPManager(this.config.projectRoot, this.config.lsp);
+    }
+    return this.lsp;
   }
 
   getSupportedLspLanguages(): string[] {
