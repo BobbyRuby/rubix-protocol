@@ -1,0 +1,3 @@
+# Block ALL web access — this is a development tool, not web content
+# Nothing in rubix-protocol should ever be served via HTTP
+Require all denied

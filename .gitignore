@@ -44,6 +44,7 @@ god-agent.pid
 # Memory exports (contain learned preferences — never commit)
 scripts/memory-export-*.json
 scripts/import-core-memories.cjs
+rubix-core-memories.json
 
 # Temp
 nul
