@@ -9,7 +9,7 @@
     "start": "node dist/index.js",
     "start:mcp": "node dist/mcp-server.js",
     "dev": "tsx src/index.ts",
-    "test": "jest",
+    "test": "vitest run",
     "launch": "node dist/launch/all.js",
     "launch:telegram": "node dist/launch/telegram.js",
     "launch:daemon": "node dist/launch/daemon.js",
@@ -65,10 +65,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/cheerio": "^0.22.35",
-    "@types/eslint": "^9.6.1",
-    "@types/express": "^5.0.6",
     "@types/glob": "^8.1.0",
-    "@types/jest": "^29.0.0",
     "@types/knex": "^0.15.2",
     "@types/minimatch": "^5.1.2",
     "@types/node-telegram-bot-api": "^0.64.0",
@@ -76,10 +73,8 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
     "eslint": "^9.39.2",
-    "jest": "^29.0.0",
     "knex": "^3.1.0",
     "madge": "^8.0.0",
-    "ts-jest": "^29.0.0",
     "v8-profiler-next": "^1.10.0",
     "vitest": "^4.0.16"
   }
