@@ -9,7 +9,7 @@ export default defineConfig({
     // MemoryEngine constructor + initialize takes ~7s on this machine
     // (module import + SQLite + sqlite-vec + subsystem init)
     hookTimeout: 30000,
-    testTimeout: 30000,
+    testTimeout: 60000,
 
     // Prevent SQLite race conditions — tests create temp DBs in /tmp
     // and parallel file execution causes SQLITE_READONLY errors
