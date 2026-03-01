@@ -4,25 +4,28 @@
 
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { existsSync, unlinkSync, readdirSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { SQLiteStorage } from '../storage/SQLiteStorage.js';
 import { SonaEngine } from './SonaEngine.js';
 import { TrajectoryStore } from './TrajectoryStore.js';
 import { WeightManager } from './WeightManager.js';
 import { EWCRegularizer } from './EWCRegularizer.js';
 
-// Generate unique database path for each test
+// Generate unique database path for each test (in /tmp to avoid repo pollution)
 function uniqueDbPath(prefix: string): string {
-  return `./test-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`;
+  return join(tmpdir(), `test-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.db`);
 }
 
 // Clean up all test databases after tests complete
 afterAll(() => {
   try {
-    const files = readdirSync('.');
+    const dir = tmpdir();
+    const files = readdirSync(dir);
     for (const file of files) {
       if (file.startsWith('test-') && file.endsWith('.db')) {
         try {
-          unlinkSync(file);
+          unlinkSync(join(dir, file));
         } catch {
           // Ignore cleanup errors
         }

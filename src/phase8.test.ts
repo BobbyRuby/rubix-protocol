@@ -20,6 +20,7 @@ import {
 } from './routing/types.js';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('Phase 8: CircuitBreaker', () => {
   it('should use default configuration', () => {
@@ -427,7 +428,7 @@ describe('Phase 8: MemoryEngine Routing Integration', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase8-routing-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase8-routing-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);

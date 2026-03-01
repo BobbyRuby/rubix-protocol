@@ -19,13 +19,14 @@ import {
 } from './gnn/types.js';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('Phase 7: EgoGraphExtractor', () => {
   let engine: MemoryEngine;
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase7-ego-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase7-ego-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);
@@ -395,7 +396,7 @@ describe('Phase 7: EnhancementLayer', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase7-enhance-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase7-enhance-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);

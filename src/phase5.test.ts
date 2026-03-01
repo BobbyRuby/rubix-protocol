@@ -12,13 +12,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MemoryEngine, MemorySource, CausalRelationType } from './index.js';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('Phase 5: Temporal Hyperedges', () => {
   let engine: MemoryEngine;
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase5-ttl-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase5-ttl-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);

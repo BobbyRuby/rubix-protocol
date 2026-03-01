@@ -23,6 +23,7 @@ import {
 import type { ScheduleTrigger, CreateTaskInput } from './scheduler/types.js';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('Phase 9: TaskStore', () => {
   let engine: MemoryEngine;
@@ -30,7 +31,7 @@ describe('Phase 9: TaskStore', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase9-taskstore-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase9-taskstore-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);
@@ -465,7 +466,7 @@ describe('Phase 9: ContextBuilder', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase9-context-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase9-context-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);
@@ -633,7 +634,7 @@ describe('Phase 9: SchedulerDaemon', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase9-scheduler-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase9-scheduler-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);

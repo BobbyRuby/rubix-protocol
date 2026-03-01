@@ -16,6 +16,7 @@ import { TierManager } from './compression/TierManager.js';
 import { CompressionTier, BYTES_PER_DIM } from './compression/types.js';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('Phase 6: ProductQuantizer', () => {
   it('should encode and decode PQ8 vectors with reasonable accuracy', () => {
@@ -248,7 +249,7 @@ describe('Phase 6: SQLite Access Tracking', () => {
   let testDbPath: string;
 
   beforeEach(async () => {
-    testDbPath = join(process.cwd(), `test-phase6-compression-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase6-compression-${Date.now()}.db`);
 
     try {
       if (existsSync(testDbPath)) rmSync(testDbPath);

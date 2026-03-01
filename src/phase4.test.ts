@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MemoryEngine, ProvenanceThresholdError, MemorySource } from './index.js';
 import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 
 describe('Phase 4: Provenance Threshold Enforcement', () => {
   let engine: MemoryEngine;
@@ -18,7 +19,7 @@ describe('Phase 4: Provenance Threshold Enforcement', () => {
 
   beforeEach(async () => {
     // Use unique database path for each test run
-    testDbPath = join(process.cwd(), `test-phase4-threshold-${Date.now()}.db`);
+    testDbPath = join(tmpdir(), `test-phase4-threshold-${Date.now()}.db`);
 
     // Clean up any existing test database
     try {
@@ -145,7 +146,7 @@ describe('Phase 4: Provenance Threshold Enforcement', () => {
 
 describe('Phase 4: Pattern Success Tracking', () => {
   let engine: MemoryEngine;
-  const testDbPath = join(process.cwd(), 'test-phase4-patterns.db');
+  const testDbPath = join(tmpdir(), `test-phase4-patterns-${Date.now()}.db`);
 
   beforeEach(async () => {
     if (existsSync(testDbPath)) rmSync(testDbPath);
@@ -231,7 +232,7 @@ describe('Phase 4: Pattern Success Tracking', () => {
 
 describe('Phase 4: Pattern Pruning', () => {
   let engine: MemoryEngine;
-  const testDbPath = join(process.cwd(), 'test-phase4-pruning.db');
+  const testDbPath = join(tmpdir(), `test-phase4-pruning-${Date.now()}.db`);
 
   beforeEach(async () => {
     if (existsSync(testDbPath)) rmSync(testDbPath);
@@ -364,7 +365,7 @@ describe('Phase 4: Pattern Pruning', () => {
 
 describe('Phase 4: Threshold Disabled', () => {
   let engine: MemoryEngine;
-  const testDbPath = join(process.cwd(), 'test-phase4-disabled.db');
+  const testDbPath = join(tmpdir(), `test-phase4-disabled-${Date.now()}.db`);
 
   beforeEach(async () => {
     if (existsSync(testDbPath)) rmSync(testDbPath);
