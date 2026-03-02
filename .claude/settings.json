@@ -84,6 +84,16 @@
             "timeout": 2
           }
         ]
+      },
+      {
+        "matcher": "mcp__rubix-brain__god_lsp_diagnostics|mcp__rubix-brain__god_analyze_lint|mcp__rubix-brain__god_analyze_types",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-qc-hook.cjs",
+            "timeout": 2
+          }
+        ]
       }
     ],
     "SessionEnd": [

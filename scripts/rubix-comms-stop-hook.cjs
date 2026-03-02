@@ -210,19 +210,42 @@ async function main() {
     deletePendingRating(dataDirResolved);
   }
 
-  // ─── Phase 2.5: QC Debt Check ───
+  // ─── Phase 2.5: QC Enforcement (MANDATORY) ───
   const undiagnosedFiles = getUndiagnosedFiles(dataDirResolved);
   if (undiagnosedFiles.length > 0) {
-    console.log('');
-    console.log('═══════════════════════════════════════════════════');
-    console.log(`[QC DEBT] ${undiagnosedFiles.length} file(s) edited but never diagnosed:`);
+    // Group by language for efficient batching
+    const byLang = {};
     for (const { file, lang } of undiagnosedFiles) {
-      const tools = (lang === 'typescript' || lang === 'javascript')
-        ? 'god_lsp_diagnostics + god_analyze_lint + god_analyze_types'
-        : 'god_lsp_diagnostics';
-      console.log(`  ${path.basename(file)} (${lang}) → ${tools}`);
+      if (!byLang[lang]) byLang[lang] = [];
+      byLang[lang].push(file);
     }
-    console.log('Run diagnostics on these files before finishing.');
+
+    console.log('');
+    console.log('╔═══════════════════════════════════════════════════╗');
+    console.log('║  [QC ENFORCEMENT] MANDATORY — DO NOT SKIP        ║');
+    console.log('╚═══════════════════════════════════════════════════╝');
+    console.log(`${undiagnosedFiles.length} file(s) were edited but NEVER quality-checked.`);
+    console.log('You MUST run diagnostics on each file before you can stop.');
+    console.log('');
+
+    // Emit specific tool calls per language group
+    for (const [lang, files] of Object.entries(byLang)) {
+      const names = files.map(f => path.basename(f));
+      if (lang === 'typescript' || lang === 'javascript') {
+        console.log(`  ${lang.toUpperCase()} (${names.join(', ')}):`);
+        console.log(`    1. god_lsp_start({language: "${lang}"})`);
+        console.log(`    2. god_lsp_diagnostics({file: "<path>"}) — for each file`);
+        console.log(`    3. god_analyze_types({files: ${JSON.stringify(files)}})`);
+      } else {
+        console.log(`  ${lang.toUpperCase()} (${names.join(', ')}):`);
+        console.log(`    1. god_lsp_start({language: "${lang}"})`);
+        console.log(`    2. god_lsp_diagnostics({file: "<path>"}) — for each file`);
+      }
+    }
+
+    console.log('');
+    console.log('Fix any errors found. This hook will keep firing (exit 2)');
+    console.log('until all edited files have been diagnosed.');
     console.log('═══════════════════════════════════════════════════');
     console.log('');
     needsContinue = true;
@@ -287,9 +310,13 @@ async function main() {
       }
     }
 
-    // Clear the journal + QC ledger regardless (fresh journal = fresh ledger)
-    deleteStmJournal(dataDirResolved);
-    clearQcLedger(dataDirResolved);
+    // Only clear journal + ledger when no QC debt remains.
+    // If QC enforcement fired (needsContinue=true), keep journal alive
+    // so the next Stop invocation can re-check after diagnostics run.
+    if (!needsContinue) {
+      deleteStmJournal(dataDirResolved);
+      clearQcLedger(dataDirResolved);
+    }
   }
 
   // ─── Final exit ───
