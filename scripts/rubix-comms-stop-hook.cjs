@@ -298,7 +298,7 @@ async function main() {
           ], {
             env: storeEnv,
             cwd: storeCwd,
-            timeout: 8000,
+            timeout: 15000,
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
           });
