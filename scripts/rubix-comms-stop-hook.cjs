@@ -35,7 +35,9 @@ const {
   readLastStmStore,
   writeLastStmStore,
   getUndiagnosedFiles,
-  clearQcLedger
+  clearQcLedger,
+  readPlanPreflightFindings,
+  clearPlanPreflightFindings
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -249,6 +251,23 @@ async function main() {
     process.stderr.write('═══════════════════════════════════════════════════\n');
     process.stderr.write('\n');
     needsContinue = true;
+  }
+
+  // ─── Phase 2.6: Plan preflight reminder (soft) ───
+  const preflightFindings = readPlanPreflightFindings(dataDirResolved);
+  if (preflightFindings && preflightFindings.criticalCount > 0) {
+    const age = Date.now() - new Date(preflightFindings.timestamp).getTime();
+    if (age < 30 * 60 * 1000) {  // within 30 min
+      process.stderr.write('\n─────────────────────────────────────────────────\n');
+      process.stderr.write(`[PLAN PREFLIGHT] ${preflightFindings.criticalCount} CRITICAL finding(s) from plan validation:\n`);
+      for (const c of (preflightFindings.criticals || []).slice(0, 3)) {
+        process.stderr.write(`  - ${c}\n`);
+      }
+      process.stderr.write('Verify these were addressed before continuing execution.\n');
+      process.stderr.write('─────────────────────────────────────────────────\n\n');
+      // Soft reminder only — do NOT set needsContinue (plans may reference things to-be-created)
+    }
+    clearPlanPreflightFindings(dataDirResolved);
   }
 
   // ─── Phase 3: Auto-STM store from journal ───

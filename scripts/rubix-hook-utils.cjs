@@ -749,6 +749,49 @@ function writeLastStmStore(dataDir) {
   }
 }
 
+// ─── Plan preflight helpers (plan-preflight-findings.json) ───
+
+/**
+ * Read plan preflight findings from {dataDir}/plan-preflight-findings.json.
+ * Returns { criticalCount, warningCount, criticals[], warnings[], timestamp } or null.
+ */
+function readPlanPreflightFindings(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'plan-preflight-findings.json');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write plan preflight findings to {dataDir}/plan-preflight-findings.json.
+ * Overwrites any existing file (not a merge).
+ */
+function writePlanPreflightFindings(dataDir, findings) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'plan-preflight-findings.json'), JSON.stringify(findings, null, 2));
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Delete the plan preflight findings file.
+ */
+function clearPlanPreflightFindings(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'plan-preflight-findings.json');
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // silent
+  }
+}
+
 // ─── Last-prompt helpers (last-prompt.json) ───
 
 /**
@@ -825,6 +868,10 @@ module.exports = {
   writeQcLedger,
   clearQcLedger,
   getUndiagnosedFiles,
+  // Plan preflight helpers
+  readPlanPreflightFindings,
+  writePlanPreflightFindings,
+  clearPlanPreflightFindings,
   // Last-prompt helpers
   writeLastPrompt,
   readLastPrompt
