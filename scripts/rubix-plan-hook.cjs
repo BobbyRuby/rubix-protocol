@@ -158,16 +158,14 @@ function getLspDirective(dataDir) {
   }
   if (lspFiles.size === 0) return null;
 
-  const lines = ['[LSP+LINT] Recently-edited files have LSP + linter coverage. Before planning, check for errors:'];
+  const lines = ['[LSP] Edited files with coverage — check errors before planning:'];
   for (const [lang, files] of lspFiles) {
     const names = [...files].slice(0, 5).map(f => path.basename(f)).join(', ');
     const tools = (lang === 'typescript' || lang === 'javascript')
-      ? 'god_lsp_diagnostics + god_analyze_lint + god_analyze_types'
+      ? 'god_lsp_diagnostics + god_analyze_types'
       : 'god_lsp_diagnostics';
-    lines.push(`  ${lang}: ${names} → ${tools}`);
+    lines.push(`  ${lang}: ${names} → god_lsp_start then ${tools}`);
   }
-  lines.push('  Start servers first: god_lsp_start({language})');
-  lines.push('  Check structure: god_lsp_symbols({query}) for key types/functions');
   return lines.join('\n');
 }
 

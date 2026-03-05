@@ -104,15 +104,13 @@ async function main() {
 
     if (blockCount >= ESCAPE_HATCH_THRESHOLD) {
       // Escape hatch: user has been blocked N times, override and allow
-      console.log(`\n[PLAN GATE] Escape hatch: ${blockCount} consecutive blocks. Allowing write.`);
-      console.log('[PLAN GATE] WARNING: CRITICALs were NOT resolved. Proceeding at your discretion.\n');
+      console.log(`\n[PLAN GATE] Escape hatch (${blockCount} blocks). CRITICALs unresolved — proceeding anyway.\n`);
       pending.preflightDone = true;
       writePendingPlan(dataDirResolved, pending);
       // exit 0 — allow the write
     } else {
       // Hard block — prevent the write
-      console.log(`\n[PLAN GATE] BLOCKED (attempt ${blockCount}/${ESCAPE_HATCH_THRESHOLD}). Resolve CRITICALs and retry.`);
-      console.log('[PLAN GATE] After 3 failed attempts, the escape hatch will open.\n');
+      console.log(`\n[PLAN GATE] BLOCKED (${blockCount}/${ESCAPE_HATCH_THRESHOLD}). Resolve CRITICALs. Escape hatch at ${ESCAPE_HATCH_THRESHOLD}.\n`);
       process.exit(2);
     }
   } else {

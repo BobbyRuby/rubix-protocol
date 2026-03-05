@@ -157,26 +157,14 @@ async function main() {
     const urgentCount = messages.filter(m => m.priority >= 2).length;
     const senders = [...new Set(messages.map(m => m.from_instance))];
 
-    process.stderr.write('\n');
-    process.stderr.write('═══════════════════════════════════════════════════\n');
-    process.stderr.write(`[INTER-INSTANCE COMMS] ${messages.length} unread message(s) detected\n`);
-    if (urgentCount > 0) {
-      process.stderr.write(`  ⚠ ${urgentCount} URGENT message(s)\n`);
-    }
-    process.stderr.write(`  From: ${senders.join(', ')}\n`);
-    process.stderr.write('───────────────────────────────────────────────────\n');
+    const urgTag = urgentCount > 0 ? ` (${urgentCount} urgent)` : '';
+    process.stderr.write(`\n[COMMS] ${messages.length} unread${urgTag} from: ${senders.join(', ')}\n`);
 
     messages.forEach((msg, i) => {
       process.stderr.write(formatMessage(msg, i + 1) + '\n');
     });
 
-    process.stderr.write('───────────────────────────────────────────────────\n');
-    process.stderr.write('ACTION REQUIRED: Process these messages now.\n');
-    process.stderr.write('1. Call god_comms_heartbeat with your instance identity\n');
-    process.stderr.write('2. Call god_comms_inbox to retrieve messages via MCP\n');
-    process.stderr.write('3. Call god_comms_ack for each message after processing\n');
-    process.stderr.write('═══════════════════════════════════════════════════\n');
-    process.stderr.write('\n');
+    process.stderr.write('→ god_comms_heartbeat then god_comms_inbox then god_comms_ack\n');
     needsContinue = true;
   }
 
@@ -193,15 +181,7 @@ async function main() {
       if (shouldRate) {
         const tid = pendingRating.trajectoryId;
         const qid = pendingRating.queryId || 'none';
-        process.stderr.write('\n');
-        process.stderr.write('═══════════════════════════════════════════════════\n');
-        process.stderr.write('[RATE RECALLS] Rate the memories recalled for your last prompt.\n');
-        process.stderr.write('Use AskUserQuestion:\n');
-        process.stderr.write('  Question: "How relevant were the recalled memories?"\n');
-        process.stderr.write('  Options: "9-10 Spot on" / "7-8 Helpful" / "4-6 Okay" / "1-3 Barely" / "0 Useless"\n');
-        process.stderr.write(`Then call: god_learn(trajectoryId="${tid}", quality=<score>/10, memrlQueryId="${qid}")\n`);
-        process.stderr.write('═══════════════════════════════════════════════════\n');
-        process.stderr.write('\n');
+        process.stderr.write(`\n[RATE RECALLS] AskUserQuestion relevance 0-10 → god_learn(trajectoryId="${tid}", quality=N/10, memrlQueryId="${qid}")\n`);
         needsContinue = true;
       }
     }
@@ -220,34 +200,19 @@ async function main() {
       byLang[lang].push(file);
     }
 
-    process.stderr.write('\n');
-    process.stderr.write('╔═══════════════════════════════════════════════════╗\n');
-    process.stderr.write('║  [QC ENFORCEMENT] MANDATORY — DO NOT SKIP        ║\n');
-    process.stderr.write('╚═══════════════════════════════════════════════════╝\n');
-    process.stderr.write(`${undiagnosedFiles.length} file(s) were edited but NEVER quality-checked.\n`);
-    process.stderr.write('You MUST run diagnostics on each file before you can stop.\n');
-    process.stderr.write('\n');
+    process.stderr.write(`\n[QC] ${undiagnosedFiles.length} undiagnosed file(s) — must diagnose before stop:\n`);
 
     // Emit specific tool calls per language group
     for (const [lang, files] of Object.entries(byLang)) {
       const names = files.map(f => path.basename(f));
       if (lang === 'typescript' || lang === 'javascript') {
-        process.stderr.write(`  ${lang.toUpperCase()} (${names.join(', ')}):\n`);
-        process.stderr.write(`    1. god_lsp_start({language: "${lang}"})\n`);
-        process.stderr.write(`    2. god_lsp_diagnostics({file: "<path>"}) — for each file\n`);
-        process.stderr.write(`    3. god_analyze_types({files: ${JSON.stringify(files)}})\n`);
+        process.stderr.write(`  ${lang.toUpperCase()} (${names.join(', ')}): god_lsp_start → god_lsp_diagnostics → god_analyze_types({files:${JSON.stringify(files)}})\n`);
       } else {
-        process.stderr.write(`  ${lang.toUpperCase()} (${names.join(', ')}):\n`);
-        process.stderr.write(`    1. god_lsp_start({language: "${lang}"})\n`);
-        process.stderr.write(`    2. god_lsp_diagnostics({file: "<path>"}) — for each file\n`);
+        process.stderr.write(`  ${lang.toUpperCase()} (${names.join(', ')}): god_lsp_start → god_lsp_diagnostics\n`);
       }
     }
 
-    process.stderr.write('\n');
-    process.stderr.write('Fix any errors found. This hook will keep firing (exit 2)\n');
-    process.stderr.write('until all edited files have been diagnosed.\n');
-    process.stderr.write('═══════════════════════════════════════════════════\n');
-    process.stderr.write('\n');
+    process.stderr.write('Fix errors. Hook repeats until done.\n');
     needsContinue = true;
   }
 
@@ -262,17 +227,11 @@ async function main() {
       clearPlanPreflightFindings(dataDirResolved);
     } else {
       // Fresh findings — hard enforce
-      process.stderr.write('\n');
-      process.stderr.write('╔═══════════════════════════════════════════════════╗\n');
-      process.stderr.write('║  [PLAN PREFLIGHT] UNRESOLVED CRITICALs            ║\n');
-      process.stderr.write('╚═══════════════════════════════════════════════════╝\n');
-      process.stderr.write(`${preflightFindings.criticalCount} CRITICAL finding(s) from plan validation:\n`);
+      process.stderr.write(`\n[PLAN PREFLIGHT] ${preflightFindings.criticalCount} unresolved CRITICAL(s):\n`);
       for (const c of (preflightFindings.criticals || []).slice(0, 5)) {
         process.stderr.write(`  - ${c}\n`);
       }
-      process.stderr.write('\nResolve these CRITICALs before continuing execution.\n');
-      process.stderr.write('The gate hook will re-validate on your next Write/Edit attempt.\n');
-      process.stderr.write('═══════════════════════════════════════════════════\n\n');
+      process.stderr.write('Resolve before next Write/Edit.\n');
       needsContinue = true;
       // Do NOT clear findings — they persist until resolved or stale
     }
