@@ -189,9 +189,13 @@ Full docs in [`docs/`](docs/).
 | [CODEX Engine](docs/codex/index.md) | Six-phase execution pipeline |
 | [Memory System](docs/memory/index.md) | Compression, embeddings, async writes |
 | [Learning System](docs/learning/index.md) | SONA, MemRL, EWC, distillation |
+| [Orchestra](docs/architecture/orchestra.md) | Multi-instance tmux orchestration |
+| [Comms Architecture](docs/communication/comms-architecture.md) | Inter-instance message bus |
+| [Hooks System](docs/architecture/hooks.md) | Lifecycle hooks (recall, QC, plan validation) |
 | [MCP Tools](docs/tools/) | All 160 tools by category |
 | [Examples](docs/examples/index.md) | Usage patterns and workflows |
 | [Reference](docs/reference/index.md) | Env vars, glossary, file reference |
+| [Contributing](CONTRIBUTING.md) | Setup, code style, PR process |
 
 ## Requirements
 

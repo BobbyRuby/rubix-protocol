@@ -85,6 +85,9 @@ graph TB
 | [Task Execution](task-execution.md) | RUBIX task execution flow |
 | [Learning System](learning-system.md) | Sona trajectory-based learning |
 | [Routing System](routing-system.md) | TinyDancer query routing |
+| [Orchestra](orchestra.md) | Multi-instance tmux orchestration |
+| [Hooks System](hooks.md) | Claude Code lifecycle hooks (10 scripts) |
+| [AFK Mode](afk-mode.md) | Telegram remote control |
 
 ## Key Design Principles
 
