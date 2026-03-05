@@ -25,7 +25,6 @@ const {
   readHookIdentity,
   readPendingRating,
   deletePendingRating,
-  readRatingCounter,
   incrementRatingCounter,
   readStmJournal,
   deleteStmJournal,
@@ -130,7 +129,6 @@ async function main() {
   // Loop prevention: if this is the second stop after we already injected messages, exit cleanly
   if (input.stop_hook_active) {
     process.exit(0);
-    return;
   }
 
   // Detect project + resolve data dir
@@ -253,20 +251,33 @@ async function main() {
     needsContinue = true;
   }
 
-  // ─── Phase 2.6: Plan preflight reminder (soft) ───
+  // ─── Phase 2.6: Plan preflight enforcement (hard) ───
   const preflightFindings = readPlanPreflightFindings(dataDirResolved);
   if (preflightFindings && preflightFindings.criticalCount > 0) {
     const age = Date.now() - new Date(preflightFindings.timestamp).getTime();
-    if (age < 30 * 60 * 1000) {  // within 30 min
-      process.stderr.write('\n─────────────────────────────────────────────────\n');
-      process.stderr.write(`[PLAN PREFLIGHT] ${preflightFindings.criticalCount} CRITICAL finding(s) from plan validation:\n`);
-      for (const c of (preflightFindings.criticals || []).slice(0, 3)) {
+    const STALE_FINDINGS_MS = 60 * 60 * 1000; // 1 hour
+
+    if (age >= STALE_FINDINGS_MS) {
+      // Stale findings — clear silently, don't enforce
+      clearPlanPreflightFindings(dataDirResolved);
+    } else {
+      // Fresh findings — hard enforce
+      process.stderr.write('\n');
+      process.stderr.write('╔═══════════════════════════════════════════════════╗\n');
+      process.stderr.write('║  [PLAN PREFLIGHT] UNRESOLVED CRITICALs            ║\n');
+      process.stderr.write('╚═══════════════════════════════════════════════════╝\n');
+      process.stderr.write(`${preflightFindings.criticalCount} CRITICAL finding(s) from plan validation:\n`);
+      for (const c of (preflightFindings.criticals || []).slice(0, 5)) {
         process.stderr.write(`  - ${c}\n`);
       }
-      process.stderr.write('Verify these were addressed before continuing execution.\n');
-      process.stderr.write('─────────────────────────────────────────────────\n\n');
-      // Soft reminder only — do NOT set needsContinue (plans may reference things to-be-created)
+      process.stderr.write('\nResolve these CRITICALs before continuing execution.\n');
+      process.stderr.write('The gate hook will re-validate on your next Write/Edit attempt.\n');
+      process.stderr.write('═══════════════════════════════════════════════════\n\n');
+      needsContinue = true;
+      // Do NOT clear findings — they persist until resolved or stale
     }
+  } else if (preflightFindings) {
+    // No CRITICALs (warnings only or zero) — clear findings
     clearPlanPreflightFindings(dataDirResolved);
   }
 

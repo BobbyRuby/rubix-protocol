@@ -76,13 +76,80 @@ const WP_BUILTINS = new Set([
 
 // ─── Validators ───
 
+// ─── Action intent patterns ───
+
+const CREATE_ACTIONS = /^(create|new|add|write|generate|scaffold)$/i;
+const EDIT_ACTIONS = /^(edit|modify|fix|update|change|refactor|patch)$/i;
+const CREATE_CONTEXT_RE = /\b(creat|new\s+file|write\s+new|generat|scaffold|add\s+new)\w*/i;
+
+/**
+ * Parse markdown tables for file → action mappings.
+ * Matches rows like: | `foo.js` | CREATE | ... |
+ * Returns Map<filePath, 'create'|'edit'|null>.
+ */
+function parseTableActions(planText) {
+  const actionMap = new Map();
+
+  // Find table rows: | cell | cell | ... |
+  const rowRe = /^\|(.+)\|$/gm;
+  let row;
+  while ((row = rowRe.exec(planText)) !== null) {
+    const cells = row[1].split('|').map(c => c.trim());
+    if (cells.length < 2) continue;
+
+    // Skip header separator rows (|---|---|)
+    if (cells[0].match(/^[-:]+$/)) continue;
+
+    // Find a cell that looks like a file path
+    let filePath = null;
+    let action = null;
+    for (const cell of cells) {
+      // Extract file path from backticks or bare
+      const pathMatch = cell.match(/`([^`]+\.[a-zA-Z]{1,10})`/) || cell.match(/^([a-zA-Z0-9_./-]+\.[a-zA-Z]{1,10})$/);
+      if (pathMatch && !filePath) {
+        filePath = pathMatch[1];
+        continue;
+      }
+      // Check if cell is an action keyword
+      const cleaned = cell.replace(/[`*]/g, '').trim();
+      if (CREATE_ACTIONS.test(cleaned)) {
+        action = 'create';
+      } else if (EDIT_ACTIONS.test(cleaned)) {
+        action = 'edit';
+      }
+    }
+
+    if (filePath) {
+      actionMap.set(filePath, action);
+    }
+  }
+
+  return actionMap;
+}
+
+/**
+ * Check if surrounding text (±100 chars) around a file path mentions creation.
+ */
+function hasCreateContextNearby(planText, candidate) {
+  const idx = planText.indexOf(candidate);
+  if (idx === -1) return false;
+  const start = Math.max(0, idx - 100);
+  const end = Math.min(planText.length, idx + candidate.length + 100);
+  const surrounding = planText.substring(start, end);
+  return CREATE_CONTEXT_RE.test(surrounding);
+}
+
 /**
  * V1: Extract file paths from plan text and check existence.
+ * Action-aware: skips FILE_NOT_FOUND for paths the plan intends to CREATE.
  * Returns array of { path, exists, severity }.
  */
 function extractAndCheckFilePaths(planText, cwd) {
   const findings = [];
   const seen = new Set();
+
+  // Pre-parse table actions for create/edit intent
+  const tableActions = parseTableActions(planText);
 
   // Pattern 1: backtick-quoted paths with extensions
   // Pattern 2: **File:** labels
@@ -126,6 +193,15 @@ function extractAndCheckFilePaths(planText, cwd) {
 
     const exists = fs.existsSync(resolved);
     if (!exists) {
+      // Determine if the plan intends to CREATE this file
+      const tableAction = tableActions.get(candidate);
+      const isCreateIntent = tableAction === 'create' || (!tableAction && hasCreateContextNearby(planText, candidate));
+
+      if (isCreateIntent) {
+        // Expected to not exist — skip (not a finding)
+        continue;
+      }
+
       findings.push({
         type: 'FILE_NOT_FOUND',
         detail: candidate,
