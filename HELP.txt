@@ -1,408 +1,343 @@
 ================================================================================
-                         GOD-AGENT / RUBIX USER GUIDE
+                     RUBIX PROTOCOL — USER GUIDE
 ================================================================================
 
-RUBIX is an autonomous AI agent system with multiple deployment modes.
-Double-click any .bat file to start the corresponding service.
+AI development agent with persistent memory, self-healing, and multi-instance
+orchestration. Built as an MCP server for Claude Code.
 
-Press Ctrl+C to stop any running service.
+160 tools. 246 TypeScript files. 35+ subsystems.
 
 ================================================================================
-                              LAUNCHERS
+                           QUICK START
 ================================================================================
 
-LAUNCH.BAT - Full Stack
------------------------
-Starts ALL services at once:
-  - MemoryEngine (vector database + provenance tracking)
-  - CODEX (autonomous code generation)
-  - Telegram Bot (if TELEGRAM_BOT_TOKEN is set)
-  - Scheduler Daemon (cron jobs, event triggers)
-  - Webhook Server (port 3456)
-  - Notification Service
-  - Communication Manager
+1. Install and build:
+     git clone https://github.com/BobbyRuby/rubix-protocol.git
+     cd rubix-protocol
+     npm install && npm run build
 
-Use when: You want everything running together.
+2. Add to your project's .claude/mcp.json:
+     {
+       "mcpServers": {
+         "rubix": {
+           "command": "node",
+           "args": ["dist/mcp-server.js"],
+           "cwd": "/path/to/rubix-protocol",
+           "env": {
+             "OPENAI_API_KEY": "sk-...",
+             "ANTHROPIC_API_KEY": "sk-ant-...",
+             "RUBIX_DATA_DIR": "./data"
+           }
+         }
+       }
+     }
 
+3. Restart Claude Code after adding config.
 
-LAUNCH-TELEGRAM.BAT - Telegram Bot + CODEX
-------------------------------------------
-Starts the Telegram bot connected to CODEX for mobile control.
-
-Telegram Commands:
-  /start              - Confirm bot is alive, show welcome
-  /help               - Show available commands
-  /task <description> - Submit a task to CODEX
-                        Example: /task Create a hello world React component
-  /status             - Check if a task is running and its progress
-  /wait               - Extend escalation timeout by 10 minutes
-
-Use when: You want to control CODEX from your phone via Telegram.
-Bot: @RubixProtocolBot
-
-
-LAUNCH-DAEMON.BAT - Scheduler Daemon
-------------------------------------
-Runs background tasks on schedules or triggers.
-
-Trigger Types:
-  - datetime : Execute at a specific time (ISO format)
-  - cron     : Recurring schedule (cron syntax: "0 9 * * 1-5" = 9am weekdays)
-  - event    : Execute when a named event is fired
-  - file     : Execute when a file changes
-  - manual   : Only runs when manually triggered
-
-Use when: You want automated background tasks without Telegram.
-
-
-LAUNCH-WEBHOOKS.BAT - Webhook Server Only
------------------------------------------
-Runs ONLY the webhook HTTP server on port 3456.
-No MemoryEngine, no CODEX - completely standalone.
-
-Endpoints:
-  POST http://localhost:3456/webhooks/sms     - Receive SMS callbacks
-  POST http://localhost:3456/webhooks/slack   - Receive Slack interactions
-  POST http://localhost:3456/webhooks/discord - Receive Discord interactions
-  POST http://localhost:3456/webhooks/phone   - Receive phone call callbacks
-  GET  http://localhost:3456/health           - Health check (returns 200 OK)
-
-Use when: You only need to receive webhook callbacks from external services.
+4. Use god_codex_do({ description: "your task", codebase: "." }) to submit a task.
 
 
 ================================================================================
-                          ENVIRONMENT VARIABLES
+                        DEPLOYMENT MODES
 ================================================================================
 
-Required variables are set in the .env file in this directory.
+MCP Server (primary)
+--------------------
+Runs as a tool server inside Claude Code via .claude/mcp.json.
+  npm run start:mcp
 
-OPENAI_API_KEY        - Required for embeddings (memory search)
-ANTHROPIC_API_KEY     - Required for CODEX code generation
-TELEGRAM_BOT_TOKEN    - Required for Telegram bot
-TELEGRAM_CHAT_ID      - Required for Telegram escalation channel
-GOD_AGENT_DATA_DIR    - Data directory (default: ./data)
-WEBHOOK_PORT          - Webhook server port (default: 3456)
+Standalone Services
+-------------------
+Run as a standalone service with Telegram bot, HTTP webhooks, and scheduling:
+  npm run launch              # All services
+  npm run launch:telegram     # Telegram bot only
+  npm run launch:daemon       # Daemon + webhooks
+  npm run launch:webhooks     # Webhook server only (port 3456)
+
+Multi-Instance Orchestra (tmux)
+-------------------------------
+Run multiple Claude Code instances coordinating via shared message bus:
+  bash scripts/rubix-orchestra.sh start 3    # Launch 3 instances + monitor
+  bash scripts/rubix-orchestra.sh status     # Check heartbeats + queue
+  bash scripts/rubix-orchestra.sh attach     # Reattach to tmux session
+  bash scripts/rubix-orchestra.sh stop       # Shutdown
+
+Instances communicate via comms.db — persistent SQLite message bus with
+heartbeats, threading, priority routing, broadcast, and inter-instance
+permission relay. Worker permission requests route to the orchestrator
+automatically via the permission hook.
+
+
+================================================================================
+                       ENVIRONMENT VARIABLES
+================================================================================
+
+Required:
+  OPENAI_API_KEY          Embeddings (text-embedding-3-small, 768-dim)
+  ANTHROPIC_API_KEY       Claude code generation
 
 Optional:
-SLACK_WEBHOOK_URL     - For Slack notifications
-DISCORD_WEBHOOK_URL   - For Discord notifications
-TELEGRAM_ALLOWED_USERS - Comma-separated user IDs to restrict access
-RUBIX_MODEL           - Claude model (default: claude-opus-4-5-20250514)
-RUBIX_MAX_PARALLEL    - Parallel department heads (default: 5)
-RUBIX_ULTRATHINK      - Enable extended thinking (default: true)
+  RUBIX_DATA_DIR          Data directory (default: ./data)
+  RUBIX_PROJECT_ROOT      Project directory for multi-project mode
+  RUBIX_PROJECT_NAME      Project display name
+  RUBIX_CORE_BRAIN_DATA_DIR  Shared knowledge base path (cross-project learning)
+  RUBIX_MODEL             Claude model (default: claude-opus-4-5-20250514)
+  RUBIX_ULTRATHINK        Enable extended thinking (default: true)
+  RUBIX_MAX_PARALLEL      Parallel engineer count (default: 5)
+  TELEGRAM_BOT_TOKEN      Telegram bot + AFK remote control
 
 
 ================================================================================
-                        RUBIX DEPARTMENT SYSTEM
+                     CODEX EXECUTION PIPELINE
 ================================================================================
 
-RUBIX uses a 5-department organizational structure:
+When you submit a task via god_codex_do, CODEX runs a 6-phase pipeline:
 
-                    +----------------+
-                    |     CLAUDE     |
-                    | (Head of Ops)  |
-                    +-------+--------+
-                            |
-        +--------+----------+----------+--------+
-        v        v          v          v        v
-  RESEARCHER  ARCHITECT  ENGINEER  VALIDATOR  GUARDIAN
-   (Discovery) (Design)  (Build)   (Quality)  (Reliability)
+  Phase 1: CONTEXT SCOUT (Sonnet)  — gather codebase context, detect skills
+  Phase 2: ARCHITECT (Opus)        — design solution, assess complexity
+  Phase 3: ENGINEER (routed)       — write code (parallel for high-complexity)
+  Phase 4: CODE REVIEW             — OWASP security scan, guardian audit
+  Phase 5: VALIDATOR               — test, lint, type-check
+  Phase 6: FIX LOOP                — 5-tier self-healing escalation:
+           Sonnet → Sonnet(alt) → Sonnet+think → Opus → Opus+think
 
-Departments run in phases:
-  Phase 1: RESEARCHER - Analyze codebase, find patterns
-  Phase 2: ARCHITECT - Design solution structure
-  Phase 3: ENGINEER - Write code (parallel per file)
-  Phase 4: VALIDATOR + GUARDIAN - Test & review in parallel
+Model routing: low complexity → Haiku, medium → Sonnet, high → Opus.
 
 
 ================================================================================
-                             CODEX CAPABILITIES
+                        MEMORY SYSTEM
 ================================================================================
 
-When you submit a task via Telegram (/task) or programmatically, CODEX:
+STORE:  content → L-Score provenance → SQLite + embed → vector index
+QUERY:  text → embed → vector search → MemRL two-phase ranking → results
+LEARN:  SONA trajectory feedback → EWC regularization → auto-prune/boost
+CAUSAL: hypergraph relations (causes|enables|prevents|correlates|precedes|triggers)
 
-1. DECOMPOSES the task into subtasks:
-   - research   : Analyze existing codebase
-   - design     : Plan the architecture
-   - code       : Generate/modify code files
-   - test       : Write and run tests
-   - integrate  : Wire components together
-   - verify     : Browser verification (if URL provided)
-   - review     : Code quality check
+Memory types: component, department, mcp_tool, capability, workflow, config,
+error_pattern, success_pattern, bug_fix, dev_feature, arch_insight, system, generic
 
-2. EXECUTES each subtask with up to 3 attempts:
-   - Attempt 1: Standard approach
-   - Attempt 2: Alternative approach + learning suggestions
-   - Attempt 3: Ultrathink mode (extended thinking, 16K budget)
-
-3. SELF-HEALS on failure:
-   - Analyzes error patterns
-   - Queries memory for similar past failures
-   - Tries alternative approaches
-
-4. ESCALATES only when genuinely blocked:
-   - Sends notification via Telegram
-   - Falls back through: Telegram -> Phone -> SMS -> Slack -> Discord -> Email
+Query tools:
+  god_query              Semantic vector search
+  god_query_expanded     Human-readable decoded output
+  god_self_query         Query system self-knowledge
 
 
 ================================================================================
-                          MEMORY SYSTEM (NEW)
+                   INTER-INSTANCE COMMUNICATION
 ================================================================================
 
-RUBIX uses a compressed memory architecture for efficiency.
+Multiple instances coordinate via comms.db (SQLite message bus):
 
-Storage:
-  - ALL content is compressed to positional tokens
-  - Machine stores tokens, humans get decoded output
-  - 13 memory types with specialized compression schemas
+  god_comms_heartbeat    Register presence (required first)
+  god_comms_send         Send to specific instance
+  god_comms_broadcast    Send to all instances
+  god_comms_inbox        Check unread messages
+  god_comms_read         Read message content
+  god_comms_ack          Mark as processed
+  god_comms_thread       Get conversation thread
+  god_comms_peers        List known instances
+  god_comms_escalate     Auto-routed question (Telegram or CLI fallback)
 
-Memory Types:
-  - component     : RUBIX components (TaskExecutor, MemoryEngine, etc.)
-  - department    : RUBIX departments (RESEARCHER, ARCHITECT, etc.)
-  - mcp_tool      : MCP tool definitions (god_store, god_query, etc.)
-  - capability    : IDE capabilities (LSP, Git, AST, etc.)
-  - workflow      : Execution workflows (self_heal, decompose, etc.)
-  - config        : Configuration settings
-  - error_pattern : Common error patterns and fixes
-  - success_pattern : Successful approaches
-  - bug_fix       : Bug documentation with lessons learned
-  - dev_feature   : Feature implementations
-  - arch_insight  : Architecture lessons and patterns
-  - system        : System-level information
-  - generic       : Freeform content (auto-compressed)
-
-Querying:
-  - god_query         : Returns raw compressed tokens (for machines)
-  - god_query_expanded: Returns human-readable decoded output
+Permission relay: worker permission requests automatically route to the
+orchestrator (instance_1) via comms.db when running in orchestra mode.
 
 
 ================================================================================
-                       SELF-KNOWLEDGE SYSTEM (NEW)
+                        AFK MODE
 ================================================================================
 
-RUBIX can query its own architecture and capabilities:
+When AFK is active, everything routes through Telegram:
+  - Tool permission requests → Telegram Allow/Deny buttons
+  - Questions and escalations → Telegram
+  - Notifications → Telegram
 
-  god_self_query({ question: "What is TaskExecutor?" })
-  god_self_query({ question: "What departments does RUBIX have?" })
-  god_self_query({ question: "How does the memory system work?" })
-
-Output Formats:
-  - tokens   : Raw token format (efficient)
-  - readable : Human-readable summary (default)
-  - full     : Detailed formatted output
-
-Check bootstrap status:
-  god_bootstrap_status()              # Check if self-knowledge is loaded
-  god_bootstrap_status({ runBootstrap: true })  # Force reload
+Toggle via:
+  Telegram: /afk command
+  MCP:      god_afk action="toggle"
+  API:      POST http://localhost:3456/api/afk
 
 
 ================================================================================
-                       CURIOSITY SYSTEM (NEW)
+                     MCP TOOLS (160)
 ================================================================================
 
-RUBIX has an autonomous curiosity system that generates learning probes:
+Memory:      god_store, god_query, god_query_expanded, god_edit, god_delete,
+             god_trace, god_stats, god_checkpoint, god_store_compressed,
+             god_self_query, god_compression_stats, god_bootstrap_status,
+             god_recompress_all
 
-Probe Origins (priority order):
-  - failure (1.0)            : Generated from task failures
-  - low_confidence (0.7)     : From uncertain decisions
-  - knowledge_gap (0.5)      : Detected missing knowledge
-  - success_confirmation (0.2): Verify what worked
+Causal:      god_causal, god_find_paths, god_cleanup_expired
+
+Learning:    god_learn, god_learning_stats, god_prune_patterns
+Shadow:      god_shadow_search
+Routing:     god_route, god_route_result, god_routing_stats, god_circuit_status,
+             god_reset_circuit
+Enhance:     god_enhance, god_enhance_batch, god_gnn_stats, god_clear_gnn_cache
+
+CODEX:       god_codex_do, god_codex_status, god_codex_answer,
+             god_codex_decision, god_codex_cancel, god_codex_log,
+             god_codex_estimate, god_codex_wait, god_codex_logs
+
+Review:      god_review, god_quick_review, god_security_review, god_review_config
+Guardian:    god_guardian_audit
+
+Scheduler:   god_schedule, god_trigger, god_tasks, god_pause, god_resume,
+             god_cancel, god_scheduler_stats
+
+Comms:       god_comms_setup, god_comms_heartbeat, god_comms_send,
+             god_comms_broadcast, god_comms_inbox, god_comms_read,
+             god_comms_ack, god_comms_thread, god_comms_peers,
+             god_comms_escalate, god_comms_trigger, god_comms_trigger_cancel,
+             god_comms_trigger_status
+
+Notify:      god_notify, god_notify_slack, god_notify_discord,
+             god_notify_preferences, god_notify_test, god_notify_history
+
+Deep Work:   god_deepwork_start, god_deepwork_pause, god_deepwork_resume,
+             god_deepwork_status, god_deepwork_log, god_deepwork_checkpoint
+
+Failure:     god_failure_record, god_failure_query, god_failure_resolve,
+             god_failure_stats
+
+Reflexion:   god_reflexion_query, god_reflexion_generate, god_reflexion_stats
+Curiosity:   god_curiosity_list, god_curiosity_explore,
+             god_curiosity_web_explore, god_budget_status, god_budget_history
+Distill:     god_distill, god_distillation_stats, god_distillation_config,
+             god_distillation_query
+
+Autorecall:  god_autorecall_config, god_autorecall_status
+Partner:     god_partner_config, god_partner_challenge, god_partner_status
+Containment: god_containment_check, god_containment_config,
+             god_containment_add_rule, god_containment_remove_rule,
+             god_containment_status, god_containment_session
+
+Config:      god_config_get, god_config_set, god_config_load,
+             god_config_save, god_config_reset
+AFK:         god_afk, god_agent_card
+
+Playwright:  god_pw_launch, god_pw_close, god_pw_navigate,
+             god_pw_screenshot, god_pw_action, god_pw_assert,
+             god_pw_console, god_pw_verify
+
+Capabilities:
+  LSP:       god_lsp_start, god_lsp_stop, god_lsp_available,
+             god_lsp_definition, god_lsp_references, god_lsp_diagnostics,
+             god_lsp_symbols
+  Git:       god_git_blame, god_git_bisect, god_git_history,
+             god_git_diff, god_git_branches
+  AST:       god_ast_parse, god_ast_query, god_ast_refactor, god_ast_symbols
+  Analysis:  god_analyze_lint, god_analyze_types, god_analyze_deps,
+             god_analyze_impact
+  Debug:     god_debug_start, god_debug_stop, god_debug_breakpoint,
+             god_debug_step, god_debug_eval
+  Profile:   god_profile_start, god_profile_stop, god_profile_hotspots
+  Stack:     god_stack_parse, god_stack_context
+  DB:        god_db_schema, god_db_types
+  Docs:      god_docs_fetch, god_docs_search
+  Wolfram:   god_wolfram_query, god_wolfram_calculate, god_wolfram_solve,
+             god_wolfram_convert
+
+
+================================================================================
+                        TELEGRAM BOT
+================================================================================
 
 Commands:
-  god_curiosity_list()        # List pending/resolved probes
-  god_curiosity_explore()     # Run top-priority probe
-  god_budget_status()         # Check weekly token budget
-  god_budget_history()        # View exploration history
+  /start          Show welcome
+  /help           Available commands
+  /task <desc>    Submit task to CODEX
+  /plan <desc>    Start planning session
+  /conversation   Free chat mode
+  /rubixallize    Convert chat to plan
+  /execute        Execute current plan
+  /status         Task progress
+  /resume         Resume interrupted task
+  /exit           End session
+  /afk            Toggle AFK mode
 
-Budget: 100K tokens/week, 3:1 ratio (high:moderate priority)
-
-
-================================================================================
-                            MCP TOOLS (90+)
-================================================================================
-
-Memory:
-  god_store              - Store with auto-compression
-  god_query              - Semantic search (raw tokens)
-  god_query_expanded     - Semantic search (human readable)
-  god_edit               - Edit existing entry
-  god_delete             - Delete entry
-  god_trace              - Trace provenance (L-Score)
-  god_stats              - Memory statistics
-  god_checkpoint         - Create database checkpoint
-
-Compression:
-  god_self_query         - Query RUBIX self-knowledge
-  god_compression_stats  - Compression statistics
-  god_bootstrap_status   - Bootstrap status
-
-Curiosity:
-  god_curiosity_list     - List probes
-  god_curiosity_explore  - Run exploration
-  god_budget_status      - Budget remaining
-  god_budget_history     - Exploration history
-
-Causal:
-  god_causal             - Create causal relation
-  god_find_paths         - Find causal paths
-  god_cleanup_expired    - Clean expired relations
-
-Learning:
-  god_learn              - Provide feedback
-  god_learning_stats     - Learning statistics
-  god_prune_patterns     - Prune bad patterns
-
-Routing:
-  god_route              - Route query to strategy
-  god_route_result       - Record route result
-  god_routing_stats      - Routing statistics
-  god_circuit_status     - Circuit breaker status
-  god_reset_circuit      - Reset circuit breaker
-
-CODEX:
-  god_codex_do           - Submit task
-  god_codex_status       - Check status
-  god_codex_cancel       - Cancel task
-  god_codex_answer       - Answer escalation
-  god_codex_decision     - Make decision
-  god_codex_log          - View work log
-  god_codex_wait         - Extend timeout
-
-Deep Work:
-  god_deepwork_start     - Start focus session
-  god_deepwork_pause     - Pause session
-  god_deepwork_resume    - Resume session
-  god_deepwork_status    - Session status
-  god_deepwork_checkpoint- Create checkpoint
-  god_deepwork_log       - Session log
-
-Playwright:
-  god_pw_launch          - Launch browser
-  god_pw_close           - Close browser
-  god_pw_navigate        - Navigate to URL
-  god_pw_screenshot      - Take screenshot
-  god_pw_action          - Perform action
-  god_pw_assert          - Assert element state
-  god_pw_console         - Get console logs
-  god_pw_verify          - Quick verification
-
-Code Review:
-  god_review             - Full review
-  god_quick_review       - Quick pre-commit
-  god_security_review    - Security scan
-  god_review_config      - Configure review
-
-Configuration:
-  god_config_get         - Get config
-  god_config_set         - Set config
-  god_config_load        - Load from file
-  god_config_save        - Save to file
-  god_config_reset       - Reset to defaults
-
-Notification:
-  god_notify             - Send notification
-  god_notify_slack       - Configure Slack
-  god_notify_discord     - Configure Discord
-  god_notify_preferences - Set preferences
-  god_notify_test        - Test notifications
-  god_notify_history     - View history
-
-Communication:
-  god_comms_setup        - Setup channels
-  god_comms_escalate     - Trigger escalation
-
-Failure Memory:
-  god_failure_record     - Record failure
-  god_failure_query      - Find similar failures
-  god_failure_resolve    - Mark resolved
-  god_failure_stats      - Failure statistics
-
-Partner:
-  god_partner_config     - Configure partner
-  god_partner_challenge  - Challenge approach
-  god_partner_status     - Partner status
-
-Containment:
-  god_containment_check  - Check path permission
-  god_containment_config - Configure containment
-  god_containment_add_rule    - Add rule
-  god_containment_remove_rule - Remove rule
-  god_containment_status - View status
-  god_containment_session- Session permissions
+Session modes: conversation → plan → task (strict transitions)
+Escalation fallback: Telegram → Phone → SMS → Slack → Discord → Email (5min/ch)
 
 
 ================================================================================
-                            TROUBLESHOOTING
+                       MULTI-PROJECT SETUP
+================================================================================
+
+Each project gets its own isolated MCP instance with separate memory,
+embeddings, task queues, and containment rules.
+
+In .claude/mcp.json:
+  {
+    "mcpServers": {
+      "rubix-backend": {
+        "command": "node",
+        "args": ["dist/mcp-server.js"],
+        "cwd": "/path/to/rubix-protocol",
+        "env": {
+          "RUBIX_DATA_DIR": "./data/projects/backend",
+          "RUBIX_PROJECT_ROOT": "/path/to/backend-api",
+          "RUBIX_PROJECT_NAME": "Backend API"
+        }
+      }
+    }
+  }
+
+Optional shared knowledge: set RUBIX_CORE_BRAIN_DATA_DIR to a shared data
+directory for cross-project learning.
+
+
+================================================================================
+                       npm SCRIPTS
+================================================================================
+
+  npm run build            Compile TypeScript to dist/
+  npm run start:mcp        Run MCP server
+  npm run launch           Start all services
+  npm run launch:telegram  Telegram bot only
+  npm run launch:daemon    Daemon + webhooks
+  npm run launch:webhooks  Webhook server only (port 3456)
+  npm test                 Run tests (vitest)
+  npm run clean:temp       Clean tmpclaude-*-cwd temp directories
+  npm run update           Git pull + rebuild
+
+
+================================================================================
+                       TROUBLESHOOTING
 ================================================================================
 
 "OPENAI_API_KEY environment variable is required"
-  -> Check your .env file has OPENAI_API_KEY set
+  → Set OPENAI_API_KEY in .claude/mcp.json env block
 
-"ANTHROPIC_API_KEY not set - CODEX in simulation mode"
-  -> CODEX won't generate real code without ANTHROPIC_API_KEY
+"ANTHROPIC_API_KEY not set"
+  → CODEX won't generate code without it
 
 "SqliteError: no such column"
-  -> Database schema mismatch. Delete ./data/memory.db and restart.
+  → Schema mismatch. Delete ./data/memory.db and restart.
 
 Telegram bot not responding:
-  -> Check TELEGRAM_BOT_TOKEN is correct
-  -> Make sure no other instance is running (only one can poll)
+  → Check TELEGRAM_BOT_TOKEN is correct
+  → Only one instance can poll at a time
 
 Webhook server won't start:
-  -> Port 3456 may be in use. Set WEBHOOK_PORT to another port.
+  → Port 3456 in use. Set WEBHOOK_PORT to another port.
 
-Service crashes immediately:
-  -> Run from command prompt to see error messages:
-     cd D:\rubix-protocol
-     npm run launch:telegram
-
-Memory compression errors:
-  -> Run god_bootstrap_status({ runBootstrap: true }) to reload schemas
+MCP tools not appearing:
+  → Restart Claude Code after editing .claude/mcp.json
+  → Verify the cwd path to rubix-protocol is correct
 
 
 ================================================================================
-                              HOUSEKEEPING
+                        FILE LOCATIONS
 ================================================================================
 
-Temp Directory Cleanup:
-  Claude Code creates tmpclaude-*-cwd directories during execution.
-  These get left behind when sessions crash or are force-killed.
-
-  Clean temp directories:
-    npm run clean:temp
-
-  Or dry-run to preview:
-    node scripts/clean-temp.cjs --dry-run
-
-  RUBIX automatically cleans these at session start.
-
-
-================================================================================
-                              FILE LOCATIONS
-================================================================================
-
-Batch Files:     D:\rubix-protocol\*.bat
-Source Code:     D:\rubix-protocol\src\
-Compiled:        D:\rubix-protocol\dist\
-Configuration:   D:\rubix-protocol\.env
-Database:        D:\rubix-protocol\data\memory.db
-Documentation:   D:\rubix-protocol\CLAUDE.md
-This Help:       D:\rubix-protocol\HELP.txt
-
-
-================================================================================
-                               QUICK START
-================================================================================
-
-1. Double-click launch-telegram.bat
-2. Open Telegram and message @RubixProtocolBot
-3. Send: /start
-4. Send: /task Create a hello world function in TypeScript
-5. Watch CODEX work!
-
-Or via MCP in Claude Code:
-1. Ensure .claude/mcp.json is configured
-2. Use: god_codex_do({ description: "Build a calculator", codebase: "." })
-3. Monitor: god_codex_status()
+  Source Code:      src/
+  Compiled:         dist/
+  Data:             data/ (or RUBIX_DATA_DIR)
+  Memory DB:        data/memory.db
+  Comms DB:         data/comms.db
+  Documentation:    docs/
+  MCP Config:       .claude/mcp.json (project-level)
+  Orchestra:        scripts/rubix-orchestra.sh
+  Monitor:          scripts/rubix-monitor.sh
 
 ================================================================================

@@ -4,7 +4,7 @@ This section provides comprehensive documentation of the RUBIX/god-agent system 
 
 ## Overview
 
-RUBIX consists of **32+ distinct subsystems** organized into layers:
+RUBIX consists of **35+ distinct subsystems** organized into layers:
 
 ```mermaid
 graph TB
@@ -150,7 +150,7 @@ Every piece of information has an L-Score (reliability):
 | Routing | 3 | TinyDancer, CircuitBreaker |
 | Providers | 4 | ProviderFactory, OllamaClient |
 | Entry Points | 4 | MCP Server, CLI, Telegram, Scheduler |
-| **Total** | **32+** | |
+| **Total** | **35+** | |
 
 ## Technology Stack
 
@@ -159,9 +159,9 @@ Every piece of information has an L-Score (reliability):
 | Runtime | Node.js 20+ |
 | Language | TypeScript 5.x |
 | Database | SQLite (better-sqlite3) |
-| Vector Search | HNSW (hnswlib-node) |
-| Embeddings | OpenAI text-embedding-3-small |
-| Code Generation | Claude Opus 4.5 |
+| Vector Search | sqlite-vec (768d) |
+| Embeddings | OpenAI text-embedding-3-small (768d) |
+| Code Generation | Claude Opus 4.5/4.6 |
 | Browser Automation | Playwright |
 | Protocol | Model Context Protocol (MCP) |
 
@@ -169,7 +169,7 @@ Every piece of information has an L-Score (reliability):
 
 ```
 src/
-├── mcp-server.ts         # MCP entry point (3000+ lines)
+├── mcp-server.ts         # MCP entry point (12,900+ lines, 160 tools)
 ├── index.ts              # Main exports
 ├── core/                 # Core memory system
 ├── codex/                # RUBIX task execution

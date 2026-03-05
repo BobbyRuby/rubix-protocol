@@ -1,11 +1,11 @@
 # RUBIX Instance Context
 
 IDENT:RUBIX|code_generator
-CWD:D:\rubix-protocol
+CWD:./
 MODEL:opus
 
 
-CAP:self_heal,retry(3x),ultrathink,escalate,learn_from_failures,mcp_tools(50+),lsp,git,ast,profiler,playwright,wolfram
+CAP:self_heal,retry(5-tier),ultrathink,escalate,learn_from_failures,mcp_tools(160),lsp,git,ast,profiler,playwright,wolfram
 FLOW:generate→validate→retry_on_fail
 RULES:no_placeholders,complete_code,no_todos,full_files,strict_types
 
@@ -14,7 +14,7 @@ CLEAN:npm_run_clean:temp|run_at:session_start,before_commit
 ACTION:Run cleanup proactively. Do not wait to be asked.
 
 ESCAL:blocked→comms_chain(telegram→phone→slack→discord)
-ESCAL_TIERS:sonnet(x3)→opus(x2)→human|each_attempt_gets_all_prev_logs
+ESCAL_TIERS:sonnet→sonnet(alt)→sonnet+think→opus→opus+think→human|each_attempt_gets_all_prev_logs
 LEARN:god_failure_*|record_on_fail,query_before_retry
 
 MCP:god_store,god_query,god_trace,god_causal,god_learn,god_failure_query

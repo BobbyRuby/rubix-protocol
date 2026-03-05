@@ -1,6 +1,6 @@
 # CODEX System Documentation
 
-The CODEX system is the core of RUBIX's autonomous development capabilities. It consists of 24 files that handle task decomposition, code generation, self-healing, and escalation.
+The CODEX system is the core of RUBIX's autonomous development capabilities. It consists of 28 files that handle task decomposition, code generation, self-healing, and escalation.
 
 ## Overview
 
@@ -59,30 +59,34 @@ graph TB
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| [TaskExecutor](task-executor.md) | ~1800 | Main orchestrator |
-| [TaskDecomposer](task-decomposer.md) | ~200 | Task breakdown |
-| [CodeGenerator](code-generator.md) | ~500 | Claude code generation |
-| [SelfHealer](self-healer.md) | ~300 | Failure analysis |
-| [EscalationGate](escalation-gate.md) | ~300 | Escalation logic |
-| [CollaborativePartner](collaborative-partner.md) | ~300 | Proactive curiosity |
-| [ContainmentManager](containment-manager.md) | ~400 | Path permissions |
-| [PhasedExecutor](phased-executor.md) | ~400 | 6-phase execution |
-| [types.ts](types.md) | ~500 | Type definitions |
-| ClaudeCodeExecutor | ~200 | CLI executor |
-| ContextScout | ~200 | Context gathering |
-| OllamaReasoner | ~150 | Local LLM fallback |
-| LearningIntegration | ~150 | Pattern learning |
-| AlternativesFinder | ~150 | Alternative strategies |
-| CausalDebugger | ~150 | Causal debugging |
-| WorkingMemoryManager | ~100 | Active memory |
-| PlanningSession | ~250 | Unlimited planning |
-| ConversationSession | ~150 | Lightweight chat |
-| PlanningAgent | ~200 | Agentic planning |
-| PlanValidator | ~150 | Plan validation |
-| PlanExecutor | ~200 | Plan execution |
-| TokenRouter | ~150 | Token budget routing |
-| PermissionDetector | ~100 | Permission detection |
-| index.ts | ~50 | Export hub |
+| [TaskExecutor](task-executor.md) | ~3350 | Main orchestrator |
+| [TaskDecomposer](task-decomposer.md) | ~700 | Task breakdown |
+| [ClaudeReasoner](code-generator.md) | ~600 | Claude code generation |
+| [SelfHealer](self-healer.md) | ~985 | Failure analysis + 5-tier escalation |
+| [EscalationGate](escalation-gate.md) | ~540 | Escalation logic |
+| [CollaborativePartner](collaborative-partner.md) | ~590 | Proactive curiosity |
+| [ContainmentManager](containment-manager.md) | ~710 | Path permissions |
+| [PhasedExecutor](phased-executor.md) | ~2160 | 6-phase execution pipeline |
+| [ParallelEngineer](parallel-engineer.md) | ~350 | Topo-sorted parallel code gen |
+| EngineerProvider | ~350 | Provider abstraction |
+| [types.ts](types.md) | ~530 | Type definitions |
+| ContextScout | ~580 | Context gathering + skill detection |
+| ModelSelector | ~100 | Complexity-based model routing |
+| LearningIntegration | ~500 | Pattern learning |
+| AlternativesFinder | ~500 | Alternative strategies |
+| CausalDebugger | ~645 | Causal debugging |
+| WorkingMemoryManager | ~636 | Active memory |
+| PlanningSession | ~1260 | Unlimited planning |
+| ConversationSession | ~130 | Lightweight chat |
+| PlanningAgent | ~1295 | Agentic planning |
+| PlanValidator | ~445 | Plan validation |
+| PlanExecutor | ~390 | Plan execution |
+| PlanDeviationDetector | ~340 | Plan drift detection |
+| [SkillDetector](skill-detector.md) | ~200 | Polyglot skill detection |
+| PermissionDetector | ~280 | Permission detection |
+| CodexLogger | ~360 | Structured logging |
+| Logger | ~200 | Log utilities |
+| index.ts | ~150 | Export hub |
 
 ## Execution Flow
 

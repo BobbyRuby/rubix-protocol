@@ -1,7 +1,7 @@
 {
-  "name": "god-agent",
+  "name": "rubix-protocol",
   "version": "1.0.0",
-  "description": "God Agent - Autonomous AI Agent",
+  "description": "AI development agent with persistent memory, self-healing, and multi-instance orchestration. MCP server for Claude Code.",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
@@ -21,8 +21,14 @@
   "keywords": [
     "ai",
     "agent",
-    "automation",
-    "codegen"
+    "mcp",
+    "claude-code",
+    "autonomous-agent",
+    "memory",
+    "self-healing",
+    "code-generation",
+    "orchestration",
+    "model-context-protocol"
   ],
   "author": "Robert Ruby II",
   "license": "AGPL-3.0",

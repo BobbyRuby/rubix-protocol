@@ -41,23 +41,39 @@ Complete reference documentation for RUBIX/god-agent.
 
 | Category | Tools |
 |----------|-------|
-| Memory | 10 |
-| Causal | 4 |
-| Learning/Routing | 12 |
+| Memory | 13 |
+| Causal | 3 |
+| Learning/Routing | 10 |
+| Enhance (GNN) | 4 |
 | Scheduler | 7 |
 | Playwright | 8 |
-| CODEX | 7 |
+| CODEX | 9 |
 | Partner | 3 |
 | Containment | 6 |
-| Capabilities | 40+ |
 | Review | 4 |
 | Notification | 6 |
 | Deep Work | 6 |
 | Config | 5 |
 | Failure | 4 |
-| Communication | 2 |
+| Communication | 13 |
 | Curiosity | 4 |
-| **Total** | **128+** |
+| Compression | 6 |
+| Distillation | 4 |
+| Reflexion | 3 |
+| Guardian | 1 |
+| Autorecall | 2 |
+| Agent/AFK | 2 |
+| Git | 5 |
+| AST | 4 |
+| Analysis | 4 |
+| Debug | 5 |
+| Profile | 3 |
+| Stack | 2 |
+| DB | 2 |
+| Docs | 2 |
+| Wolfram | 4 |
+| LSP | 7 |
+| **Total** | **160** |
 
 ---
 

@@ -1,38 +1,26 @@
 # RUBIX Protocol
 
-Your developers spend 60% of their time on context — reading code they forgot, re-learning decisions that were made last quarter, debugging failures they've already seen. RUBIX eliminates that.
+AI development agent that remembers everything, learns from every failure, and gets faster the longer it runs.
 
-**RUBIX is an AI development agent that remembers everything, learns from every mistake, and gets faster the longer it runs.** It doesn't just generate code. It understands your codebase, executes multi-step engineering tasks autonomously, and only asks for help when it genuinely needs a human decision.
+Built as an [MCP](https://modelcontextprotocol.io/) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). 160 tools. 246 TypeScript files. 35+ subsystems. Production-tested with five concurrent AI instances coordinating across projects against a shared memory brain.
 
-Built as an [MCP](https://modelcontextprotocol.io/) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with 160+ tools. Production-tested with five concurrent AI instances working across multiple projects against a shared memory brain.
+## What It Does
 
-## What This Actually Does
-
-- **Persistent Memory** -- Every decision, pattern, and fix is stored with semantic search, provenance tracking, and causal relationships. Nothing gets lost between sessions. Nothing gets re-learned.
-- **Autonomous Execution** -- Hands it a task, it scouts context, architects a solution, engineers the code, reviews it for security, validates, and self-corrects. Six phases, no hand-holding.
-- **Self-Healing** -- When something breaks, it doesn't just retry. It analyzes the failure, checks if it's seen something similar before, applies what it learned, and tries a different approach. Five escalation tiers before it asks you.
-- **Continuous Learning** -- Every query, every task outcome, every failure-fix chain makes the next run smarter. Trajectory learning with drift protection so it doesn't degrade over time.
-- **Multi-Project Isolation** -- Run it across your entire portfolio. Each project gets isolated memory, independent task queues, and its own security containment — with an optional shared knowledge base so lessons from one project benefit all of them.
-- **Full-Stack Tooling** -- LSP, Git, AST analysis, profiling, debugging, database introspection, browser automation, static analysis. It doesn't shell out to other tools — it has them built in.
-- **Multi-Channel Comms** -- Telegram, phone, SMS, Slack, Discord, email. Six-channel fallback chain. Walk away from your desk and manage it from your phone.
+- **Persistent Memory** — Decisions, patterns, and fixes stored with semantic search, provenance tracking (L-Score), and causal relationship graphs. Nothing lost between sessions.
+- **Autonomous Execution** — Six-phase pipeline: context scout, architect, engineer, security review, validate, self-correct. Complexity-routed model selection (Haiku/Sonnet/Opus).
+- **Self-Healing** — Analyzes failures, queries past failure memory, applies learned fixes, escalates through five tiers (Sonnet → Sonnet+alt → Sonnet+think → Opus → Opus+think) before asking a human.
+- **Continuous Learning** — RL-augmented retrieval (MemRL two-phase), trajectory learning (SONA) with Elastic Weight Consolidation to prevent forgetting. Weekly automated knowledge distillation.
+- **Multi-Instance Orchestration** — Run multiple AI instances via tmux. SQLite-backed message bus (comms.db) with heartbeats, threading, priority routing, broadcast, and inter-agent permission relay.
+- **Multi-Project Isolation** — Each project gets isolated memory, embeddings, task queues, and containment rules. Optional shared Core Brain for cross-project learning.
+- **Full-Stack Tooling** — LSP, Git, AST, profiling, debugging, database introspection, browser automation (Playwright), static analysis, documentation mining, Wolfram Alpha.
+- **Multi-Channel Comms** — Telegram, phone, SMS, Slack, Discord, email. Six-channel fallback. AFK mode for remote control from your phone.
 
 ## Quick Start
 
 ```bash
-# Clone and install
 git clone https://github.com/BobbyRuby/rubix-protocol.git
 cd rubix-protocol
-npm install
-
-# Set up environment
-cp .env.example .env
-# Edit .env with your API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY)
-
-# Build
-npm run build
-
-# Run as MCP server
-node dist/mcp-server.js
+npm install && npm run build
 ```
 
 ### MCP Configuration
@@ -56,57 +44,161 @@ Add to your project's `.claude/mcp.json`:
 }
 ```
 
+Restart Claude Code after adding this config.
+
+### Multi-Project Setup
+
+Each project gets its own isolated MCP instance:
+
+```json
+{
+  "mcpServers": {
+    "rubix-backend": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "/path/to/rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/backend",
+        "RUBIX_PROJECT_ROOT": "/path/to/backend-api",
+        "RUBIX_PROJECT_NAME": "Backend API"
+      }
+    },
+    "rubix-frontend": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "cwd": "/path/to/rubix-protocol",
+      "env": {
+        "OPENAI_API_KEY": "sk-...",
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "RUBIX_DATA_DIR": "./data/projects/frontend",
+        "RUBIX_PROJECT_ROOT": "/path/to/web-app",
+        "RUBIX_PROJECT_NAME": "Frontend App"
+      }
+    }
+  }
+}
+```
+
 ### Standalone Mode
 
-RUBIX can also run as a standalone service with Telegram bot, HTTP webhooks, and cron scheduling:
+Run as a standalone service with Telegram bot, HTTP webhooks, and cron scheduling:
 
 ```bash
-# Set TELEGRAM_BOT_TOKEN in .env
+# Set TELEGRAM_BOT_TOKEN in environment
 npm run launch           # All services
 npm run launch:telegram  # Telegram bot only
 npm run launch:daemon    # Daemon + webhooks
 ```
 
+### Multi-Instance Orchestra
+
+Run multiple Claude Code instances coordinating via shared message bus:
+
+```bash
+# Linux/macOS (tmux required)
+bash scripts/rubix-orchestra.sh start 3   # Launch 3 instances + monitor
+bash scripts/rubix-orchestra.sh status    # Check heartbeats + message queue
+bash scripts/rubix-orchestra.sh attach    # Reattach to tmux session
+bash scripts/rubix-orchestra.sh stop      # Shutdown
+```
+
+Instances communicate via `comms.db` — persistent SQLite message bus with heartbeats, threading, priority routing, and broadcast. Worker permission requests relay to the orchestrator automatically.
+
 ## Architecture
 
-242 TypeScript files. 32 subsystems. Four interfaces.
+```
+INTERFACES   MCP Server (160 tools) | CLI | Telegram Bot | HTTP Webhooks
+     |
+CORE ──► CODEX       6-phase execution, parallel engineering, 5-tier self-healing
+     |
+     ├──► MEMORY     SQLite + HNSW vector (768d), MemRL retrieval, L-Score provenance,
+     |                causal hypergraph, SONA learning, GNN enhancement, shadow search
+     |
+     ├──► COMMS      comms.db message bus, 6-channel escalation fallback, AFK mode,
+     |                inter-instance messaging, permission relay, orchestra coordination
+     |
+     └──► CAPABILITIES   LSP, Git, AST, profiler, debugger, Playwright, static analysis,
+                          dependency graph, doc mining, DB introspection, Wolfram Alpha
+```
+
+### CODEX Execution Pipeline
 
 ```
-INTERFACES: MCP Server | CLI | Telegram Bot | HTTP Webhooks
-     │
-CORE ──► CODEX    Task execution — architect, engineer, review, validate, fix
-     │
-     ├──► MEMORY   Vector search, provenance, causal graphs, learning engines
-     │
-     ├──► COMMS    Six-channel fallback, inter-instance messaging, AFK mode
-     │
-     └──► CAPABILITIES   LSP, Git, AST, profiler, debugger, browser, DB, docs
+Phase 1: CONTEXT SCOUT (Sonnet) — gather codebase context, polyglot knowledge
+Phase 2: ARCHITECT (Opus) — design solution, assess complexity
+Phase 3: ENGINEER (complexity-routed) — write code, parallel for high-complexity
+Phase 4: CODE REVIEW — OWASP security scan, guardian audit
+Phase 5: VALIDATOR — test, lint, type-check
+Phase 6: FIX LOOP — 5-tier escalation: Sonnet → Sonnet(alt) → Sonnet+think → Opus → Opus+think
 ```
 
-## Documentation
+### Memory & Learning
 
-Full documentation in [`docs/`](docs/), built with [MkDocs Material](https://squidfundamentals.com/mkdocs-material/).
+```
+STORE:  content → L-Score provenance → compress → SQLite + embed → HNSW vector index
+QUERY:  text → embed → HNSW search → MemRL Phase A (similarity filter) → Phase B (Q-value rank)
+LEARN:  SONA trajectory feedback → EWC regularization → auto-prune/boost → weekly distillation
+CAUSAL: hypergraph relations (causes|enables|prevents|correlates|precedes|triggers) with TTL
+```
 
-| Section | What's There |
-|---------|-------------|
-| [Getting Started](docs/getting-started/installation.md) | Install, configure, running in 5 minutes |
-| [Architecture](docs/architecture/overview.md) | System design, data flow, every component |
-| [MCP Tools](docs/tools/index.md) | All 160+ tools, documented |
-| [CODEX Engine](docs/codex/index.md) | The six-phase execution pipeline |
-| [Learning System](docs/learning/index.md) | How it gets smarter over time |
-| [Reference](docs/reference/environment-variables.md) | Env vars, glossary, file reference |
+## Environment Variables
 
-## Requirements
+### Required
 
-- **Node.js** >= 18
-- **OpenAI API key** — embeddings (text-embedding-3-small, 768-dim)
-- **Anthropic API key** — Claude code generation
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | Embeddings (text-embedding-3-small, 768-dim) |
+| `ANTHROPIC_API_KEY` | Claude code generation |
 
 ### Optional
 
-- **Telegram Bot Token** — standalone bot + AFK remote control
-- **Ollama** — local LLM fallback (no API costs for routine tasks)
-- **Wolfram Alpha App ID** — computational queries
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RUBIX_DATA_DIR` | `./data` | Data directory |
+| `RUBIX_PROJECT_ROOT` | — | Project directory (multi-project mode) |
+| `RUBIX_PROJECT_NAME` | — | Project display name |
+| `RUBIX_CORE_BRAIN_DATA_DIR` | — | Shared knowledge base path |
+| `RUBIX_MODEL` | `claude-opus-4-5-20250514` | Claude model for code generation |
+| `RUBIX_ULTRATHINK` | `true` | Enable extended thinking |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot + AFK remote control |
+
+## npm Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `npm run build` | Compile TypeScript to dist/ |
+| `npm run start:mcp` | Run MCP server |
+| `npm run launch` | Start all services (Telegram, daemon, webhooks) |
+| `npm run launch:telegram` | Telegram bot only |
+| `npm run launch:daemon` | Daemon + webhooks |
+| `npm run launch:webhooks` | Webhook server only (port 3456) |
+| `npm test` | Run tests (vitest) |
+| `npm run clean:temp` | Clean tmpclaude-*-cwd temp directories |
+| `npm run update` | Git pull + rebuild |
+
+## Documentation
+
+Full docs in [`docs/`](docs/).
+
+| Section | Description |
+|---------|-------------|
+| [Getting Started](docs/getting-started/index.md) | Install, configure, first task |
+| [Architecture](docs/architecture/index.md) | System design, data flow, components |
+| [CODEX Engine](docs/codex/index.md) | Six-phase execution pipeline |
+| [Memory System](docs/memory/index.md) | Compression, embeddings, async writes |
+| [Learning System](docs/learning/index.md) | SONA, MemRL, EWC, distillation |
+| [MCP Tools](docs/tools/) | All 160 tools by category |
+| [Examples](docs/examples/index.md) | Usage patterns and workflows |
+| [Reference](docs/reference/index.md) | Env vars, glossary, file reference |
+
+## Requirements
+
+- **Node.js** >= 20
+- **OpenAI API key** — embeddings
+- **Anthropic API key** — code generation
+- **Optional:** Telegram Bot Token, Ollama, Wolfram Alpha App ID
 
 ## License
 
@@ -114,6 +206,4 @@ Full documentation in [`docs/`](docs/), built with [MkDocs Material](https://squ
 
 - Runtime integration with RUBIX memory, tools, or learning systems = covered work under AGPL-3.0
 - Commercial use of generated output requires attribution
-- **Commercial licenses available** — no AGPL obligations, no Additional Terms
-
-For commercial licensing: contact the copyright holder.
+- **Commercial licenses available** — contact the copyright holder
