@@ -1,25 +1,37 @@
 #!/usr/bin/env node
 /**
- * Rubix AFK Permission Hook for Claude Code (PermissionRequest)
+ * Rubix Permission Hook for Claude Code (PermissionRequest)
  *
- * When AFK mode is active, routes ALL tool permission requests to Telegram
- * via the daemon's /api/permission endpoint. This enables full remote control
- * from Telegram — the user can approve/deny tool executions from their phone.
+ * Routes tool permission requests based on context:
  *
- * When NOT AFK, exits immediately (normal Claude Code permission flow at keyboard).
+ * 1. ORCHESTRA MODE (comms relay):
+ *    When orchestra is active and this is a worker instance (not Forge/instance_1),
+ *    writes a permission request to comms.db → Forge asks the user → response relayed back.
+ *
+ * 2. AFK MODE (Telegram):
+ *    When AFK is active, routes to Telegram daemon for remote approval.
+ *
+ * 3. DEFAULT:
+ *    Exits cleanly → normal Claude Code permission flow (keyboard prompt).
  *
  * Input (stdin JSON): { tool_name, tool_input, permission_suggestions, cwd, session_id }
  * Output (stdout JSON): hookSpecificOutput with decision: allow|deny
  */
 
+const path = require('path');
 const {
+  RUBIX_ROOT,
   readStdin,
   readAfkState,
-  httpPost
+  readHookIdentity,
+  httpPost,
+  isOrchestraActive,
+  writeCommsPermissionRequest,
+  pollCommsPermissionResponse
 } = require('./rubix-hook-utils.cjs');
 
 /**
- * Build a human-readable summary of the tool request for Telegram display.
+ * Build a human-readable summary of the tool request.
  */
 function summarizeTool(toolName, toolInput) {
   if (!toolInput) return toolName;
@@ -40,7 +52,6 @@ function summarizeTool(toolName, toolInput) {
     case 'NotebookEdit':
       return `Edit notebook: ${toolInput.notebook_path || 'unknown'}`;
     default:
-      // MCP tools or other tools
       if (toolName.startsWith('mcp__')) {
         const parts = toolName.split('__');
         const mcpTool = parts[parts.length - 1] || toolName;
@@ -54,56 +65,74 @@ function summarizeTool(toolName, toolInput) {
   }
 }
 
+function outputDecision(behavior, message) {
+  console.log(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PermissionRequest',
+      decision: { behavior, message }
+    }
+  }));
+}
+
 async function main() {
   const input = await readStdin();
-  if (!input) return; // No input, exit cleanly
+  if (!input) return;
 
-  // Check AFK state
-  const afkState = readAfkState();
-  if (!afkState.afk) {
-    // Not AFK — exit 0, normal Claude Code permission flow
-    return;
-  }
-
-  // AFK mode active — route to Telegram via daemon
   const toolName = input.tool_name || 'unknown';
   const toolInput = input.tool_input || {};
   const sessionId = input.session_id || '';
   const summary = summarizeTool(toolName, toolInput);
 
+  // --- Mode 1: Orchestra Comms Relay ---
+  if (isOrchestraActive()) {
+    const dataDir = path.join(RUBIX_ROOT, 'data');
+    const identity = readHookIdentity(dataDir);
+
+    // Forge (instance_1) = user is right here, skip relay
+    if (identity && identity.instanceId === 'instance_1') {
+      return; // Normal permission flow
+    }
+
+    // Worker instance — relay to Forge via comms.db
+    const instanceId = identity ? identity.instanceId : 'unknown_worker';
+    const msgId = writeCommsPermissionRequest(instanceId, toolName, summary, toolInput);
+
+    if (msgId) {
+      // Poll for Forge's response (max 3 minutes)
+      const response = pollCommsPermissionResponse(msgId, 180000);
+
+      if (response && response.allowed !== undefined) {
+        const decision = response.allowed ? 'allow' : 'deny';
+        outputDecision(decision, `${decision === 'allow' ? 'Approved' : 'Denied'} by Forge via comms relay`);
+      } else {
+        outputDecision('deny', 'Comms relay: no response from Forge after 3 minutes. Denied for safety.');
+      }
+      return;
+    }
+    // If comms write failed, fall through to AFK check
+  }
+
+  // --- Mode 2: AFK Mode (Telegram) ---
+  const afkState = readAfkState();
+  if (!afkState.afk) {
+    return; // Not AFK, normal Claude Code permission flow
+  }
+
   // POST to daemon's permission endpoint
-  // Server handles retry escalation (3 attempts x 120s each)
   const response = await httpPost('http://localhost:3456/api/permission', {
     tool_name: toolName,
     summary: summary,
     tool_input: toolInput,
     session_id: sessionId
-  }, 390000); // 390s timeout (server does 3x120s retries internally)
+  }, 390000);
 
   if (response && response.decision) {
-    // Output hook-specific response
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: 'PermissionRequest',
-        decision: {
-          behavior: response.decision === 'allow' ? 'allow' : 'deny',
-          message: `${response.decision === 'allow' ? 'Approved' : 'Denied'} via Telegram AFK mode (attempt ${response.attempt || 1})`
-        }
-      }
-    };
-    console.log(JSON.stringify(output));
+    outputDecision(
+      response.decision === 'allow' ? 'allow' : 'deny',
+      `${response.decision === 'allow' ? 'Approved' : 'Denied'} via Telegram AFK mode (attempt ${response.attempt || 1})`
+    );
   } else {
-    // Timeout or error — deny for safety
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: 'PermissionRequest',
-        decision: {
-          behavior: 'deny',
-          message: 'AFK permission: no response from Telegram after 3 attempts (6 min). Denied for safety.'
-        }
-      }
-    };
-    console.log(JSON.stringify(output));
+    outputDecision('deny', 'AFK permission: no response from Telegram after 3 attempts (6 min). Denied for safety.');
   }
 }
 

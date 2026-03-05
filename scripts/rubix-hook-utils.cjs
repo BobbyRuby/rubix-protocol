@@ -8,6 +8,7 @@
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 
 // Root of the rubix-protocol project
 const RUBIX_ROOT = path.resolve(__dirname, '..');
@@ -873,6 +874,104 @@ function readLastPrompt(dataDir) {
   }
 }
 
+// ─── Comms relay helpers (permission routing via comms.db) ───
+
+/**
+ * Get the path to the shared comms.db.
+ */
+function getCommsDbPath() {
+  return path.join(RUBIX_ROOT, 'data', 'comms.db');
+}
+
+/**
+ * Check if Rubix Orchestra is active (registry file exists).
+ */
+function isOrchestraActive() {
+  return fs.existsSync(path.join(RUBIX_ROOT, 'data', 'orchestra-registry.json'));
+}
+
+/**
+ * Write a permission request to comms.db as a question to instance_1 (Forge).
+ * Returns the message ID (used as threadId for polling), or null on failure.
+ */
+function writeCommsPermissionRequest(instanceId, toolName, summary, toolInput) {
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = getCommsDbPath();
+    if (!fs.existsSync(dbPath)) return null;
+
+    const db = new Database(dbPath);
+    try {
+      const msgId = crypto.randomUUID();
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT INTO messages (id, from_instance, to_instance, type, priority, subject, payload, thread_id, status, created_at)
+        VALUES (?, ?, 'instance_1', 'question', 2, ?, ?, ?, 'unread', ?)
+      `).run(
+        msgId,
+        instanceId,
+        `Permission: ${toolName}`,
+        JSON.stringify({
+          question: summary,
+          type: 'permission_request',
+          tool_name: toolName,
+          tool_input: toolInput
+        }),
+        msgId,
+        now
+      );
+
+      return msgId;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Poll comms.db for a response to a permission request.
+ * Blocks synchronously (using sleep) until response arrives or timeout.
+ * Returns { allowed: true/false } or null on timeout.
+ */
+function pollCommsPermissionResponse(msgId, timeoutMs = 180000) {
+  const { execSync } = require('child_process');
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = getCommsDbPath();
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          const row = db.prepare(`
+            SELECT payload FROM messages
+            WHERE thread_id = ? AND type = 'response'
+            ORDER BY created_at DESC LIMIT 1
+          `).get(msgId);
+
+          if (row) {
+            return JSON.parse(row.payload);
+          }
+        } finally {
+          db.close();
+        }
+      } catch {
+        // retry on DB lock etc.
+      }
+
+      execSync('sleep 3', { stdio: 'ignore' });
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   RUBIX_ROOT,
   AFK_STATE_PATH,
@@ -921,5 +1020,10 @@ module.exports = {
   clearPendingPlan,
   // Last-prompt helpers
   writeLastPrompt,
-  readLastPrompt
+  readLastPrompt,
+  // Comms relay helpers
+  getCommsDbPath,
+  isOrchestraActive,
+  writeCommsPermissionRequest,
+  pollCommsPermissionResponse
 };

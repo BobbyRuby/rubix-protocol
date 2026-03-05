@@ -106,11 +106,12 @@ cleanup_delivered() {
 
 # --- Message formatting ---
 format_message() {
-  local from_instance="$1"
-  local to_instance="$2"
-  local msg_type="$3"
-  local subject="$4"
-  local payload="$5"
+  local msg_id="$1"
+  local from_instance="$2"
+  local to_instance="$3"
+  local msg_type="$4"
+  local subject="$5"
+  local payload="$6"
 
   case "$msg_type" in
     task)
@@ -149,20 +150,37 @@ ${result_text}
 EOF
       ;;
     question)
-      local question_text
-      question_text=$(echo "$payload" | python3 -c "
+      # Check if this is a permission request
+      local perm_info
+      perm_info=$(echo "$payload" | python3 -c "
 import json, sys
 p = json.loads(sys.stdin.read())
-print(p.get('question', p.get('message', json.dumps(p))))
-" 2>/dev/null || echo "$payload")
+if p.get('type') == 'permission_request':
+    print('PERM|' + p.get('question', 'unknown operation'))
+else:
+    print('NORMAL|' + p.get('question', p.get('message', json.dumps(p))))
+" 2>/dev/null || echo "NORMAL|$payload")
 
-      cat <<EOF
+      local perm_type="${perm_info%%|*}"
+      local perm_text="${perm_info#*|}"
+
+      if [ "$perm_type" = "PERM" ]; then
+        cat <<EOF
+[PERMISSION] ${from_instance} requests approval:
+${perm_text}
+
+ALLOW: god_comms_send({ to: "${from_instance}", type: "response", threadId: "${msg_id}", subject: "Re: ${subject}", payload: { allowed: true } })
+DENY: god_comms_send({ to: "${from_instance}", type: "response", threadId: "${msg_id}", subject: "Re: ${subject}", payload: { allowed: false } })
+EOF
+      else
+        cat <<EOF
 [ORCHESTRA] Question from ${from_instance}: ${subject}
 
-${question_text}
+${perm_text}
 
-Reply via god_comms_send(to: "${from_instance}", type: "response", subject: "Re: ${subject}", payload: { answer: "<your answer>" }).
+Reply via god_comms_send(to: "${from_instance}", type: "response", threadId: "${msg_id}", subject: "Re: ${subject}", payload: { answer: "<your answer>" }).
 EOF
+      fi
       ;;
     status)
       # Status messages go to dashboard, not injected into panes
@@ -353,7 +371,7 @@ main() {
 
         # Format message
         local formatted
-        formatted=$(format_message "$from_inst" "$to_inst" "$msg_type" "$msg_subject" "$msg_payload") || continue
+        formatted=$(format_message "$msg_id" "$from_inst" "$to_inst" "$msg_type" "$msg_subject" "$msg_payload") || continue
 
         # Deliver
         if deliver_to_pane "$target_pane" "$formatted"; then
@@ -398,7 +416,7 @@ main() {
           case "$msg_type" in
             task|question|response|notification|handoff)
               local formatted
-              formatted=$(format_message "$from_inst" "$iid" "$msg_type" "$msg_subject" "$msg_payload") || continue
+              formatted=$(format_message "$msg_id" "$from_inst" "$iid" "$msg_type" "$msg_subject" "$msg_payload") || continue
               if deliver_to_pane "$target_pane" "$formatted"; then
                 mark_delivered "$bc_key"
                 echo "$(date '+%H:%M:%S') Broadcast $msg_type from $from_inst → $iid (pane $target_pane)"
