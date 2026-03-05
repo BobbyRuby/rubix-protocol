@@ -396,7 +396,12 @@ export class CommsStore {
       DELETE FROM messages WHERE status = 'expired'
     `).run();
 
-    return (ackedResult.changes ?? 0) + (expiredResult.changes ?? 0);
+    // Delete unread messages older than cutoff (stale from previous sessions)
+    const staleUnreadResult = this.db.prepare(`
+      DELETE FROM messages WHERE status = 'unread' AND created_at < ?
+    `).run(cutoff);
+
+    return (ackedResult.changes ?? 0) + (expiredResult.changes ?? 0) + (staleUnreadResult.changes ?? 0);
   }
 
   /**
