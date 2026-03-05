@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 /**
- * Rubix Plan Preflight Validation Hook (PostToolUse: ExitPlanMode)
+ * Rubix Plan Preflight Hook (PostToolUse: ExitPlanMode)
  *
- * Fires after ExitPlanMode. Validates plan content against reality:
- *   V1: File paths exist on disk
- *   V2: Referenced functions/methods have definitions (via grep)
- *   V3: Version numbers match what's actually in files
- *   V4: Memory rules (always_recall / core_memory) surfaced for review
+ * Stage 1 of two-stage plan validation:
+ *   - Captures plan text to pending-plan.json (no validation here)
+ *   - Validation runs later via rubix-plan-gate-hook.cjs on first Write/Edit
  *
- * Output (stdout): [PLAN PREFLIGHT] block — Claude sees it immediately.
- * State file: {dataDir}/plan-preflight-findings.json — read by Stop hook.
+ * Also exports V1-V4 validator functions for use by the gate hook.
+ *
+ * Output (stdout): [PLAN CAPTURED] confirmation message.
  * Exit code: always 0 (informative, never blocking).
  *
  * Input (stdin JSON): { tool_name, tool_input, tool_output: { plan }, cwd, session_id }
@@ -23,7 +22,7 @@ const {
   readStdin,
   detectProject,
   resolveMcpConfig,
-  writePlanPreflightFindings
+  writePendingPlan
 } = require('./rubix-hook-utils.cjs');
 
 // ─── Skip lists ───
@@ -328,36 +327,13 @@ function checkMemoryRules(planText, dataDir) {
   }
 }
 
-// ─── Main ───
+// ─── Output formatter (shared with gate hook) ───
 
-async function main() {
-  const input = await readStdin();
-  if (!input) return;
-
-  const toolName = input.tool_name || '';
-  if (toolName !== 'ExitPlanMode') return;
-
-  const toolOutput = input.tool_output || {};
-  const planText = toolOutput.plan || '';
-  if (!planText || planText.length < 20) return;
-
-  const cwd = input.cwd || process.cwd();
-
-  // Resolve data dir
-  const project = detectProject(cwd);
-  const mcpConfig = resolveMcpConfig();
-  let dataDir = './data';
-  if (mcpConfig && project) {
-    dataDir = mcpConfig[project.instance]?.dataDir || './data';
-  }
-  const dataDirResolved = path.isAbsolute(dataDir) ? dataDir : path.join(RUBIX_ROOT, dataDir);
-
-  // Run validators
-  const v1 = extractAndCheckFilePaths(planText, cwd);
-  const v2 = extractAndCheckFunctionRefs(planText, cwd);
-  const v3 = extractAndCheckVersions(planText);
-  const v4 = checkMemoryRules(planText, dataDirResolved);
-
+/**
+ * Format and print preflight findings to stdout.
+ * Returns { criticals, warnings, infos, totalChecked } for callers.
+ */
+function formatAndOutputFindings(v1, v2, v3, v4) {
   const totalChecked = v1.checked + v2.checked + v3.checked;
   const allFindings = [...v1.findings, ...v2.findings, ...v3.findings, ...v4.findings];
 
@@ -365,19 +341,9 @@ async function main() {
   const warnings = allFindings.filter(f => f.severity === 'WARNING');
   const infos = allFindings.filter(f => f.severity === 'INFO');
 
-  // Write state file for Stop hook
-  writePlanPreflightFindings(dataDirResolved, {
-    timestamp: new Date().toISOString(),
-    criticalCount: criticals.length,
-    warningCount: warnings.length,
-    criticals: criticals.map(f => `${f.type}: ${f.detail}`),
-    warnings: warnings.map(f => `${f.type}: ${f.detail}`)
-  });
-
-  // Output to stdout so Claude sees it
   if (criticals.length === 0 && warnings.length === 0 && infos.length === 0) {
     console.log(`[PLAN PREFLIGHT] Validated ${totalChecked} references — all checks passed.`);
-    return;
+    return { criticals, warnings, infos, totalChecked };
   }
 
   console.log(`[PLAN PREFLIGHT] Validating plan... (${totalChecked} references checked)\n`);
@@ -409,8 +375,59 @@ async function main() {
   if (criticals.length > 0) {
     console.log('[PREFLIGHT COMPLETE] Resolve CRITICALs before writing any files.');
   }
+
+  return { criticals, warnings, infos, totalChecked };
 }
 
-main().catch(() => {
-  // Silent failure — never interfere with plan approval
-});
+// ─── Main (Stage 1: capture plan text only) ───
+
+async function main() {
+  const input = await readStdin();
+  if (!input) return;
+
+  const toolName = input.tool_name || '';
+  if (toolName !== 'ExitPlanMode') return;
+
+  const toolOutput = input.tool_output || {};
+  const planText = toolOutput.plan || '';
+  if (!planText || planText.length < 20) return;
+
+  const cwd = input.cwd || process.cwd();
+
+  // Resolve data dir
+  const project = detectProject(cwd);
+  const mcpConfig = resolveMcpConfig();
+  let dataDir = './data';
+  if (mcpConfig && project) {
+    dataDir = mcpConfig[project.instance]?.dataDir || './data';
+  }
+  const dataDirResolved = path.isAbsolute(dataDir) ? dataDir : path.join(RUBIX_ROOT, dataDir);
+
+  // Capture plan text — truncate at 10KB
+  const cappedPlan = planText.substring(0, 10240);
+  writePendingPlan(dataDirResolved, {
+    planText: cappedPlan,
+    source: 'exitPlanMode',
+    capturedAt: new Date().toISOString(),
+    preflightDone: false
+  });
+
+  console.log(`[PLAN CAPTURED] Plan saved (${cappedPlan.length} chars). Preflight validation will run before first file write.`);
+}
+
+// ─── Exports (validators + formatter for gate hook) ───
+
+module.exports = {
+  extractAndCheckFilePaths,
+  extractAndCheckFunctionRefs,
+  extractAndCheckVersions,
+  checkMemoryRules,
+  formatAndOutputFindings
+};
+
+// Run main only when executed directly (not when require'd)
+if (require.main === module) {
+  main().catch(() => {
+    // Silent failure — never interfere with plan approval
+  });
+}

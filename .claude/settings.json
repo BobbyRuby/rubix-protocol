@@ -72,6 +72,17 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/rubix-plan-gate-hook.cjs",
+            "timeout": 10,
+            "statusMessage": "Plan preflight check..."
+          }
+        ]
       }
     ],
     "PostToolUse": [

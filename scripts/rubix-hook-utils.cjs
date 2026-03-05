@@ -792,6 +792,49 @@ function clearPlanPreflightFindings(dataDir) {
   }
 }
 
+// ─── Pending-plan helpers (pending-plan.json) ───
+
+/**
+ * Read pending plan from {dataDir}/pending-plan.json.
+ * Returns { planText, source, capturedAt, preflightDone } or null.
+ */
+function readPendingPlan(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'pending-plan.json');
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write pending plan to {dataDir}/pending-plan.json.
+ * Overwrites any existing file (last plan wins).
+ */
+function writePendingPlan(dataDir, data) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'pending-plan.json'), JSON.stringify(data, null, 2));
+  } catch {
+    // silent
+  }
+}
+
+/**
+ * Delete the pending plan file.
+ */
+function clearPendingPlan(dataDir) {
+  try {
+    const filePath = path.join(dataDir, 'pending-plan.json');
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // silent
+  }
+}
+
 // ─── Last-prompt helpers (last-prompt.json) ───
 
 /**
@@ -872,6 +915,10 @@ module.exports = {
   readPlanPreflightFindings,
   writePlanPreflightFindings,
   clearPlanPreflightFindings,
+  // Pending-plan helpers
+  readPendingPlan,
+  writePendingPlan,
+  clearPendingPlan,
   // Last-prompt helpers
   writeLastPrompt,
   readLastPrompt

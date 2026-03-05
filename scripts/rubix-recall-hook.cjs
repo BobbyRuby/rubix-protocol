@@ -25,7 +25,8 @@ const {
   readHookIdentity,
   writePendingRating,
   getUndiagnosedFiles,
-  writeLastPrompt
+  writeLastPrompt,
+  writePendingPlan
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -422,6 +423,30 @@ async function main() {
         timestamp: new Date().toISOString()
       });
     }
+  }
+
+  // ─── Plan detection (Stage 1 capture for pasted plans) ───
+  // Detects plan patterns in prompt text and saves to pending-plan.json
+  // so the gate hook (rubix-plan-gate-hook.cjs) can validate before first Write/Edit.
+  const PLAN_PATTERNS = [
+    /implement.*(?:the |this |following )?plan/i,        // "Implement the following plan"
+    /^#+\s*Plan:/m,                                       // "# Plan:" markdown header
+    /##\s*Files to Modify/m,                              // Structured plan section
+    /##\s*Verification/m                                   // Structured plan section
+  ];
+
+  const promptStart = prompt.substring(0, 200);
+  const isPlan = PLAN_PATTERNS.some(p => p.test(p === PLAN_PATTERNS[0] ? promptStart : prompt));
+
+  if (isPlan) {
+    const cappedPlan = prompt.substring(0, 10240);
+    writePendingPlan(dataDirResolved, {
+      planText: cappedPlan,
+      source: 'userPrompt',
+      capturedAt: new Date().toISOString(),
+      preflightDone: false
+    });
+    console.log('[PLAN DETECTED] Preflight validation will run before first file write.');
   }
 }
 
