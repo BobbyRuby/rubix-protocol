@@ -25,7 +25,11 @@ const {
   readStmJournal,
   writeStmJournal,
   isReadOnlyBash,
-  getLspLanguageForFile
+  getLspLanguageForFile,
+  readHookIdentity,
+  broadcastComms,
+  readLastBroadcast,
+  writeLastBroadcast
 } = require('./rubix-hook-utils.cjs');
 
 const MAX_SIGNALS = 50;
@@ -112,6 +116,22 @@ async function main() {
   // Append signal
   journal.signals.push(signal);
   writeStmJournal(dataDirResolved, journal);
+
+  // Broadcast editing_active (throttled: once per 60s)
+  if (signal.type === 'edit' || signal.type === 'write') {
+    const lastBroadcast = readLastBroadcast(dataDirResolved, 'editing_active');
+    if (Date.now() - lastBroadcast > 60 * 1000) {
+      const identity = readHookIdentity(dataDirResolved);
+      const instanceId = identity?.instanceId || 'unknown';
+      const basename = path.basename(signal.file);
+      broadcastComms(dataDirResolved, instanceId, 'editing_active',
+        `Editing: ${basename}`, {
+          project: project?.name || 'Unknown',
+          file: signal.file
+        });
+      writeLastBroadcast(dataDirResolved, 'editing_active');
+    }
+  }
 
   // Emit QC nudge for LSP-supported files
   if (signal.lspLang) {

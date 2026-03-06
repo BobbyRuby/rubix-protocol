@@ -22,7 +22,9 @@ const {
   readStdin,
   detectProject,
   resolveMcpConfig,
-  writePendingPlan
+  writePendingPlan,
+  readHookIdentity,
+  broadcastComms
 } = require('./rubix-hook-utils.cjs');
 
 // ─── Skip lists ───
@@ -486,6 +488,28 @@ async function main() {
     source: 'exitPlanMode',
     capturedAt: new Date().toISOString(),
     preflightDone: false
+  });
+
+  // Broadcast plan_finalized with file list and summary
+  const identity = readHookIdentity(dataDirResolved);
+  const instanceId = identity?.instanceId || 'unknown';
+
+  const fileRefs = new Set();
+  const filePatterns = [/`([^`\n]{3,120})`/g, /\*\*File:\*\*\s*`?([^\s`\n]+)`?/gi];
+  for (const pat of filePatterns) {
+    let m; while ((m = pat.exec(cappedPlan)) !== null) {
+      const c = m[1];
+      if (/\.\w{1,10}$/.test(c) && !/[{}<>$]/.test(c) && !/^https?:/.test(c)) fileRefs.add(c);
+    }
+  }
+
+  const planSummary = cappedPlan.substring(0, 300).replace(/\n/g, ' ').trim();
+  const subject = `Plan ready: ${planSummary.substring(0, 150)}`;
+
+  broadcastComms(dataDirResolved, instanceId, 'plan_finalized', subject, {
+    project: project?.name || 'Unknown',
+    files: [...fileRefs].slice(0, 20),
+    planSummary
   });
 
   console.log(`[PLAN CAPTURED] Plan saved (${cappedPlan.length} chars). Preflight validation will run before first file write.`);

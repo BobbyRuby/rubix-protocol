@@ -36,7 +36,9 @@ const {
   getUndiagnosedFiles,
   clearQcLedger,
   readPlanPreflightFindings,
-  clearPlanPreflightFindings
+  clearPlanPreflightFindings,
+  broadcastComms,
+  writeLastBroadcast
 } = require('./rubix-hook-utils.cjs');
 
 /**
@@ -306,6 +308,34 @@ async function main() {
       deleteStmJournal(dataDirResolved);
       clearQcLedger(dataDirResolved);
     }
+  }
+
+  // ─── Phase 4: Broadcast task_complete with session summary ───
+  if (journal && journal.signals && journal.signals.length > 0) {
+    const identity = readHookIdentity(dataDirResolved);
+    const instanceId = identity?.instanceId || 'unknown';
+
+    const filesModified = new Set();
+    const filesCreated = new Set();
+    let cmdCount = 0, failCount = 0;
+    for (const s of journal.signals) {
+      if (s.type === 'edit' && s.file) filesModified.add(s.file);
+      else if (s.type === 'write' && s.file) filesCreated.add(s.file);
+      else if (s.type === 'bash') { cmdCount++; if (s.failed) failCount++; }
+    }
+    for (const f of filesCreated) filesModified.delete(f);
+
+    const editCount = filesModified.size;
+    const createCount = filesCreated.size;
+    const subject = `Done: ${editCount} edit(s), ${createCount} create(s), ${cmdCount} cmd(s)`;
+
+    broadcastComms(dataDirResolved, instanceId, 'task_complete', subject, {
+      project: project?.name || 'Unknown',
+      filesModified: [...filesModified].slice(0, 20),
+      filesCreated: [...filesCreated].slice(0, 20),
+      stats: { edits: editCount, creates: createCount, commands: cmdCount, failures: failCount }
+    });
+    writeLastBroadcast(dataDirResolved, 'task_complete');
   }
 
   // ─── Final exit ───

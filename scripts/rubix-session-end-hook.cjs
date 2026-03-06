@@ -21,7 +21,11 @@ const {
   synthesizeStmContent,
   filePathToSkillTags,
   writeLastStmStore,
-  clearQcLedger
+  clearQcLedger,
+  readHookIdentity,
+  broadcastComms,
+  readLastBroadcast,
+  writeLastBroadcast
 } = require('./rubix-hook-utils.cjs');
 
 async function main() {
@@ -89,6 +93,38 @@ async function main() {
     }
     deleteStmJournal(dataDirResolved);
     clearQcLedger(dataDirResolved);
+  }
+
+  // ─── Broadcast task_complete (deduped: skip if Stop hook already broadcast within 30s) ───
+  const lastComplete = readLastBroadcast(dataDirResolved, 'task_complete');
+  if (Date.now() - lastComplete > 30 * 1000) {
+    const stmJournal = journal; // reuse journal read above (may be null if no signals)
+    if (stmJournal && stmJournal.signals && stmJournal.signals.length > 0) {
+      const identity = readHookIdentity(dataDirResolved);
+      const instanceId = identity?.instanceId || 'unknown';
+
+      const filesModified = new Set();
+      const filesCreated = new Set();
+      let cmdCount = 0, failCount = 0;
+      for (const s of stmJournal.signals) {
+        if (s.type === 'edit' && s.file) filesModified.add(s.file);
+        else if (s.type === 'write' && s.file) filesCreated.add(s.file);
+        else if (s.type === 'bash') { cmdCount++; if (s.failed) failCount++; }
+      }
+      for (const f of filesCreated) filesModified.delete(f);
+
+      const editCount = filesModified.size;
+      const createCount = filesCreated.size;
+      const subject = `Done: ${editCount} edit(s), ${createCount} create(s), ${cmdCount} cmd(s)`;
+
+      broadcastComms(dataDirResolved, instanceId, 'task_complete', subject, {
+        project: 'Unknown',
+        filesModified: [...filesModified].slice(0, 20),
+        filesCreated: [...filesCreated].slice(0, 20),
+        stats: { edits: editCount, creates: createCount, commands: cmdCount, failures: failCount }
+      });
+      writeLastBroadcast(dataDirResolved, 'task_complete');
+    }
   }
 
   // ─── Store session-end marker ───

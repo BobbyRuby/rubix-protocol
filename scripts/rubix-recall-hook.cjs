@@ -143,7 +143,7 @@ function checkTriggerTasks(dataDir) {
 }
 
 // Coordination directive — injected into every prompt's system-reminder
-const COORD_DIRECTIVE = '[COORD] Edit file→broadcast action:"start" before, "done" after. Check inbox—if another instance owns file, wait. Git push→broadcast action:"commit".';
+const COORD_DIRECTIVE = '[COORD] Auto-broadcasts: plan_start→plan_finalized→editing_active(60s throttle)→task_complete. Check god_comms_inbox for peer activity.';
 
 // Session-start directive — injected ONLY on the first prompt of a new session
 const SESSION_START_DIRECTIVE = '[SESSION_START] BEFORE responding: 1.god_comms_heartbeat 2.god_comms_inbox 3./recall 4.god_comms_ack. Skip only if user says "skip recall".';

@@ -874,6 +874,59 @@ function readLastPrompt(dataDir) {
   }
 }
 
+// ─── Comms broadcast helpers ───
+
+/**
+ * Broadcast a status message to all instances via comms.db.
+ * Returns true on success, false on failure (silent).
+ */
+function broadcastComms(dataDir, instanceId, action, subject, extraPayload) {
+  try {
+    const Database = require('better-sqlite3');
+    const dbPath = path.join(dataDir, 'comms.db');
+    if (!fs.existsSync(dbPath)) return false;
+    const db = new Database(dbPath);
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const payload = JSON.stringify({
+        action,
+        instance: instanceId,
+        timestamp: now,
+        ...extraPayload
+      });
+      db.prepare(`
+        INSERT INTO messages (id, from_instance, to_instance, type, priority, subject, payload, status, created_at, expires_at)
+        VALUES (?, ?, NULL, 'status', 0, ?, ?, 'unread', ?, ?)
+      `).run(id, instanceId, (subject || '').substring(0, 200), payload, now,
+        new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString());
+      return true;
+    } finally { db.close(); }
+  } catch { return false; }
+}
+
+/**
+ * Read the timestamp of the last broadcast for a given action.
+ * Returns epoch ms or 0.
+ */
+function readLastBroadcast(dataDir, action) {
+  try {
+    const filePath = path.join(dataDir, `last-broadcast-${action}.json`);
+    if (!fs.existsSync(filePath)) return 0;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')).timestamp || 0;
+  } catch { return 0; }
+}
+
+/**
+ * Write the current timestamp as the last broadcast for a given action.
+ */
+function writeLastBroadcast(dataDir, action) {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, `last-broadcast-${action}.json`), JSON.stringify({ timestamp: Date.now() }));
+  } catch { /* silent */ }
+}
+
 // ─── Comms relay helpers (permission routing via comms.db) ───
 
 /**
@@ -1021,6 +1074,10 @@ module.exports = {
   // Last-prompt helpers
   writeLastPrompt,
   readLastPrompt,
+  // Comms broadcast helpers
+  broadcastComms,
+  readLastBroadcast,
+  writeLastBroadcast,
   // Comms relay helpers
   getCommsDbPath,
   isOrchestraActive,
